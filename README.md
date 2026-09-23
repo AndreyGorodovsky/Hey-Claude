@@ -60,8 +60,8 @@ rather than usable loudness.
 
 ### Provisional pinout
 
-Not yet validated against hardware. Confirmed during stages 2 and 3, and
-updated here once measured.
+Not yet validated against hardware. Confirmed during stage 0 and updated here
+once built. Assembly procedure: [docs/BRINGUP.md](docs/BRINGUP.md).
 
 | Signal | GPIO | Peripheral |
 | --- | --- | --- |
@@ -109,6 +109,7 @@ docs/        Diagrams and supporting material
 | [STATUS.md](STATUS.md) | All | Current stage, completed work, next steps |
 | [KNOWN-ISSUES.md](KNOWN-ISSUES.md) | All | Open risks, defects, caveats |
 | [SECRETS.md](SECRETS.md) | All | Pre-commit checklist for sensitive material |
+| [docs/BRINGUP.md](docs/BRINGUP.md) | All | Breadboard assembly and electrical verification |
 | [CLAUDE.md](CLAUDE.md) | AI assistants | Project rules and conventions |
 
 ## Privacy

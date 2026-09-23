@@ -30,7 +30,14 @@ easily misattributed to firmware.
 
 *Mitigation:* 1 A or greater supply; 1000 µF at the amplifier supply pin;
 amplifier fed from 5 V, not 3.3 V. If resets persist, the supply is the first
-suspect, not the code.
+suspect, not the code. Baseline current is recorded in stage 0 and the peak
+under load in stage 2, per [docs/BRINGUP.md](docs/BRINGUP.md).
+
+A breadboard compounds this. Contact resistance and shared rails not intended
+for 1 A transients can themselves cause the voltage drop, making the bench the
+fault rather than the supply. Peak figures taken on a breadboard should be
+re-measured once the circuit is soldered before concluding that the supply is
+inadequate.
 
 ### R3 — Display refresh rate ceiling
 
@@ -47,8 +54,8 @@ The pin assignment in [README.md](README.md) avoids the octal flash and PSRAM
 pins, the strapping pins and the native USB pins, but has not been checked
 against a physical board. Dev board silkscreens vary between vendors.
 
-*Mitigation:* verified during stages 2 and 3, and the table updated with
-measured results.
+*Mitigation:* verified during stage 0 against the physical modules, and the
+table in [README.md](README.md) updated to match what was actually built.
 
 ### R5 — Display module power requirements unconfirmed
 
@@ -57,7 +64,8 @@ direct 3.3 V drive, and the eight-pin breakout's exact pin order is not
 confirmed. The panel is write-only over SPI, so a wiring fault produces a blank
 screen with no error rather than a diagnosable failure.
 
-*Mitigation:* confirm against the supplied module before powering it.
+*Mitigation:* confirm against the supplied module before powering it, as the
+first step of stage 0. See [docs/BRINGUP.md](docs/BRINGUP.md).
 
 ### R6 — Three external services in the latency path
 
