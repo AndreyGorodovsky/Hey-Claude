@@ -29,15 +29,19 @@ Stage 5 does not depend on stages 1 through 4 and can be built in parallel.
 Keeping it independently testable means a server defect cannot be mistaken for
 a firmware defect during stage 6.
 
+## Environment
+
+ESP-IDF v5.5.5 is installed and verified by a successful `hello_world` build
+targeting `esp32s3`. No other ESP-IDF version remains on the development
+machine.
+
 ## Next steps
 
-1. Install ESP-IDF v5.5.x and point `IDF_PATH` at it. Neither checkout present
-   on the original development machine is the pinned version.
-2. Obtain API keys for Anthropic and the speech provider, and place them in the
+1. Obtain API keys for Anthropic and the speech provider, and place them in the
    server environment. See [SECRETS.md](SECRETS.md).
-3. Confirm the power supply meets the 1 A minimum described in
+2. Confirm the power supply meets the 1 A minimum described in
    [README.md](README.md).
-4. Plan stage 1 into steps and submit them for approval.
+3. Plan stage 1 into steps and submit them for approval.
 
 ## Open decisions
 

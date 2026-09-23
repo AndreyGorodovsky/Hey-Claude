@@ -46,9 +46,10 @@ Work proceeds in numbered stages listed in [STATUS.md](STATUS.md).
 | Python | 3.11+ | |
 | Claude model | `claude-opus-5` | |
 
-Two ESP-IDF checkouts exist on the original development machine — a
-`release/v5.3` branch and a `v6.1-beta1` — and neither is the pinned version.
-Confirm `IDF_PATH` points at a v5.5.x checkout before building.
+Confirm `IDF_PATH` points at a v5.5.x checkout before building. When changing
+ESP-IDF versions, also check `IDF_TOOLS_PATH` and `IDF_PYTHON_ENV_PATH` in the
+persisted user environment, not only in the current shell — see R7 in
+[KNOWN-ISSUES.md](KNOWN-ISSUES.md).
 
 ## Conventions
 

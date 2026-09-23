@@ -69,15 +69,24 @@ all three are healthy and reachable over the local network's uplink.
 without touching the pipeline. Partial failures surface as an error state on
 the device rather than a hang.
 
-### R7 — Toolchain version drift
+### R7 — Stale ESP-IDF environment variables
 
-The original development machine carries two ESP-IDF checkouts, a
-`release/v5.3` branch and a `v6.1-beta1`, and neither is the pinned v5.5.x.
-Building against the wrong one produces failures that look like code defects,
-particularly around the I2S and LCD drivers.
+Installing or removing an ESP-IDF version leaves persisted user environment
+variables behind, and they survive to break the next install. Observed in
+practice: a removed installation had written `IDF_PYTHON_ENV_PATH` into the
+user profile, which caused a later `install.bat` for a different version to
+abort with a version-mismatch error, and had added its own Python directories
+to the user `PATH`, which remained after the installation was deleted.
 
-*Mitigation:* confirm `IDF_PATH` before building. Documented in
-[CLAUDE.md](CLAUDE.md).
+The failures present as problems with the new version rather than as residue
+from the old one.
+
+*Mitigation:* when changing ESP-IDF versions, check `IDF_PATH`,
+`IDF_TOOLS_PATH` and `IDF_PYTHON_ENV_PATH` in the persisted user environment,
+not only in the current shell, and run installers from a shell with no ESP-IDF
+environment active. Remove orphaned toolchains with `idf_tools.py uninstall`
+rather than by deleting directories, since tool versions are shared between
+installations.
 
 ### R8 — Unencrypted transport on the LAN
 
