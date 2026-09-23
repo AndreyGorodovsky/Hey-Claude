@@ -35,10 +35,14 @@ ESP-IDF v5.5.5 is installed and verified by a successful `hello_world` build
 targeting `esp32s3`. No other ESP-IDF version remains on the development
 machine.
 
+The server configuration skeleton exists ahead of stage 5, so that credentials
+can be put in place as soon as they are obtained: `server/config.py` and
+`server/.env.example`. Nothing else in the server is built.
+
 ## Next steps
 
-1. Obtain API keys for Anthropic and the speech provider, and place them in the
-   server environment. See [SECRETS.md](SECRETS.md).
+1. Obtain API keys for Anthropic and Deepgram, copy `server/.env.example` to
+   `server/.env`, and fill them in. See [SECRETS.md](SECRETS.md).
 2. Confirm the power supply meets the 1 A minimum described in
    [README.md](README.md).
 3. Plan stage 1 into steps and submit them for approval.

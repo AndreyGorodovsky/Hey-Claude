@@ -1,0 +1,8 @@
+# Provisional. Pinned to exact versions at stage 5, once the server is built.
+
+anthropic>=1.0
+deepgram-sdk>=3.0
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.9
+pydantic-settings>=2.5
