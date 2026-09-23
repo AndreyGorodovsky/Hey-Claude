@@ -1,0 +1,66 @@
+# See SECRETS.md. This file does not protect anything already tracked.
+
+# --- Credentials and configuration ---
+.env
+.env.*
+!.env.example
+sdkconfig
+sdkconfig.old
+secrets.h
+credentials.h
+*.pem
+*.key
+*.p12
+*.pfx
+
+# --- ESP-IDF build output ---
+build/
+managed_components/
+dependencies.lock
+*.bin
+*.elf
+*.map
+
+# --- NVS provisioning (contains WiFi credentials and device tokens) ---
+nvs.csv
+nvs_*.csv
+nvs*.bin
+
+# --- Personal data: audio, transcripts, conversation history ---
+*.wav
+*.pcm
+*.raw
+*.mp3
+*.opus
+*.db
+*.sqlite
+*.sqlite3
+logs/
+recordings/
+transcripts/
+datasets/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# --- Wake-word training artefacts ---
+.ipynb_checkpoints/
+training/
+
+# --- Editors and OS ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Private working notes, not for publication ---
+rules+description.txt
