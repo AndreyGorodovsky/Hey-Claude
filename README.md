@@ -4,9 +4,10 @@ A self-contained voice assistant built on an ESP32-S3. Say the wake word, ask a
 question, and hear Claude answer out loud. A small TFT panel shows what the
 device is doing at each moment.
 
-> **Project status: planning.** No firmware or server code has been written yet.
-> The documentation in this repository describes the intended design and the
-> staged plan for building it. See [STATUS.md](STATUS.md) for the current stage.
+> **Project status: hardware assembled.** The circuit is built and verified on a
+> breadboard. No project firmware or server code has been written yet. The
+> documentation in this repository describes the intended design and the staged
+> plan for building it. See [STATUS.md](STATUS.md) for the current stage.
 
 ## How it works
 
@@ -39,7 +40,7 @@ resets at 04:00 local time.
 
 | Part | Role |
 | --- | --- |
-| ESP32-S3-N16R8 dev board | 16 MB flash, 8 MB octal PSRAM, dual-core 240 MHz |
+| ESP32-S3 "N16R8" dev board | 16 MB flash, 8 MB octal PSRAM, dual-core 240 MHz |
 | INMP441 | I2S MEMS microphone |
 | MAX98357A | I2S Class-D amplifier, 3 W |
 | 4 Ω speaker | Output |
@@ -54,14 +55,20 @@ cause brownout resets during loud playback. Use a 1 A or greater supply.
 
 The amplifier must be fed from the board's 5 V rail, not 3.3 V, with the
 1000 µF capacitor placed directly at its supply pin. The amplifier's `GAIN` pin
-should be configured for 6–9 dB rather than left at maximum; volume is
-controlled digitally instead. At 4 Ω, maximum analogue gain produces distortion
+is configured for 6–9 dB rather than maximum; volume is controlled digitally
+instead. At 4 Ω, maximum analogue gain produces distortion
 rather than usable loudness.
 
-### Provisional pinout
+The board sold as "N16R8" used here is not built on the ESP32-S3-WROOM
+module. It carries a bare ESP32-S3R8 chip, with the 8 MB PSRAM inside the chip
+package and 16 MB of flash as a separate part, plus a CH340K USB-serial bridge
+on its UART port. Silkscreens and pin orders differ from vendor pinout images
+of similar boards; the board's own silkscreen is authoritative.
 
-Not yet validated against hardware. Confirmed during stage 0 and updated here
-once built. Assembly procedure: [docs/BRINGUP.md](docs/BRINGUP.md).
+### Pinout
+
+Verified on the breadboard during stage 0 by a functional test of each
+peripheral. Assembly procedure and results: [docs/BRINGUP.md](docs/BRINGUP.md).
 
 | Signal | GPIO | Peripheral |
 | --- | --- | --- |
@@ -79,9 +86,18 @@ once built. Assembly procedure: [docs/BRINGUP.md](docs/BRINGUP.md).
 | Display RST | 8 | GPIO |
 | Display backlight | 14 | LEDC PWM |
 
-GPIO 26–37 are reserved by the octal flash and PSRAM on N16R8 modules and must
-not be used. GPIO 0, 3, 45 and 46 are strapping pins; GPIO 19 and 20 carry
-native USB. The INMP441 `L/R` pin is tied to ground to select the left channel.
+| Supply | Connection |
+| --- | --- |
+| INMP441 `VDD` | 3.3 V rail |
+| NV3007 `VDD` | 3.3 V rail |
+| MAX98357A `Vin` | Board 5 V pin, on a dedicated lead rather than a shared rail |
+| 1000 µF capacitor | Across the amplifier's `Vin` and `GND` pins |
+| All grounds | Common |
+
+GPIO 26–37 are reserved by the flash and PSRAM and must not be used. GPIO 0, 3,
+45 and 46 are strapping pins; GPIO 19 and 20 carry native USB. The INMP441
+`L/R` pin is tied to ground to select the left channel. The MAX98357A `GAIN`
+pin is left unconnected, which sets 9 dB.
 
 ## Software prerequisites
 

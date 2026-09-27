@@ -64,7 +64,11 @@ cause of them.
   higher rate than capture because synthesised speech benefits from it and the
   amplifier sits on an independent I2S controller.
 - The amplifier `SD` pin is held low except during playback, to suppress the
-  switching click produced when the output stage engages.
+  switching click produced when the output stage engages. Driven high from a
+  3.3 V GPIO, it selects the left I2S slot, so playback samples are written to
+  the left slot, or to both.
+- The microphone, with `L/R` tied to ground, transmits in the left slot only.
+  The right slot reads zero.
 
 The ESP32-S3 has two independent I2S controllers, so capture and playback never
 contend.
@@ -76,6 +80,11 @@ about 121 KB, roughly 12-25 ms depending on SPI clock, which is too slow for
 full-screen animation at high frame rates. State animations are therefore
 designed as partial-region redraws within the panel's narrow 142x428 format.
 The panel is write-only over SPI with no MISO line, which LVGL accommodates.
+
+The controller's frame memory is 168x428, wider than the 142 visible columns,
+so drawing needs a column offset. The offset is determined in stage 3. The
+initialisation sequence is LVGL's `lv_nv3007` driver sequence, which works on
+this module as verified during stage 0.
 
 ## Protocol
 

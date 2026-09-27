@@ -115,13 +115,50 @@ Fill in during bring-up and keep the completed table with the project.
 
 | Checkpoint | Expected | Measured | Pass criterion |
 | --- | --- | --- | --- |
-| Supply rating (printed on charger) | 5 V, 1 A or greater | | Not a 500 mA USB 2.0 port |
-| Bare board, idle | ~50-100 mA | | Rail holds 4.9 V or above |
-| Plus microphone | Small increase | | Rail holds 4.9 V or above |
-| Plus display, backlight off | Small increase | | Rail holds 4.9 V or above |
-| Plus display, backlight full | Noticeable increase | | Rail holds 4.8 V or above |
-| Plus amplifier, idle | Small increase | | Rail holds 4.8 V or above |
+| Supply rating (printed on charger) | 5 V, 1 A or greater | Not recorded; PC USB port used | Not a 500 mA USB 2.0 port |
+| Bare board, idle | ~50-100 mA | Not measured | Rail holds 4.9 V or above |
+| Plus microphone | Small increase | Not measured | Rail holds 4.9 V or above |
+| Plus display, backlight off | Small increase | Not measured | Rail holds 4.9 V or above |
+| Plus display, backlight full | Noticeable increase | Not measured | Rail holds 4.8 V or above |
+| Plus amplifier, idle | Small increase | Not measured | Rail holds 4.8 V or above |
 | **Playback peak (stage 2)** | **~1 A or more** | | **Rail never falls below 4.7 V** |
+
+## Results of the first bring-up (2026-09-27)
+
+The first assembly was carried out without a multimeter or a USB power meter,
+so the continuity checks and every figure in the measurement table above are
+missing. The procedure was adapted as follows, and the gap is tracked as R9 in
+[../KNOWN-ISSUES.md](../KNOWN-ISSUES.md).
+
+- **Short protection.** Every first power-on used a PC USB port, which
+  cuts power on overcurrent, instead of a charger, which would keep
+  feeding a short.
+- **Supply integrity.** The chip's brownout detector stood in for rail voltage
+  measurement: a sagging 3.3 V rail resets the chip with a brownout reset
+  reason, which is visible on the serial console.
+- **Heat.** A touch test after a minute of running at each step.
+- **Function.** Each peripheral was exercised by a temporary test program
+  flashed after it was wired. These programs are not kept in the repository.
+
+The pinout in [../README.md](../README.md) was built without deviation.
+
+| Step | Check | Result |
+| --- | --- | --- |
+| Board identity | `esptool` chip query | ESP32-S3 (QFN56) rev v0.2, 8 MB in-package PSRAM, 16 MB flash detected; USB-serial bridge is a CH340K |
+| Power only | `hello_world`, three boots | Power-on reset only, no brownout; no component warm |
+| Microphone | I2S0 stereo read at 16 kHz, 24-bit, per-channel level | Left slot live, responding to room sounds; right slot constant zero, confirming `L/R` is tied to ground. Measured: quiet-room level of about 2,000-4,000 RMS counts at 24 bits (about −68 dBFS) with a PC running nearby |
+| Display | Backlight switched from GPIO14, then panel init and full-screen colour fills at 10 MHz SPI | Backlight responds; red, green, blue, white and black fill correctly with `VDD` at 3.3 V |
+| Amplifier | 440 Hz tone on I2S1 at 16 kHz, 5 %, 10 % and 20 % of full scale, `SD` driven high | Clean tone at three distinct levels; no brownout on a PC USB port; amplifier not warm |
+
+### Display module findings (R5)
+
+The back of the module carries a three-terminal device with input and output
+capacitors in the `VDD` path, probably a linear regulator, and a transistor
+(Q1) switching the backlight. The regulator's marking could not be read.
+The panel works fully with `VDD` at 3.3 V, so 3.3 V is used. `BL` drives only
+the transistor, so a GPIO can control it directly. A solder jumper marked
+`CS-LOW` can tie chip select low permanently. It is left open, and `CS` is
+wired.
 
 The criterion that matters is **rail voltage, not current**. Brownout is caused
 by voltage collapse. A supply rated well above the draw can still fail through
@@ -135,9 +172,11 @@ rail sags, substitute the cable before replacing the supply.
 
 ## Before leaving this stage
 
-- [ ] Pinout in [../README.md](../README.md) updated to match what was actually
+- [x] Pinout in [../README.md](../README.md) updated to match what was actually
       built, with the provisional marking removed (R4)
-- [ ] Display supply and backlight requirements confirmed and recorded (R5)
-- [ ] Measurement table filled in as far as stage 0 allows
-- [ ] Supply and cable confirmed adequate at idle
-- [ ] Any deviation from the documented pinout recorded and explained
+- [x] Display supply and backlight requirements confirmed and recorded (R5)
+- [ ] Measurement table filled in as far as stage 0 allows — deferred for
+      lack of a meter (R9)
+- [x] Supply and cable confirmed adequate at idle — by absence of brownout
+      only, not by measurement (R9)
+- [x] Any deviation from the documented pinout recorded and explained — none

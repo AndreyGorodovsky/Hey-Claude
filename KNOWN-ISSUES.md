@@ -30,8 +30,9 @@ easily misattributed to firmware.
 
 *Mitigation:* 1 A or greater supply; 1000 µF at the amplifier supply pin;
 amplifier fed from 5 V, not 3.3 V. If resets persist, the supply is the first
-suspect, not the code. Baseline current is recorded in stage 0 and the peak
-under load in stage 2, per [docs/BRINGUP.md](docs/BRINGUP.md).
+suspect, not the code. Baseline current and the peak under load are recorded
+before and during stage 2, per [docs/BRINGUP.md](docs/BRINGUP.md); stage 0
+could not record the baseline (R9).
 
 A breadboard compounds this. Contact resistance and shared rails not intended
 for 1 A transients can themselves cause the voltage drop, making the bench the
@@ -47,25 +48,6 @@ on SPI clock. Full-screen animation at high frame rates is not achievable.
 *Mitigation:* animations are designed as partial-region redraws from the start.
 This constrains the visual design and is not a limitation that can be optimised
 away later.
-
-### R4 — Provisional pinout is unvalidated
-
-The pin assignment in [README.md](README.md) avoids the octal flash and PSRAM
-pins, the strapping pins and the native USB pins, but has not been checked
-against a physical board. Dev board silkscreens vary between vendors.
-
-*Mitigation:* verified during stage 0 against the physical modules, and the
-table in [README.md](README.md) updated to match what was actually built.
-
-### R5 — Display module power requirements unconfirmed
-
-Small NV3007 panels frequently require a backlight boost rail rather than
-direct 3.3 V drive, and the eight-pin breakout's exact pin order is not
-confirmed. The panel is write-only over SPI, so a wiring fault produces a blank
-screen with no error rather than a diagnosable failure.
-
-*Mitigation:* confirm against the supplied module before powering it, as the
-first step of stage 0. See [docs/BRINGUP.md](docs/BRINGUP.md).
 
 ### R6 — Three external services in the latency path
 
@@ -103,6 +85,31 @@ local network can read conversation audio in both directions.
 
 *Mitigation:* accepted for LAN-only development. Moving the server off the LAN
 requires TLS and a stronger device credential before it is reachable publicly.
+
+### R9 — Supply margin not measured
+
+The first bring-up was carried out without a multimeter or a USB power meter.
+No continuity checks were made, and no rail voltage or current figures exist.
+Supply adequacy at idle rests only on the absence of brownout resets on a PC
+USB port, with every peripheral wired and the amplifier playing a tone at
+20 % of full scale. That shows the rail does not collapse at light load. It
+says nothing about margin, and nothing about the playback peak described in
+R2.
+
+*Mitigation:* obtain a USB power meter with peak hold before stage 2, record
+the stage 0 baseline figures in [docs/BRINGUP.md](docs/BRINGUP.md) then, and
+take the stage 2 peak measurement as planned. Until then, a reset during loud
+playback is attributed to the supply first.
+
+## Resolved
+
+- **R4 — Provisional pinout unvalidated.** Built on the breadboard and each
+  peripheral exercised by a test program during stage 0. The pinout matched
+  the plan without change. See [docs/BRINGUP.md](docs/BRINGUP.md).
+- **R5 — Display power requirements unconfirmed.** The module works with
+  `VDD` at 3.3 V, and its backlight is switched by an on-board transistor, so
+  `BL` is driven directly from a GPIO. The 8-pin order is `GND VDD SCL SDA RES
+  DC CS BL`, as printed on the module.
 
 ## Caveats
 

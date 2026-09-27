@@ -32,8 +32,8 @@ Work proceeds in numbered stages listed in [STATUS.md](STATUS.md).
   personal data.
 - **The device stays stateless.** No conversation history, no credentials
   beyond its own identity.
-- **GPIO 26-37 are unusable** on N16R8 modules; they belong to octal flash and
-  PSRAM. GPIO 0, 3, 45 and 46 are strapping pins; GPIO 19 and 20 carry native
+- **GPIO 26-37 are unusable**; they belong to the flash and the in-package
+  PSRAM of the board's ESP32-S3R8. GPIO 0, 3, 45 and 46 are strapping pins; GPIO 19 and 20 carry native
   USB.
 - **Do not disable thinking on `claude-opus-5`.** Lower effort instead.
 
