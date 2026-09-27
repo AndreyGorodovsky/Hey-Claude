@@ -10,7 +10,7 @@ Feasibility has been reviewed and the approach confirmed. All major technology
 decisions are made and recorded in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 The hardware is assembled on a breadboard and every peripheral has been
-exercised by a temporary test program: the microphone captures, the display
+exercised by a test program, kept in `firmware/tools/bringup/`: the microphone captures, the display
 initialises and fills, and the amplifier plays a tone. The pinout matched the
 plan without change. No project firmware exists yet, and the server exists only
 as a configuration skeleton.

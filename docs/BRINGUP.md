@@ -10,10 +10,11 @@ number are in [../KNOWN-ISSUES.md](../KNOWN-ISSUES.md).
 
 ## What this stage cannot do
 
-Peripherals cannot be functionally verified here. Confirming that the
-microphone captures audio, that the amplifier reproduces it and that the panel
-renders requires firmware, which arrives in stages 2 and 3. Stage 0 verifies
-continuity, supply integrity and baseline current draw only.
+Stage 0 verifies continuity, supply integrity and baseline current draw. The
+test programs in [../firmware/tools/bringup/](../firmware/tools/bringup/) add a
+basic functional check of each peripheral: signal present, panel fills, tone
+audible. Audio quality, sustained throughput and rendering belong to the
+project firmware in stages 2 and 3.
 
 The peak current measurement under amplifier load also belongs to stage 2,
 because nothing draws that current until audio is played. Stage 0 establishes
@@ -137,8 +138,10 @@ missing. The procedure was adapted as follows, and the gap is tracked as R9 in
   measurement: a sagging 3.3 V rail resets the chip with a brownout reset
   reason, which is visible on the serial console.
 - **Heat.** A touch test after a minute of running at each step.
-- **Function.** Each peripheral was exercised by a temporary test program
-  flashed after it was wired. These programs are not kept in the repository.
+- **Function.** Each peripheral was exercised by a test program flashed after
+  it was wired. The programs are kept in
+  [../firmware/tools/bringup/](../firmware/tools/bringup/) for re-checking the
+  hardware later.
 
 The pinout in [../README.md](../README.md) was built without deviation.
 

@@ -112,9 +112,10 @@ pin is left unconnected, which sets 9 dB.
 Directories are created as the corresponding stage begins.
 
 ```
-firmware/    ESP-IDF application for the ESP32-S3
-server/      Python server: transport, speech, Claude, session store
-docs/        Diagrams and supporting material
+firmware/          ESP-IDF application for the ESP32-S3
+firmware/tools/    Standalone hardware test programs
+server/            Python server: transport, speech, Claude, session store
+docs/              Diagrams and supporting material
 ```
 
 ## Documentation
