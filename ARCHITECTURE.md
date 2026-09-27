@@ -1,7 +1,8 @@
 # Architecture
 
 Design reference for the Hey Claude voice assistant. This describes the
-intended system; implementation has not started. Decisions recorded here were
+intended system; which parts are built is tracked by stage in
+[STATUS.md](STATUS.md). Decisions recorded here were
 made during the feasibility review and are binding unless explicitly revisited.
 
 ## Design principles
@@ -18,6 +19,44 @@ made during the feasibility review and are binding unless explicitly revisited.
 4. **No secrets in firmware.** API keys exist only on the server.
 
 ## Device
+
+### Firmware structure
+
+| Component | Responsibility |
+| --- | --- |
+| `main` | Startup order, boot banner, serial console and its commands |
+| `app_config` | Settings stored in NVS: loading the running configuration, validating and storing edits. No user interface of its own |
+| `net` | WiFi station: joining, reconnecting with backoff, readable failure reasons |
+| `board` | The verified pin map, the single source of pin numbers |
+
+Settings are loaded once at boot into a read-only structure. Edits change only
+what is stored and apply after a reboot, so no running code has to cope with a
+setting changing underneath it. `app_config` knows nothing about the console,
+so later provisioning methods reuse the same validation.
+
+`net` keeps no connection state for other components to query. Consumers
+subscribe to the standard `IP_EVENT_STA_GOT_IP` and
+`WIFI_EVENT_STA_DISCONNECTED` events on the default event loop.
+
+Every boot logs the firmware version, flash size, free internal RAM and PSRAM,
+and the reset reason. Brownout and power-glitch resets are logged as errors,
+which makes a supply fault visible without instruments (R2, R9). A crash is
+written to a core-dump partition and can be read after the reboot with
+`idf.py coredump-info`.
+
+### Flash layout
+
+| Partition | Offset | Size | Purpose |
+| --- | --- | --- | --- |
+| `nvs` | 0x9000 | 24 KB | Settings |
+| `otadata`, `phy_init` | 0xF000 | 12 KB | OTA slot selection, RF calibration |
+| `ota_0`, `ota_1` | 0x20000 | 4 MB each | Two application slots |
+| `coredump` | 0x820000 | 64 KB | Last crash |
+| unallocated | 0x830000 | ~7.8 MB | Reserved |
+
+The layout is OTA-ready from the start. Whether over-the-air updates are
+adopted is decided at stage 8, but adopting them then needs no change to the
+flash layout. Flash runs in QIO mode at 80 MHz; PSRAM is octal at 80 MHz.
 
 ### State machine
 
@@ -101,6 +140,14 @@ X-Device-Id: <device_id>
 ```
 
 The server replies with a `ready` message once the session store is available.
+
+### Server discovery
+
+The device finds the server by mDNS service discovery on the local network,
+so the server machine's address can change without reconfiguring the device.
+The server advertises a service; the device looks it up each time it
+connects. The optional `server_url` setting overrides discovery with a fixed
+address or hostname. Discovery is built in stages 5 and 6.
 
 ### Message sequence
 
@@ -214,4 +261,7 @@ deferred.
 | Server-side endpointing | On-device VAD | Better models, no device CPU cost, keeps firmware simple |
 | Server-side history | Device-side history | Survives reboots and WiFi loss, and enables prompt caching |
 | Two I2S controllers | Shared bus | No contention, and different sample rates per direction |
+| Settings entered through the serial console | Credentials compiled in, or flashed from a local file | Nothing sensitive is ever written to disk on the development machine |
+| mDNS server discovery | Fixed server address | The server machine's LAN address changes; a fixed address would need re-entering each time |
+| OTA-ready partition layout | Single application slot | Costs nothing in 16 MB, and keeps OTA open without a later layout change |
 | Streaming transport | Request and response | Fourfold latency difference; cannot be retrofitted cheaply |

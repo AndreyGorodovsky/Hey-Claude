@@ -4,10 +4,10 @@ A self-contained voice assistant built on an ESP32-S3. Say the wake word, ask a
 question, and hear Claude answer out loud. A small TFT panel shows what the
 device is doing at each moment.
 
-> **Project status: hardware assembled.** The circuit is built and verified on a
-> breadboard. No project firmware or server code has been written yet. The
-> documentation in this repository describes the intended design and the staged
-> plan for building it. See [STATUS.md](STATUS.md) for the current stage.
+> **Project status: foundations.** The circuit is built and verified on a
+> breadboard, and the firmware boots, stores its settings and joins WiFi. Audio,
+> display, wake word and the server are not built yet. See
+> [STATUS.md](STATUS.md) for the current stage.
 
 ## How it works
 
@@ -107,13 +107,54 @@ pin is left unconnected, which sets 9 dB.
   live on the server only and are never present in firmware. See
   [SECRETS.md](SECRETS.md).
 
+## Building and setting up the device
+
+From an ESP-IDF v5.5 shell in `firmware/`:
+
+```sh
+idf.py -p PORT flash monitor
+```
+
+On Windows, open the ESP-IDF shell from PowerShell, not from Git Bash or
+another MSYS shell. ESP-IDF refuses to activate there, including in a
+PowerShell started from inside Git Bash.
+
+The board has two USB-C ports. Use the one marked **UART**: the settings
+console reads commands only there. The native USB port shows the log but does
+not accept input.
+
+Settings are entered once through the console and kept on the device across
+reboots and reflashing:
+
+```
+config set wifi_ssid "Network name"
+config set wifi_pass "password"
+config show
+reboot
+```
+
+| Key | Meaning |
+| --- | --- |
+| `wifi_ssid` | Network to join. 2.4 GHz only; the ESP32-S3 has no 5 GHz radio. |
+| `wifi_pass` | 8-63 characters, or 64 hexadecimal digits. Unset for an open network. |
+| `server_url` | Optional. Empty means the server is discovered on the local network. |
+| `device_id` | Optional. Defaults to `hc-` plus the last six hex digits of the MAC address. Letters, digits and `-`. |
+| `device_token` | Credential for the server, used from stage 6. |
+
+Values containing spaces go in double quotes. Inside a value, a backslash is
+written `\\` and a double quote `\"`. `config show` never prints the password
+or token, and the console clears its line history after either is entered.
+Changes take effect after `reboot`.
+
 ## Repository layout
 
 Directories are created as the corresponding stage begins.
 
 ```
 firmware/          ESP-IDF application for the ESP32-S3
-firmware/tools/    Standalone hardware test programs
+  main/            Startup and the serial console
+  components/      app_config (settings), net (WiFi), board (pin map)
+  tools/           Standalone hardware test programs
 server/            Python server: transport, speech, Claude, session store
 docs/              Diagrams and supporting material
 ```

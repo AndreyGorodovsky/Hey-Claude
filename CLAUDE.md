@@ -46,7 +46,9 @@ Work proceeds in numbered stages listed in [STATUS.md](STATUS.md).
 | Python | 3.11+ | |
 | Claude model | `claude-opus-5` | |
 
-Confirm `IDF_PATH` points at a v5.5.x checkout before building. When changing
+Confirm `IDF_PATH` points at a v5.5.x checkout before building. Run ESP-IDF
+from PowerShell, never from Git Bash (`MSYSTEM` blocks activation). The board's
+console is UART0, on the CH340 port. When changing
 ESP-IDF versions, also check `IDF_TOOLS_PATH` and `IDF_PYTHON_ENV_PATH` in the
 persisted user environment, not only in the current shell — see R7 in
 [KNOWN-ISSUES.md](KNOWN-ISSUES.md).

@@ -3,7 +3,7 @@
 Open risks, defects and caveats. Risks identified during design are listed
 before any code exists so that they are tested for rather than discovered.
 
-**Confirmed defects:** none. No code has been written.
+**Confirmed defects:** none.
 
 ## Open risks
 
@@ -71,12 +71,18 @@ to the user `PATH`, which remained after the installation was deleted.
 The failures present as problems with the new version rather than as residue
 from the old one.
 
+A related trap: shells from the MSYS family, such as Git Bash, set `MSYSTEM`,
+and ESP-IDF refuses to activate when it is present, with the error "MSys/Mingw
+is not supported". This includes a PowerShell started from inside Git Bash,
+which inherits the variable.
+
 *Mitigation:* when changing ESP-IDF versions, check `IDF_PATH`,
 `IDF_TOOLS_PATH` and `IDF_PYTHON_ENV_PATH` in the persisted user environment,
 not only in the current shell, and run installers from a shell with no ESP-IDF
 environment active. Remove orphaned toolchains with `idf_tools.py uninstall`
 rather than by deleting directories, since tool versions are shared between
-installations.
+installations. Run ESP-IDF from a PowerShell that was not started from an
+MSYS shell.
 
 ### R8 — Unencrypted transport on the LAN
 
@@ -101,6 +107,16 @@ the stage 0 baseline figures in [docs/BRINGUP.md](docs/BRINGUP.md) then, and
 take the stage 2 peak measurement as planned. Until then, a reset during loud
 playback is attributed to the supply first.
 
+### R10 — Device credentials stored unencrypted
+
+The WiFi password and the device token are stored in NVS in plain text.
+Anyone with physical access to the device and a USB cable can read them out
+of flash.
+
+*Mitigation:* accepted for LAN-only development, alongside R8. NVS encryption,
+or flash encryption, is to be adopted together with provisioning and OTA in
+stage 8.
+
 ## Resolved
 
 - **R4 — Provisional pinout unvalidated.** Built on the breadboard and each
@@ -121,3 +137,13 @@ playback is attributed to the supply first.
   third-party services for processing and are excluded from version control.
 - **Wake-word detection runs entirely on-device.** No audio is transmitted
   before the wake word fires.
+- **The console echoes what is typed.** A password entered with `config set`
+  is visible on screen as it is typed, and in any terminal scrollback or log
+  capture. It is not kept in the console's own line history.
+- **Settings apply after a reboot.** `config set` changes what is stored,
+  not what is running.
+- **The console accepts input only on the UART port.** The native USB port
+  shows the log but ignores keystrokes.
+- **About one second passes between the boot banner and WiFi start.** Observed
+  on every boot; the cause has not been investigated. It is a boot-time cost,
+  not a latency on requests.
