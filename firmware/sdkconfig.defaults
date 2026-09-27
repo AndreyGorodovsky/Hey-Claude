@@ -1,29 +1,49 @@
-# Committed build configuration. Holds no credentials: WiFi and device
-# settings are entered at runtime through the serial console (see README).
+# Build configuration, committed to the repository.
+#
+# ESP-IDF keeps its full configuration in a generated file, `sdkconfig`, which
+# is not committed (it can end up holding local values). On the first build,
+# and whenever `sdkconfig` is deleted, it is created from ESP-IDF's defaults
+# with the values below applied on top. After changing this file, delete
+# `sdkconfig` so the change takes effect.
+#
+# Holds no credentials: WiFi and device settings are entered at runtime
+# through the serial console (see README).
 
 CONFIG_IDF_TARGET="esp32s3"
 
-# Flash and partitions
+# --- Flash and partitions ---
+# 16 MB flash chip. QIO ("quad I/O") reads flash over four data lines instead
+# of two, roughly doubling the speed of code running from flash. The build
+# still marks the image as DIO; the bootloader switches to QIO itself.
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+# Use the project's own partition table, partitions.csv, instead of a default.
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
-# In-package 8 MB octal PSRAM (ESP32-S3R8)
+# --- PSRAM ---
+# 8 MB of extra RAM inside the chip package (the "R8" in ESP32-S3R8),
+# connected over an eight-line ("octal") bus. Must be enabled here or the
+# firmware cannot use it. Its free size is logged at every boot.
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 
-# CPU
+# --- CPU ---
+# Full speed; the default is 160 MHz. Audio and wake-word work need it.
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 
-# Brownout resets must stay visible in the reset reason (R2, R9)
+# --- Brownout detector ---
+# Resets the chip if the supply voltage drops too low, and records the reason.
+# That record is how supply faults are spotted (KNOWN-ISSUES R2, R9).
 CONFIG_ESP_BROWNOUT_DET=y
 
-# A crash is saved to flash and survives the reboot; read it with
-# idf.py coredump-info
+# --- Core dump ---
+# On a crash, save the state of every task to the `coredump` partition. It
+# survives the reboot and can be read with: idf.py coredump-info
 CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
 
-# Logging
+# --- Logging ---
+# Log level compiled in: errors, warnings and informational messages.
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y

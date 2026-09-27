@@ -1,4 +1,15 @@
+# The `main` component: startup and the serial console.
+# PRIV_REQUIRES lists the components this code uses. Under MINIMAL_BUILD a
+# component missing from this list is not built at all.
 idf_component_register(SRCS "main.c" "console.c"
                        INCLUDE_DIRS "."
-                       PRIV_REQUIRES app_config net console nvs_flash esp_event esp_netif
-                                     esp_app_format spi_flash esp_psram esp_system espcoredump)
+                       PRIV_REQUIRES app_config net
+                                     console          # serial command line
+                                     nvs_flash        # settings storage
+                                     esp_event        # default event loop
+                                     esp_netif        # TCP/IP layer
+                                     esp_app_format   # version in the boot banner
+                                     spi_flash        # flash size in the boot banner
+                                     esp_psram        # PSRAM support
+                                     esp_system       # reset reason, restart
+                                     espcoredump)     # crash dump to flash

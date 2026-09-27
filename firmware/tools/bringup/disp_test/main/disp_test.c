@@ -1,6 +1,26 @@
-/* Throwaway stage-0 check: NV3007 on SPI2 (SCLK=12, MOSI=11, CS=10, DC=9,
- * RST=8, BL=14). Backlight on, then full-GRAM colour fills in a loop.
- * Init sequence from LVGL lv_nv3007.c (ported from Arduino_GFX). */
+/*
+ * Bring-up test: NV3007 display on SPI2 (SCLK=12, MOSI=11, CS=10, DC=9,
+ * RST=8, BL=14).
+ *
+ * Keeps the backlight off for 3 s, switches it on, initialises the panel,
+ * then fills the whole screen red, green, blue, white and black in a 2 s
+ * loop. Correct colours in that order confirm every wire; the panel cannot
+ * send anything back, so looking at it is the only check.
+ *
+ * Background: the display is driven over SPI, a fast serial bus. The chip
+ * sends bytes on MOSI, one bit per SCLK pulse, while CS is low. The DC pin
+ * says what the bytes are: low = a command (for example "set drawing window"),
+ * high = data (the command's parameters, or pixels). Pixels are RGB565:
+ * 16 bits each, 5 bits red, 6 green, 5 blue.
+ *
+ * The panel controller's memory (GRAM) is 168 x 428 pixels, wider than the
+ * 142 visible columns. This test fills all of it, so the column offset of the
+ * visible area does not matter here; the real driver must account for it.
+ *
+ * The initialisation sequence is copied from LVGL's lv_nv3007.c driver,
+ * itself ported from Arduino_GFX. This is a standalone ESP-IDF project, not
+ * part of the device firmware.
+ */
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -17,10 +37,18 @@
 #define PIN_RST  8
 #define PIN_BL   14
 
-#define GRAM_W 168
-#define GRAM_H 428
-#define LINES  20
+#define GRAM_W 168      /* controller memory width in pixels */
+#define GRAM_H 428      /* controller memory height in pixels */
+#define LINES  20       /* rows sent per SPI transfer: 168 * 20 * 2 = 6.7 KB */
 
+/*
+ * Vendor register settings (power, voltages, gamma, timing). Opaque by
+ * nature: the values come from the panel maker. Format, repeated: command
+ * byte, number of parameter bytes, then the parameters. For example
+ * "0x8f,2,0x55,0x04" sends command 0x8F with parameters 0x55 and 0x04.
+ * These registers are only reachable after an unlock command (0xFF, 0xA5),
+ * sent before this list in app_main.
+ */
 static const uint8_t init1[] = {
     0x9a,1,0x08, 0x9b,1,0x08, 0x9c,1,0xb0, 0x9d,1,0x16, 0x9e,1,0xc4,
     0x8f,2,0x55,0x04, 0x84,1,0x90, 0x83,1,0x7b, 0x85,1,0x33,
@@ -47,33 +75,43 @@ static const uint8_t init1[] = {
     0xe9,1,0x29, 0xec,1,0x04, 0x35,1,0x00, 0x44,2,0x00,0x10, 0x46,1,0x10,
 };
 
+/* ESP-IDF's "panel IO" handle: sends a command byte with DC low, then its
+ * parameter or pixel bytes with DC high, over the SPI bus. */
 static esp_lcd_panel_io_handle_t io;
 
+/* Sends one command with n parameter bytes (d may be NULL when n is 0). */
 static void cmd(uint8_t c, const uint8_t *d, size_t n)
 {
     ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(io, c, d, n));
 }
 
+/* Sends every command in a list in the init1 format described above. */
 static void send_list(const uint8_t *l, size_t len)
 {
     for (size_t i = 0; i < len; ) {
         uint8_t c = l[i], n = l[i + 1];
         cmd(c, &l[i + 2], n);
-        i += 2 + n;
+        i += 2 + n;         /* skip the command, the count and its parameters */
     }
 }
 
+/* Fills the whole controller memory with one colour, a strip at a time. */
 static void fill(uint16_t *buf, uint16_t rgb565, const char *name)
 {
+    /* The panel expects each pixel's high byte first; the ESP32 stores the
+     * low byte first. Swap the two bytes once, here. */
     uint16_t be = (rgb565 >> 8) | (rgb565 << 8);
     for (int i = 0; i < GRAM_W * LINES; i++) buf[i] = be;
+    /* Drawing window: columns 0..167 (0x2A) and rows 0..427 (0x2B). Each is a
+     * start and an end, as 16-bit values sent high byte first. */
     uint8_t ca[] = {0, 0, 0, GRAM_W - 1};
     uint8_t ra[] = {0, 0, (GRAM_H - 1) >> 8, (GRAM_H - 1) & 0xff};
     cmd(0x2a, ca, 4);
     cmd(0x2b, ra, 4);
     for (int y = 0; y < GRAM_H; y += LINES) {
-        int h = (GRAM_H - y) < LINES ? (GRAM_H - y) : LINES;
-        /* 0x2C for the first chunk, 0x3C (memory write continue) after */
+        int h = (GRAM_H - y) < LINES ? (GRAM_H - y) : LINES;   /* last strip may be shorter */
+        /* 0x2C starts writing at the window's top-left; 0x3C continues from
+         * where the previous write stopped */
         ESP_ERROR_CHECK(esp_lcd_panel_io_tx_color(io, y == 0 ? 0x2c : 0x3c, buf, GRAM_W * h * 2));
     }
     printf("DISP fill %s\n", name);
@@ -81,6 +119,7 @@ static void fill(uint16_t *buf, uint16_t rgb565, const char *name)
 
 void app_main(void)
 {
+    /* RST and BL are plain digital outputs, not part of SPI */
     gpio_config_t out = {
         .pin_bit_mask = (1ULL << PIN_RST) | (1ULL << PIN_BL),
         .mode = GPIO_MODE_OUTPUT,
@@ -88,6 +127,10 @@ void app_main(void)
     ESP_ERROR_CHECK(gpio_config(&out));
     gpio_set_level(PIN_BL, 0);
 
+    /* SPI controller 2. The panel only receives, so there is no MISO line
+     * (-1); the quad-SPI pins are unused. max_transfer_sz is the largest
+     * single transfer, one strip of pixels. DMA lets the SPI hardware read
+     * the pixels from RAM without the CPU copying each byte. */
     spi_bus_config_t bus = {
         .sclk_io_num = PIN_SCLK, .mosi_io_num = PIN_MOSI, .miso_io_num = -1,
         .quadwp_io_num = -1, .quadhd_io_num = -1,
@@ -95,34 +138,47 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO));
 
+    /* 10 MHz is deliberately slow: long breadboard wires distort fast edges.
+     * SPI mode 0 is the clock polarity and phase the NV3007 expects. Commands
+     * and parameters are 8 bits each. */
     esp_lcd_panel_io_spi_config_t io_cfg = {
         .cs_gpio_num = PIN_CS, .dc_gpio_num = PIN_DC,
-        .spi_mode = 0, .pclk_hz = 10 * 1000 * 1000,   /* conservative for a breadboard */
+        .spi_mode = 0, .pclk_hz = 10 * 1000 * 1000,
         .trans_queue_depth = 4, .lcd_cmd_bits = 8, .lcd_param_bits = 8,
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi(SPI2_HOST, &io_cfg, &io));
 
+    /* Backlight test first: it only needs VDD, GND and BL, so it isolates
+     * power wiring from data wiring */
     printf("DISP backlight OFF for 3 s\n");
     vTaskDelay(pdMS_TO_TICKS(3000));
     gpio_set_level(PIN_BL, 1);
     printf("DISP backlight ON\n");
 
+    /* Hardware reset: hold RST low, release, then give the controller time
+     * to start before sending commands */
     gpio_set_level(PIN_RST, 0);
     vTaskDelay(pdMS_TO_TICKS(20));
     gpio_set_level(PIN_RST, 1);
     vTaskDelay(pdMS_TO_TICKS(150));
 
-    cmd(0xff, (const uint8_t[]){0xa5}, 1);
+    cmd(0xff, (const uint8_t[]){0xa5}, 1);   /* unlock vendor registers */
     send_list(init1, sizeof(init1));
-    cmd(0xff, (const uint8_t[]){0x00}, 1);
-    cmd(0x3a, (const uint8_t[]){0x05}, 1);   /* RGB565 */
-    cmd(0x11, NULL, 0);                       /* sleep out */
-    vTaskDelay(pdMS_TO_TICKS(120));
+    cmd(0xff, (const uint8_t[]){0x00}, 1);   /* lock them again */
+    cmd(0x3a, (const uint8_t[]){0x05}, 1);   /* pixel format: RGB565 */
+    cmd(0x11, NULL, 0);                       /* sleep out: panel powers up */
+    vTaskDelay(pdMS_TO_TICKS(120));           /* required wait after sleep out */
     cmd(0x29, NULL, 0);                       /* display on */
     vTaskDelay(pdMS_TO_TICKS(20));
     printf("DISP init done\n");
 
+    /* The strip buffer must be in DMA-capable internal RAM, not PSRAM */
     uint16_t *buf = heap_caps_malloc(GRAM_W * LINES * 2, MALLOC_CAP_DMA);
+    if (!buf) {
+        printf("DISP out of memory\n");
+        return;
+    }
+    /* RGB565 values: red = top 5 bits, green = middle 6, blue = bottom 5 */
     const struct { uint16_t c; const char *n; } seq[] = {
         {0xF800, "RED"}, {0x07E0, "GREEN"}, {0x001F, "BLUE"}, {0xFFFF, "WHITE"}, {0x0000, "BLACK"},
     };

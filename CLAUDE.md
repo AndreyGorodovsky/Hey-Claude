@@ -58,5 +58,13 @@ persisted user environment, not only in the current shell — see R7 in
 - Documentation is written for a public audience in general language, never
   addressed to a particular reader.
 - Firmware follows ESP-IDF style; server code follows PEP 8 with type hints.
+- **Firmware is commented thoroughly, for a reader new to embedded work.**
+  Every file opens with what it does and where it fits. Explain hardware and
+  ESP-IDF concepts at first use in each file (NVS, event loop, I2S slots, DMA,
+  PSRAM, strapping pins), the reason behind each non-obvious call, units and
+  magic numbers, and which task or context code runs in. Comments say why, not
+  what the line already says.
+- Server and other code is commented for intent and non-obvious decisions, with
+  docstrings on public functions and classes; less thorough than firmware.
 - Every measured value that replaces an estimate in these documents is marked
   as measured, with the conditions under which it was taken.

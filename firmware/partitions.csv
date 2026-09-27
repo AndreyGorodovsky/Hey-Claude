@@ -1,5 +1,16 @@
-# Two OTA app slots and a core dump. The remainder of the 16 MB flash, from
-# 0x830000, is left unallocated.
+# Flash partition table: how the 16 MB flash chip is divided up.
+# Everything before 0x9000 holds the bootloader and this table itself.
+#
+#   nvs       settings (key-value storage), kept across reflashing
+#   otadata   records which of the two app slots to boot
+#   phy_init  WiFi radio calibration data
+#   ota_0/1   two slots for the application. Only one is used until over-the-
+#             air updates exist; with two, an update can be written to the
+#             idle slot while the other keeps running.
+#   coredump  the state of the last crash, read with `idf.py coredump-info`
+#
+# The remainder, from 0x830000 (about 7.8 MB), is left unallocated.
+# App partitions must start on a 64 KB (0x10000) boundary.
 # Name,    Type, SubType,  Offset,   Size
 nvs,       data, nvs,      0x9000,   0x6000
 otadata,   data, ota,      0xf000,   0x2000
