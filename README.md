@@ -166,6 +166,18 @@ written `\\` and a double quote `\"`. `config show` never prints the password
 or token, and the console clears its line history after either is entered.
 Changes take effect after `reboot`.
 
+Two console commands test the audio hardware:
+
+```
+audio loop 5        record 5 s, print the level, play it back louder
+audio tone 20 3     play a 440 Hz tone at 20 % of full volume for 3 s
+```
+
+`audio loop` boosts the recording so that it can be heard, which also makes
+background hiss audible; the printed level is that of the unboosted recording.
+`audio tone 100` is loud and draws the most supply current the device will
+ever need, which makes it the test for a weak supply or cable.
+
 ## Repository layout
 
 Directories are created as the corresponding stage begins.
@@ -173,7 +185,8 @@ Directories are created as the corresponding stage begins.
 ```
 firmware/          ESP-IDF application for the ESP32-S3
   main/            Startup and the serial console
-  components/      app_config (settings), net (WiFi), board (pin map)
+  components/      app_config (settings), net (WiFi), audio (microphone and
+                   amplifier), board (pin map)
   tools/           Standalone hardware test programs
 server/            Python server: transport, speech, Claude, session store
 docs/              Diagrams and supporting material

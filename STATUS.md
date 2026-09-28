@@ -1,6 +1,6 @@
 # Status
 
-**Current stage:** Stage 1 complete; stage 2 not yet planned.
+**Current stage:** Stage 2 complete; stage 3 not yet planned.
 
 **Last updated:** 2026-09-28
 
@@ -16,8 +16,10 @@ plan without change.
 
 The firmware boots with all 8 MB of PSRAM, logs a boot banner including the
 reset reason, stores its settings in NVS, and joins WiFi with automatic
-reconnection. Settings are entered through a serial console. The server
-exists only as a configuration skeleton.
+reconnection. Settings are entered through a serial console. The microphone
+records and the amplifier plays: a record-then-play loopback runs cleanly
+from the console, and a full-volume tone ran without a brownout on a PC USB
+port. The server exists only as a configuration skeleton.
 
 ## Stages
 
@@ -25,7 +27,7 @@ exists only as a configuration skeleton.
 | --- | --- | --- | --- |
 | 0 | Hardware bring-up | Done, with a deviation (see below) | Circuit assembled on breadboard, checked for shorts, and powered peripheral by peripheral. Supply and cable confirmed adequate, baseline current recorded, pinout corrected to match what was built. Procedure in [docs/BRINGUP.md](docs/BRINGUP.md). |
 | 1 | Foundations | Done | ESP-IDF project skeleton, NVS-backed configuration for WiFi, server URL and device identity, logging. Device boots, joins WiFi and logs. |
-| 2 | Audio I/O bring-up | Not started | INMP441 capture on I2S0 and MAX98357A playback on I2S1. A three-second record-then-play loopback runs cleanly. Also the first point at which peak current can be measured under amplifier load, completing the record started in stage 0. |
+| 2 | Audio I/O bring-up | Done | INMP441 capture on I2S0 and MAX98357A playback on I2S1. A three-second record-then-play loopback runs cleanly. Also the first point at which peak current can be measured under amplifier load, completing the record started in stage 0. |
 | 3 | Display and state machine | Not started | LVGL 9 driving the NV3007 panel, backlight under control, and the state animations driven by a mock state machine that cycles on a timer. No network. |
 | 4 | Wake word | Not started | microWakeWord integrated with a continuous ring buffer; detection drives the state transition. Custom phrase trained and thresholds tuned against a multi-hour false-accept run. |
 | 5 | Server v1 | Not started | WebSocket server, device authentication, day-scoped conversation store, and the speech-to-text, Claude and text-to-speech chain. Validated end to end by a desktop client script with no device involved. |
@@ -62,7 +64,7 @@ can be put in place as soon as they are obtained: `server/config.py` and
 
 ## Next steps
 
-1. Plan stage 2 into steps and submit them for approval.
+1. Plan stage 3 into steps and submit them for approval.
 2. Obtain API keys for Anthropic and Deepgram, copy `server/.env.example` to
    `server/.env`, and fill them in. See [SECRETS.md](SECRETS.md).
 3. Obtain a multimeter for the continuity checks before the circuit is

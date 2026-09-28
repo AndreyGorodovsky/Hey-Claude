@@ -9,16 +9,20 @@
  * Start-up order matters, because later steps depend on earlier ones:
  *   1. Boot banner    - diagnostic summary, printed first so it survives
  *                       any later failure.
- *   2. NVS            - flash-backed key-value storage that holds the settings.
- *   3. Network stack  - TCP/IP layer and the default event loop, needed by WiFi.
- *   4. Settings       - read from NVS into memory, once.
- *   5. Console        - serial command line for entering settings.
- *   6. WiFi           - only if a network has been configured.
+ *   2. Audio          - microphone started (it runs from here on), amplifier
+ *                       switched off. Early, because until then the
+ *                       amplifier's on/off pin floats.
+ *   3. NVS            - flash-backed key-value storage that holds the settings.
+ *   4. Network stack  - TCP/IP layer and the default event loop, needed by WiFi.
+ *   5. Settings       - read from NVS into memory, once.
+ *   6. Console        - serial command line for settings and audio tests.
+ *   7. WiFi           - only if a network has been configured.
  *
- * Stage 1 stops here. Audio, display and the server connection are added in
- * later stages (see STATUS.md).
+ * The display and the server connection are added in later stages (see
+ * STATUS.md).
  */
 #include "app_config.h"
+#include "audio.h"
 #include "console.h"
 #include "net.h"
 
@@ -60,8 +64,9 @@ static const char *reset_reason_str(esp_reset_reason_t r)
 
 /*
  * Prints a short summary at every boot. The reset reason is the most useful
- * line: the project has no power meter yet (KNOWN-ISSUES R9), so a brownout
- * reset in this log is the main evidence of a weak supply or cable.
+ * line: the USB power meter shows only averages and misses short dips
+ * (KNOWN-ISSUES R9), so a brownout reset in this log is the decisive evidence
+ * of a weak supply or cable.
  */
 static void log_banner(void)
 {
@@ -121,6 +126,14 @@ void app_main(void)
 {
     log_banner();
 
+    /* Not ESP_ERROR_CHECK: without audio the device can still join WiFi and
+     * take console commands, which is more useful for diagnosing the fault
+     * than a restart loop. The audio functions refuse to run afterwards. */
+    esp_err_t err = audio_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "audio not available: %s", esp_err_to_name(err));
+    }
+
     init_nvs();
     /* esp_netif is ESP-IDF's layer over the TCP/IP stack; WiFi attaches to it. */
     ESP_ERROR_CHECK(esp_netif_init());
@@ -144,7 +157,7 @@ void app_main(void)
      * password the driver rejects, for example). Aborting would restart the
      * chip into the same failure forever, before the console could be used to
      * fix it. Logging and carrying on keeps the console available. */
-    esp_err_t err = net_start(cfg->wifi_ssid, cfg->wifi_pass, cfg->device_id);
+    err = net_start(cfg->wifi_ssid, cfg->wifi_pass, cfg->device_id);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "WiFi not started: %s. Check the settings with: config show",
                  esp_err_to_name(err));

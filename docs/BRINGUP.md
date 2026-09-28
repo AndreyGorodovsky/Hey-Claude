@@ -125,10 +125,14 @@ Fill in during bring-up and keep the completed table with the project.
 | Amplifier enabled, silent | Small increase | 4.945 V, 0.118 A | Rail holds 4.8 V or above |
 | 440 Hz tone at 20 % of full scale | — | 4.945 V, up to 0.138 A | Rail holds 4.8 V or above |
 | WiFi connected, power save on | — | 4.932-4.940 V, 0.124-0.143 A | Rail holds 4.8 V or above |
-| **Playback peak (stage 2)** | **~1 A or more** | | **Rail never falls below 4.7 V** |
+| **Playback peak (stage 2)** | **~1 A or more** | **4.831 V, 0.556 A average; no reset** | **Rail never falls below 4.7 V** |
 
-Every figure except the stage 2 row is measured, on 2026-09-28, under the
-conditions described in [Baseline measurement](#baseline-measurement-2026-09-28).
+Every figure is measured, on 2026-09-28, under the conditions described in
+[Baseline measurement](#baseline-measurement-2026-09-28). The stage 2 row was
+taken with the device firmware's `audio tone 100 5`: a 440 Hz sine at full
+scale, played at 24 kHz for 5 s, with WiFi connected. It is an average read
+off the meter's display, so the true peak is higher (R9); the absence of a
+brownout reset is the result that counts.
 
 ## Results of the first bring-up (2026-09-27)
 

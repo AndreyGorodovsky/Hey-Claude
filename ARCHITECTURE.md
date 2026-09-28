@@ -24,9 +24,10 @@ made during the feasibility review and are binding unless explicitly revisited.
 
 | Component | Responsibility |
 | --- | --- |
-| `main` | Startup order, boot banner, serial console and its commands |
+| `main` | Startup order, boot banner, serial console and its commands, including audio test commands |
 | `app_config` | Settings stored in NVS: loading the running configuration, validating and storing edits. No user interface of its own |
 | `net` | WiFi station: joining, reconnecting with backoff, readable failure reasons |
+| `audio` | Microphone capture and amplifier playback over I2S: plain 16-bit samples in and out, no buffering or tasks of its own |
 | `board` | The verified pin map, the single source of pin numbers |
 
 Settings are loaded once at boot into a read-only structure. Edits change only
@@ -99,9 +100,19 @@ cause of them.
   24-bit frames; the top 16 bits are taken. 16 kHz mono is what both the
   wake-word model and the speech-to-text service expect, so no resampling
   occurs anywhere in the chain.
-- **Playback:** MAX98357A on I2S1, 24 kHz, 16-bit mono. Playback runs at a
-  higher rate than capture because synthesised speech benefits from it and the
-  amplifier sits on an independent I2S controller.
+- The microphone runs continuously from boot. It powers down whenever its
+  clock stops, and its output then takes about 2 s to settle after the clock
+  restarts, so stopping it between recordings would spoil the start of each
+  one. Callers pull samples with a blocking read; audio not read within about
+  75 ms is dropped by the driver.
+- The controller reads both I2S slots and keeps the left one. Its "mono" mode,
+  documented as reading one slot, delivered both slots at 32 bits on this
+  chip, interleaving every sample with a zero.
+- **Playback:** MAX98357A on I2S1, 16-bit mono, at the rate given when each
+  playback starts: 24 kHz for replies, which is announced by the server in
+  `reply_start`. Playback runs at a higher rate than capture because
+  synthesised speech benefits from it and the amplifier sits on an
+  independent I2S controller.
 - The amplifier `SD` pin is held low except during playback, to suppress the
   switching click produced when the output stage engages. Driven high from a
   3.3 V GPIO, it selects the left I2S slot, so playback samples are written to
@@ -110,7 +121,16 @@ cause of them.
   The right slot reads zero.
 
 The ESP32-S3 has two independent I2S controllers, so capture and playback never
-contend.
+contend. The I2S interrupt handlers run on core 1 with the rest of the audio
+chain: ESP-IDF places an interrupt on the core that sets it up, so the audio
+set-up runs in a short-lived task there.
+
+The `audio` component allows one reader of the microphone at a time. Stage 4
+adds a single capture task on core 1 as that reader, feeding the PSRAM ring
+buffer from which wake-word detection and the upload in stage 6 both read;
+the `audio loop` test command then reads from the ring as well. Stage 6 adds
+an immediate stop for playback, for error and cancel paths that cannot wait
+for queued audio to finish.
 
 ### Display
 

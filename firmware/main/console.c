@@ -17,12 +17,14 @@
  *   config set <key> <value>      validate and store a setting
  *   config unset <key>            remove a stored setting
  *   reboot                        restart, applying changed settings
+ *   audio ...                     audio tests, listed in audio_cmd.c
  */
 #include "console.h"
 
 #include <stdio.h>
 #include <string.h>
 #include "app_config.h"
+#include "audio_cmd.h"
 #include "esp_check.h"
 #include "esp_console.h"
 #include "esp_system.h"
@@ -155,6 +157,7 @@ esp_err_t console_start(void)
         .func = cmd_config,
     };
     ESP_RETURN_ON_ERROR(esp_console_cmd_register(&config), TAG, "config");
+    ESP_RETURN_ON_ERROR(audio_cmd_register(), TAG, "audio");
 
     /* Starts the console task and returns; the task runs from now on */
     return esp_console_start_repl(repl);

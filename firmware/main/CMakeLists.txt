@@ -1,9 +1,9 @@
 # The `main` component: startup and the serial console.
 # PRIV_REQUIRES lists the components this code uses. Under MINIMAL_BUILD a
 # component missing from this list is not built at all.
-idf_component_register(SRCS "main.c" "console.c"
+idf_component_register(SRCS "main.c" "console.c" "audio_cmd.c"
                        INCLUDE_DIRS "."
-                       PRIV_REQUIRES app_config net
+                       PRIV_REQUIRES app_config net audio
                                      console          # serial command line
                                      nvs_flash        # settings storage
                                      esp_event        # default event loop

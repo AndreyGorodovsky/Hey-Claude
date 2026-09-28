@@ -32,8 +32,9 @@ easily misattributed to firmware.
 amplifier fed from 5 V, not 3.3 V. If resets persist, the supply is the first
 suspect, not the code. Baseline current and the peak under load are recorded
 before and during stage 2, per [docs/BRINGUP.md](docs/BRINGUP.md). The
-baseline is recorded: 0.10-0.14 A with the rail at 4.93 V or above, measured
-on a PC USB 3.0 port.
+baseline is 0.10-0.14 A with the rail at 4.93 V or above. Measured in stage 2
+with a full-scale tone and WiFi connected: 0.556 A average at 4.831 V, with no
+reset, on a PC USB 3.0 port.
 
 A breadboard compounds this. Contact resistance and shared rails not intended
 for 1 A transients can themselves cause the voltage drop, making the bench the
@@ -93,25 +94,26 @@ local network can read conversation audio in both directions.
 *Mitigation:* accepted for LAN-only development. Moving the server off the LAN
 requires TLS and a stronger device credential before it is reachable publicly.
 
-### R9 — Playback peak not measured, continuity not checked
+### R9 — Playback peak known only as an average, continuity not checked
 
 The first bring-up was carried out without a multimeter or a USB power meter.
-The baseline figures were taken afterwards with a USB power meter and are
-recorded in [docs/BRINGUP.md](docs/BRINGUP.md): the rail held 4.93 V or above
-at up to 0.14 A. Two gaps remain.
+The figures were taken afterwards with a USB power meter and are recorded in
+[docs/BRINGUP.md](docs/BRINGUP.md). Two gaps remain.
 
-- **The playback peak described in R2 is unmeasured.** The meter shows
-  averages refreshed a few times per second, so it cannot catch a transient of
-  about 10 ms, and it reads voltage before the cable rather than at the board.
+- **The true playback peak described in R2 is unmeasured.** The full-scale
+  tone test in stage 2 read 0.556 A at 4.831 V, but the meter shows averages
+  refreshed a few times per second, so it cannot catch a transient of about
+  10 ms, and it reads voltage before the cable rather than at the board. The
+  board did not reset, which is the decisive result for this supply.
 - **No continuity or short checks were made**, since they need a multimeter.
   The working peripherals show the connections are sound, but not that there
   is no marginal contact.
 
-*Mitigation:* take the stage 2 peak measurement as planned, and treat a
-reading from this meter as a lower bound on the peak. The brownout reset
-reason in the boot log remains the decisive test: a reset during loud playback
-is attributed to the supply first. Obtain a multimeter for the continuity
-checks before the circuit is soldered.
+*Mitigation:* the brownout reset reason in the boot log remains the decisive
+test: a reset during loud playback is attributed to the supply first. Repeat
+`audio tone 100` after soldering and after any change of supply or cable.
+Obtain a multimeter for the continuity checks before the circuit is
+soldered.
 
 ### R10 — Device credentials stored unencrypted
 
@@ -123,19 +125,30 @@ of flash.
 or flash encryption, is to be adopted together with provisioning and OTA in
 stage 8.
 
-### R11 — Backlight and amplifier enable pins left floating
+### R11 — Backlight pin left floating
 
-Neither the stage 1 firmware nor the `mic_test` and `amp_test` programs
-configure the display's backlight pin (GPIO14), and the stage 1 firmware does
-not configure the amplifier's `SD` pin either. A pin no code drives is
+The firmware does not yet configure the display's backlight pin (GPIO14), nor
+do the `mic_test` and `amp_test` programs. A pin no code drives is
 "floating": it settles high or low unpredictably. Observed on 2026-09-28: the
 backlight was off under `mic_test` and on under `amp_test` and the stage 1
-firmware. A floating `SD` can likewise leave the amplifier enabled and drawing
-current, or picking up noise, with no audio playing.
+firmware. The amplifier's `SD` pin had the same problem until stage 2, which
+drives it low at boot and high only during playback.
 
-*Mitigation:* the firmware drives both pins to a defined state at boot:
-amplifier off until audio plays, from stage 2, and backlight under explicit
-control from stage 3. Fixing it earlier is outside the current stage.
+*Mitigation:* the backlight comes under explicit control in stage 3.
+
+### R12 — Speech arrives quietly from the microphone
+
+Speech at 0.5-1 m measured about -52 dBFS RMS on 2026-09-28, against a
+quiet-room floor of about -67 dBFS: roughly 15 dB above the noise, and more
+than 45 dB below full scale. The firmware keeps the top 16 of the
+microphone's 24 bits, which suits loud sound and leaves ordinary speech small.
+Speech-to-text services and wake-word models normalise level to some degree,
+so it is not yet known whether this matters.
+
+*Mitigation:* the shift is one named constant, `CAPTURE_SHIFT` in
+`firmware/components/audio/audio.c`. Its value is decided against real
+results: wake-word detection in stage 4 and transcripts in stage 6. A smaller
+shift adds gain in 6 dB steps and must clip rather than wrap.
 
 ## Resolved
 
@@ -164,6 +177,11 @@ control from stage 3. Fixing it earlier is outside the current stage.
   not what is running.
 - **The console accepts input only on the UART port.** The native USB port
   shows the log but ignores keystrokes.
+- **The microphone is not usable for about 2 s after boot.** It starts in
+  `audio_init()` and its output settles over that time.
+- **`audio loop` playback includes audible hiss.** The test boosts quiet
+  recordings by up to 36 dB so that speech can be heard, which raises the
+  microphone's own noise with it. The recorded audio itself is not boosted.
 - **About one second passes between the boot banner and WiFi start.** Observed
   on every boot; the cause has not been investigated. It is a boot-time cost,
   not a latency on requests.
