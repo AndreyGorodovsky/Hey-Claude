@@ -4,10 +4,16 @@
  * I2S is a three-wire serial bus for audio: a bit clock (BCLK, called SCK on
  * the microphone), a word-select line (WS, called LRC on the amplifier) that
  * switches between the left and right channel once per sample, and one data
- * line. The ESP32-S3 has two independent I2S controllers. The microphone gets
+ * line. Each word-select period carries one "frame": a left and a right
+ * "slot", one sample each. The sample rate is frames per second: 16 kHz means
+ * 16,000 frames every second.
+ *
+ * The ESP32-S3 has two independent I2S controllers. The microphone gets
  * controller 0 and the amplifier controller 1, so capture and playback never
- * share a bus and can run at different sample rates. The chip is the bus
- * "master": it generates both clocks, and the modules follow them.
+ * share a bus and can run at different sample rates. ESP-IDF calls one
+ * direction of a controller a "channel": here a receive channel on 0 and a
+ * transmit channel on 1. The chip is the bus "master": it generates both
+ * clocks, and the modules follow them.
  *
  * Data moves between the controllers and RAM by DMA (direct memory access):
  * the I2S hardware reads or writes a ring of small buffers in internal RAM on
@@ -30,22 +36,27 @@
  * 2 s to settle: measured on 2026-09-28 in a quiet room, the level fell from
  * about -32 dBFS to its resting -68 dBFS over that time. Stopping it between
  * recordings would put that disturbance at the start of every one. While no
- * task reads, the driver keeps only the newest DMA_DESC buffers and silently
- * drops older ones.
+ * task reads, the driver keeps only the newest DMA_DESC - 1 buffers and
+ * silently drops older ones.
  *
  * Playback. The MAX98357A's SD pin is its on/off switch: low is off, and high
- * from a 3.3 V GPIO turns it on playing the left slot. Each 16-bit sample is
+ * from a 3.3 V GPIO (a general-purpose digital pin that the program sets high
+ * or low) turns it on playing the left slot. Each 16-bit sample is
  * sent in both slots ("mono" with both slots selected), so the slot choice
  * does not matter. The amplifier is switched on only while something plays,
  * and always while the I2S clock is already running with silence, which avoids
  * the click it makes when it wakes up without a clock.
  *
- * Context: every function here runs in the calling task, except the set-up
- * inside audio_init(), which runs in a short-lived task on core 1. The I2S
- * driver moves buffers in an interrupt handler, and ESP-IDF places an
- * interrupt handler on the core that set it up; doing the set-up on core 1
- * keeps the audio interrupts off core 0, where the WiFi driver's interrupts
- * run (ARCHITECTURE.md, task and core allocation).
+ * Context. A task is a FreeRTOS thread: an independent piece of the program
+ * that the scheduler runs, pausing and resuming it, on one of the chip's two
+ * CPU cores. Every function here runs in the task that calls it, except the
+ * set-up inside audio_init(), which runs in a short-lived task on core 1.
+ * The I2S driver moves buffers in an interrupt handler: a short function the
+ * hardware runs immediately when a DMA buffer completes, pausing whatever
+ * task was running on that core. ESP-IDF places an interrupt handler on the
+ * core that set it up; doing the set-up on core 1 keeps the audio interrupts
+ * off core 0, where the WiFi driver's interrupts run (ARCHITECTURE.md, task
+ * and core allocation).
  */
 #include "audio.h"
 
@@ -60,7 +71,7 @@
 
 static const char *TAG = "audio";
 
-/* DMA ring for each direction: DMA_DESC buffers of DMA_FRAMES samples each.
+/* DMA ring for each direction: DMA_DESC buffers of DMA_FRAMES frames each.
  * These are ESP-IDF's defaults, written out because audio_play_stop() depends
  * on them. At 16 kHz one buffer is 15 ms. The driver hands finished buffers to
  * readers through a queue of DMA_DESC - 1 entries, so at most 5 buffers,
@@ -94,7 +105,7 @@ static const char *TAG = "audio";
 
 /* Core that runs the set-up, and so the I2S interrupts */
 #define AUDIO_CORE          1
-#define INIT_TASK_STACK     3072    /* bytes */
+#define INIT_TASK_STACK     3072    /* bytes; the set-up calls need little, this leaves margin */
 
 /* Handles for the two I2S channels, created once by audio_init() and never
  * freed. */
@@ -119,7 +130,9 @@ static TaskHandle_t s_init_caller;
  * audio.h). */
 static int32_t s_raw[DMA_FRAMES * 2];
 
-/* A buffer of silence for audio_play_stop(). `const` places it in flash. */
+/* One DMA buffer's worth of silence for audio_play_stop(). `const` places it
+ * in flash rather than RAM; that is fine because i2s_channel_write() copies it
+ * into the DMA buffers rather than having the DMA read it directly. */
 static const int16_t s_silence[DMA_FRAMES];
 
 /* The set-up itself, run by init_task on core 1. A failure part-way leaves
@@ -127,7 +140,12 @@ static const int16_t s_silence[DMA_FRAMES];
  * and s_ready stays false, so they are never used. */
 static esp_err_t init_on_this_core(void)
 {
-    /* Amplifier off first. Until this line runs the pin is floating (not
+    /* ESP_RETURN_ON_ERROR(call, TAG, message): if the call does not return
+     * ESP_OK, log the message under TAG and return that error from this
+     * function. ESP_RETURN_ON_FALSE does the same when a condition is false.
+     * They keep the error handling to one line per step.
+     *
+     * Amplifier off first. Until this line runs the pin is floating (not
      * driven either way), which is harmless while no I2S clock is running,
      * because the amplifier then has nothing to play. The level is set before
      * the pin becomes an output, so it never briefly drives high. */
@@ -138,7 +156,8 @@ static esp_err_t init_on_this_core(void)
     };
     ESP_RETURN_ON_ERROR(gpio_config(&sd), TAG, "amp SD pin");
 
-    /* Microphone: receive channel on controller 0 */
+    /* Microphone: receive channel on controller 0. The channel handle, s_rx,
+     * is how every later driver call names this channel. */
     i2s_chan_config_t rx_chan = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     rx_chan.dma_desc_num = DMA_DESC;
     rx_chan.dma_frame_num = DMA_FRAMES;
@@ -204,9 +223,10 @@ esp_err_t audio_init(void)
     ESP_RETURN_ON_FALSE(s_init_caller == NULL, ESP_ERR_INVALID_STATE, TAG,
                         "already initialised");
 
-    /* Run the set-up on core 1 and wait for it. A task notification is a
-     * lightweight signal sent straight to one task; ulTaskNotifyTake()
-     * sleeps until it arrives. */
+    /* Run the set-up on core 1 and wait for it. The set-up task gets the
+     * caller's own priority, so it neither delays nor is delayed by anything
+     * the caller would not be. A task notification is a lightweight signal
+     * sent straight to one task; ulTaskNotifyTake() sleeps until it arrives. */
     s_init_caller = xTaskGetCurrentTaskHandle();
     if (xTaskCreatePinnedToCore(init_task, "audio_init", INIT_TASK_STACK, NULL,
                                 uxTaskPriorityGet(NULL), NULL, AUDIO_CORE) != pdPASS) {
@@ -243,6 +263,7 @@ esp_err_t audio_capture_read(int16_t *out, size_t frames, uint32_t timeout_ms)
         size_t got = 0;   /* bytes; may be less than asked if the read times out */
         esp_err_t err = i2s_channel_read(s_rx, s_raw, n * 2 * sizeof(s_raw[0]), &got,
                                          timeout_ms);
+        /* Each frame is two 32-bit words, left then right */
         size_t done = got / (2 * sizeof(s_raw[0]));   /* whole frames received */
         /* Word 2i is frame i's left slot. An arithmetic shift preserves
          * the sign, so negative samples stay negative. */
@@ -304,7 +325,9 @@ esp_err_t audio_play_stop(void)
     esp_err_t err = ESP_OK;
     for (int i = 0; i < DMA_DESC + 1 && err == ESP_OK; i++) {
         size_t done = 0;
-        err = i2s_channel_write(s_tx, s_silence, sizeof(s_silence), &done, 1000);  /* ms */
+        /* 1000 ms: far longer than one buffer takes to play, so this fails
+         * only if the hardware has stalled */
+        err = i2s_channel_write(s_tx, s_silence, sizeof(s_silence), &done, 1000);
     }
 
     /* Amplifier off while the clock still carries silence, then stop the

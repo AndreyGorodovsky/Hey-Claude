@@ -7,10 +7,14 @@
  *                                    scale (default 3 s), for measuring the
  *                                    supply's peak current (KNOWN-ISSUES R2)
  *
- * The console task only parses the command. The audio itself runs in a
- * short-lived task pinned to core 1, the core reserved for audio in
+ * A task is a FreeRTOS thread: an independent piece of the program that the
+ * scheduler runs on one of the chip's two CPU cores. cmd_audio() runs in the
+ * console's own task and only parses the command. The audio itself runs in a
+ * short-lived task created for the test and "pinned" to core 1, meaning the
+ * scheduler never moves it to the other core. Core 1 is reserved for audio in
  * ARCHITECTURE.md, away from the WiFi work on core 0. The command returns at
- * once and the task prints its results as it goes. One test runs at a time.
+ * once and the test task prints its results as it goes, then deletes itself.
+ * One test runs at a time.
  */
 #include "audio_cmd.h"
 
@@ -29,7 +33,10 @@
 static const char *TAG = "audio_cmd";
 
 #define SECONDS_DEFAULT     3
-#define SECONDS_MAX         10      /* 10 s of 16 kHz audio is 320 KB of PSRAM */
+/* Recordings are kept in PSRAM, the 8 MB RAM chip inside the ESP32-S3's
+ * package: plentiful but slower than the ~512 KB of internal RAM. 10 s of
+ * 16 kHz 16-bit audio is 320 KB, more than internal RAM could spare. */
+#define SECONDS_MAX         10
 
 #define TONE_HZ             440.0f  /* the note A, as in the bring-up amp_test */
 #define TONE_RATE           24000   /* spoken replies play at this rate */
@@ -47,8 +54,15 @@ static const char *TAG = "audio_cmd";
 /* Samples handed to the audio functions per call: 15 ms at 16 kHz */
 #define CHUNK               240
 
-#define TASK_STACK          4096    /* bytes; printf of floating point needs ~2 KB */
-#define TASK_PRIORITY       10      /* above the console (2), below WiFi (23) */
+/* Every task has its own stack, a fixed block of RAM for its local variables
+ * and function calls, sized when the task is created. printf of floating
+ * point needs about 2 KB, and the 480-byte chunk buffer lives there too. */
+#define TASK_STACK          4096    /* bytes */
+/* When several tasks are ready on a core, the scheduler runs the one with the
+ * highest priority number. Above the console (2), so typing cannot stall
+ * audio; below the WiFi driver (23, shown in the boot log), which must keep
+ * up with the radio. */
+#define TASK_PRIORITY       10
 #define AUDIO_CORE          1
 
 /* True while a test task exists. Set by the console task only when false, and
@@ -91,8 +105,10 @@ static void finish(void)
 static void loop_task(void *arg)
 {
     size_t frames = (size_t)s_job.seconds * AUDIO_CAPTURE_RATE;
-    /* PSRAM: the recording is too large for internal RAM, and nothing reads
-     * it with DMA or from an interrupt, so PSRAM's slower access is fine */
+    /* heap_caps_malloc() is malloc() with a choice of memory; MALLOC_CAP_SPIRAM
+     * asks for PSRAM. The recording is too large for internal RAM, and nothing
+     * reads it with DMA or from an interrupt, so PSRAM's slower access is fine.
+     * It is released with the ordinary free(). */
     int16_t *rec = heap_caps_malloc(frames * sizeof(int16_t), MALLOC_CAP_SPIRAM);
     if (rec == NULL) {
         printf("audio loop: not enough PSRAM for %d s\n", s_job.seconds);
@@ -195,7 +211,9 @@ static void tone_task(void *arg)
     finish();
 }
 
-/* Parses a whole number in [min, max]; false if the text is anything else */
+/* Parses a whole number in [min, max]; false if the text is anything else.
+ * strtol() stops at the first character that is not a digit and points `end`
+ * at it, so anything left over, as in "5x", means the text was not a number. */
 static bool parse_int(const char *s, int min, int max, int *out)
 {
     char *end;
@@ -207,6 +225,8 @@ static bool parse_int(const char *s, int min, int max, int *out)
     return true;
 }
 
+/* Handles `audio ...`. Runs in the console task, which has already split the
+ * line into words (see console.c). Returns 0 on success, like a shell command. */
 static int cmd_audio(int argc, char **argv)
 {
     bool loop = argc >= 2 && argc <= 3 && strcmp(argv[1], "loop") == 0;
@@ -230,6 +250,9 @@ static int cmd_audio(int argc, char **argv)
     s_busy = true;
     s_job.seconds = seconds;
     s_job.percent = percent;
+    /* Arguments: the task's function, a name shown in diagnostics, stack
+     * size, a parameter for the function (unused; it reads s_job), priority,
+     * a place to store the task's handle (not needed), and the core. */
     if (xTaskCreatePinnedToCore(loop ? loop_task : tone_task, "audio_test", TASK_STACK,
                                 NULL, TASK_PRIORITY, NULL, AUDIO_CORE) != pdPASS) {
         s_busy = false;
