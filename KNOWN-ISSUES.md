@@ -31,8 +31,9 @@ easily misattributed to firmware.
 *Mitigation:* 1 A or greater supply; 1000 µF at the amplifier supply pin;
 amplifier fed from 5 V, not 3.3 V. If resets persist, the supply is the first
 suspect, not the code. Baseline current and the peak under load are recorded
-before and during stage 2, per [docs/BRINGUP.md](docs/BRINGUP.md); stage 0
-could not record the baseline (R9).
+before and during stage 2, per [docs/BRINGUP.md](docs/BRINGUP.md). The
+baseline is recorded: 0.10-0.14 A with the rail at 4.93 V or above, measured
+on a PC USB 3.0 port.
 
 A breadboard compounds this. Contact resistance and shared rails not intended
 for 1 A transients can themselves cause the voltage drop, making the bench the
@@ -92,20 +93,25 @@ local network can read conversation audio in both directions.
 *Mitigation:* accepted for LAN-only development. Moving the server off the LAN
 requires TLS and a stronger device credential before it is reachable publicly.
 
-### R9 — Supply margin not measured
+### R9 — Playback peak not measured, continuity not checked
 
 The first bring-up was carried out without a multimeter or a USB power meter.
-No continuity checks were made, and no rail voltage or current figures exist.
-Supply adequacy at idle rests only on the absence of brownout resets on a PC
-USB port, with every peripheral wired and the amplifier playing a tone at
-20 % of full scale. That shows the rail does not collapse at light load. It
-says nothing about margin, and nothing about the playback peak described in
-R2.
+The baseline figures were taken afterwards with a USB power meter and are
+recorded in [docs/BRINGUP.md](docs/BRINGUP.md): the rail held 4.93 V or above
+at up to 0.14 A. Two gaps remain.
 
-*Mitigation:* obtain a USB power meter with peak hold before stage 2, record
-the stage 0 baseline figures in [docs/BRINGUP.md](docs/BRINGUP.md) then, and
-take the stage 2 peak measurement as planned. Until then, a reset during loud
-playback is attributed to the supply first.
+- **The playback peak described in R2 is unmeasured.** The meter shows
+  averages refreshed a few times per second, so it cannot catch a transient of
+  about 10 ms, and it reads voltage before the cable rather than at the board.
+- **No continuity or short checks were made**, since they need a multimeter.
+  The working peripherals show the connections are sound, but not that there
+  is no marginal contact.
+
+*Mitigation:* take the stage 2 peak measurement as planned, and treat a
+reading from this meter as a lower bound on the peak. The brownout reset
+reason in the boot log remains the decisive test: a reset during loud playback
+is attributed to the supply first. Obtain a multimeter for the continuity
+checks before the circuit is soldered.
 
 ### R10 — Device credentials stored unencrypted
 
@@ -116,6 +122,20 @@ of flash.
 *Mitigation:* accepted for LAN-only development, alongside R8. NVS encryption,
 or flash encryption, is to be adopted together with provisioning and OTA in
 stage 8.
+
+### R11 — Backlight and amplifier enable pins left floating
+
+Neither the stage 1 firmware nor the `mic_test` and `amp_test` programs
+configure the display's backlight pin (GPIO14), and the stage 1 firmware does
+not configure the amplifier's `SD` pin either. A pin no code drives is
+"floating": it settles high or low unpredictably. Observed on 2026-09-28: the
+backlight was off under `mic_test` and on under `amp_test` and the stage 1
+firmware. A floating `SD` can likewise leave the amplifier enabled and drawing
+current, or picking up noise, with no audio playing.
+
+*Mitigation:* the firmware drives both pins to a defined state at boot:
+amplifier off until audio plays, from stage 2, and backlight under explicit
+control from stage 3. Fixing it earlier is outside the current stage.
 
 ## Resolved
 

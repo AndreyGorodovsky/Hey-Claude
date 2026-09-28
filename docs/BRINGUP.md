@@ -18,7 +18,8 @@ project firmware in stages 2 and 3.
 
 The peak current measurement under amplifier load also belongs to stage 2,
 because nothing draws that current until audio is played. Stage 0 establishes
-the baseline it will be compared against.
+the baseline it will be compared against. The baseline figures are in the
+[measurement record](#measurement-record).
 
 ## Tools
 
@@ -116,20 +117,27 @@ Fill in during bring-up and keep the completed table with the project.
 
 | Checkpoint | Expected | Measured | Pass criterion |
 | --- | --- | --- | --- |
-| Supply rating (printed on charger) | 5 V, 1 A or greater | Not recorded; PC USB port used | Not a 500 mA USB 2.0 port |
-| Bare board, idle | ~50-100 mA | Not measured | Rail holds 4.9 V or above |
-| Plus microphone | Small increase | Not measured | Rail holds 4.9 V or above |
-| Plus display, backlight off | Small increase | Not measured | Rail holds 4.9 V or above |
-| Plus display, backlight full | Noticeable increase | Not measured | Rail holds 4.8 V or above |
-| Plus amplifier, idle | Small increase | Not measured | Rail holds 4.8 V or above |
+| Supply rating (printed on charger) | 5 V, 1 A or greater | PC USB 3.0 port (900 mA by specification) | Not a 500 mA USB 2.0 port |
+| Bare board, idle | ~50-100 mA | Not measured separately; see below | Rail holds 4.9 V or above |
+| Microphone capturing, backlight off | Small increase | 4.946 V, 0.103 A | Rail holds 4.9 V or above |
+| Display, backlight off | Small increase | 4.943 V, 0.104-0.105 A | Rail holds 4.9 V or above |
+| Display, backlight full | Noticeable increase | 4.943 V, 0.115 A | Rail holds 4.8 V or above |
+| Amplifier enabled, silent | Small increase | 4.945 V, 0.118 A | Rail holds 4.8 V or above |
+| 440 Hz tone at 20 % of full scale | — | 4.945 V, up to 0.138 A | Rail holds 4.8 V or above |
+| WiFi connected, power save on | — | 4.932-4.940 V, 0.124-0.143 A | Rail holds 4.8 V or above |
 | **Playback peak (stage 2)** | **~1 A or more** | | **Rail never falls below 4.7 V** |
+
+Every figure except the stage 2 row is measured, on 2026-09-28, under the
+conditions described in [Baseline measurement](#baseline-measurement-2026-09-28).
 
 ## Results of the first bring-up (2026-09-27)
 
 The first assembly was carried out without a multimeter or a USB power meter,
-so the continuity checks and every figure in the measurement table above are
-missing. The procedure was adapted as follows, and the gap is tracked as R9 in
-[../KNOWN-ISSUES.md](../KNOWN-ISSUES.md).
+so the continuity checks and every figure in the measurement table above were
+missing when the stage closed. The figures were taken the next day (see
+[Baseline measurement](#baseline-measurement-2026-09-28)); the continuity
+checks remain undone. The procedure was adapted as follows, and the remaining
+gap is tracked as R9 in [../KNOWN-ISSUES.md](../KNOWN-ISSUES.md).
 
 - **Short protection.** Every first power-on used a PC USB port, which
   cuts power on overcurrent, instead of a charger, which would keep
@@ -167,6 +175,49 @@ The criterion that matters is **rail voltage, not current**. Brownout is caused
 by voltage collapse. A supply rated well above the draw can still fail through
 a thin or long cable, so measure the rail rather than trusting the rating.
 
+## Baseline measurement (2026-09-28)
+
+Taken with a KEWEISI KWS-MX19 USB power meter placed between a PC USB 3.0
+port and the cable to the board's UART port, with every peripheral wired on
+the breadboard as built in stage 0. Each state was produced by the program
+named below rather than by wiring peripherals one at a time, which the
+procedure above assumes; unwiring a verified build to measure draws too small
+to separate on this meter was not worth the risk of a wiring fault.
+
+| State | Program | Backlight |
+| --- | --- | --- |
+| Microphone capturing | `mic_test` | Off (pin not driven) |
+| Display, backlight off | `disp_test`, first 3 s after reset | Off |
+| Display, backlight full | `disp_test`, colours cycling | On |
+| Amplifier enabled, silent; tone at 20 % | `amp_test`, between and during beeps | On (pin not driven) |
+| WiFi connected, power save on | Stage 1 firmware | On (pin not driven) |
+
+What the figures show:
+
+- **The rail held 4.93 V or above in every state**, with no reset.
+- **The backlight costs about 10-11 mA**, much less than the procedure
+  expected. It sets no meaningful ceiling on animation in stage 3.
+- **The amplifier idles at a few milliamps** once enabled, and a tone at 20 %
+  of full scale adds about 20 mA.
+- **WiFi in power-save mode adds roughly 10-25 mA on average**, fluctuating
+  with radio activity.
+
+Limitations:
+
+- **The meter reads voltage at its own position**, before the cable. The
+  voltage at the board is lower by the cable's drop, which is negligible at
+  these currents but not at the stage 2 peak.
+- **The display updates a few times per second**, so transients of tens of
+  milliseconds, such as WiFi transmit bursts, are averaged away. The figures
+  are averages, not peaks. Whether the meter can hold a peak reading was not
+  checked.
+- **No bare-board figure exists**, because the peripherals stayed wired. The
+  lowest reading, 0.103 A, includes the microphone and the idle display and
+  amplifier logic.
+- **In three of the five states the backlight pin was not driven**, and
+  whether the backlight lit depended on where the floating pin settled (R11).
+  The table records what was observed.
+
 ## Cable
 
 Test with a short, thick USB cable. A thin or long one drops meaningful voltage
@@ -178,8 +229,9 @@ rail sags, substitute the cable before replacing the supply.
 - [x] Pinout in [../README.md](../README.md) updated to match what was actually
       built, with the provisional marking removed (R4)
 - [x] Display supply and backlight requirements confirmed and recorded (R5)
-- [ ] Measurement table filled in as far as stage 0 allows — deferred for
-      lack of a meter (R9)
-- [x] Supply and cable confirmed adequate at idle — by absence of brownout
-      only, not by measurement (R9)
+- [x] Measurement table filled in as far as stage 0 allows — completed
+      2026-09-28, after the stage closed
+- [x] Supply and cable confirmed adequate at idle — measured on 2026-09-28;
+      rail at 4.93 V or above in every state
+- [ ] Continuity and short checks — not done; requires a multimeter (R9)
 - [x] Any deviation from the documented pinout recorded and explained — none

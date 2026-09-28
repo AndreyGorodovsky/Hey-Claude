@@ -70,34 +70,54 @@ of similar boards; the board's own silkscreen is authoritative.
 Verified on the breadboard during stage 0 by a functional test of each
 peripheral. Assembly procedure and results: [docs/BRINGUP.md](docs/BRINGUP.md).
 
-| Signal | GPIO | Peripheral |
-| --- | --- | --- |
-| Mic SCK | 4 | I2S0 |
-| Mic WS | 5 | I2S0 |
-| Mic SD | 6 | I2S0 |
-| Amp BCLK | 15 | I2S1 |
-| Amp LRC | 16 | I2S1 |
-| Amp DIN | 7 | I2S1 |
-| Amp SD (enable) | 17 | GPIO |
-| Display SCLK | 12 | SPI2 |
-| Display MOSI | 11 | SPI2 |
-| Display CS | 10 | SPI2 |
-| Display DC | 9 | GPIO |
-| Display RST | 8 | GPIO |
-| Display backlight | 14 | LEDC PWM |
+One table per module, listing every pin by the name printed on the module, so
+that a loose wire can be traced from the module's side. The ground and 3.3 V
+rails are the breadboard rails fed from the board's ground and 3.3 V pins; all
+grounds are common.
 
-| Supply | Connection |
-| --- | --- |
-| INMP441 `VDD` | 3.3 V rail |
-| NV3007 `VDD` | 3.3 V rail |
-| MAX98357A `Vin` | Board 5 V pin, on a dedicated lead rather than a shared rail |
-| 1000 µF capacitor | Across the amplifier's `Vin` and `GND` pins |
-| All grounds | Common |
+**INMP441 microphone** — I2S controller 0
+
+| Module pin | Connects to | Notes |
+| --- | --- | --- |
+| `SCK` | GPIO 4 | Bit clock |
+| `WS` | GPIO 5 | Word select (left or right channel) |
+| `SD` | GPIO 6 | Audio data, microphone to board |
+| `L/R` | Ground rail | Selects the left channel; must not float |
+| `VDD` | 3.3 V rail | |
+| `GND` | Ground rail | |
+
+**MAX98357A amplifier** — I2S controller 1
+
+| Module pin | Connects to | Notes |
+| --- | --- | --- |
+| `LRC` | GPIO 16 | Word select |
+| `BCLK` | GPIO 15 | Bit clock |
+| `DIN` | GPIO 7 | Audio data, board to amplifier |
+| `GAIN` | Not connected | Unconnected sets 9 dB |
+| `SD` | GPIO 17 | Enable: high = on, low = off |
+| `GND` | Ground | |
+| `Vin` | Board 5 V pin | **5 V, not 3.3 V.** Dedicated lead, not the shared rail |
+| Speaker `+` / `−` | 4 Ω speaker | |
+
+The 1000 µF capacitor sits directly across the amplifier's `Vin` and `GND`
+pins. It is polarised: the side marked with a stripe is negative and goes to
+`GND`. Reversed, it can burst.
+
+**NV3007 display** — SPI controller 2. Pins in the order printed on the module.
+
+| Module pin | Connects to | Notes |
+| --- | --- | --- |
+| `GND` | Ground rail | |
+| `VDD` | 3.3 V rail | |
+| `SCL` | GPIO 12 | SPI clock |
+| `SDA` | GPIO 11 | SPI data, board to display (MOSI) |
+| `RES` | GPIO 8 | Reset |
+| `DC` | GPIO 9 | Command or pixel data |
+| `CS` | GPIO 10 | Chip select; the `CS-LOW` solder jumper stays open |
+| `BL` | GPIO 14 | Backlight, dimmed by PWM from the LEDC peripheral |
 
 GPIO 26–37 are reserved by the flash and PSRAM and must not be used. GPIO 0, 3,
-45 and 46 are strapping pins; GPIO 19 and 20 carry native USB. The INMP441
-`L/R` pin is tied to ground to select the left channel. The MAX98357A `GAIN`
-pin is left unconnected, which sets 9 dB.
+45 and 46 are strapping pins; GPIO 19 and 20 carry native USB.
 
 ## Software prerequisites
 

@@ -2,7 +2,7 @@
 
 **Current stage:** Stage 1 complete; stage 2 not yet planned.
 
-**Last updated:** 2026-09-27
+**Last updated:** 2026-09-28
 
 ## Where the project stands
 
@@ -39,10 +39,12 @@ the wiring is correct and the supply is sound, so that later faults can be
 attributed to software rather than to the bench.
 
 Stage 0 closed without the baseline current and rail voltage figures, because
-no meter was available (R9 in [KNOWN-ISSUES.md](KNOWN-ISSUES.md)). Supply
-adequacy at idle rests on the absence of brownout resets. The figures are to be
-recorded before stage 2, alongside the peak measurement already planned there.
-Results are in [docs/BRINGUP.md](docs/BRINGUP.md).
+no meter was available. They were measured on 2026-09-28 with a USB power
+meter: 0.10-0.14 A across every peripheral and WiFi, with the rail at 4.93 V
+or above. Continuity checks remain undone for lack of a multimeter, and the
+playback peak is still to be measured in stage 2 (R9 in
+[KNOWN-ISSUES.md](KNOWN-ISSUES.md)). Results are in
+[docs/BRINGUP.md](docs/BRINGUP.md).
 
 Stage 5 does not depend on stages 0 through 4 and can be built in parallel.
 Keeping it independently testable means a server defect cannot be mistaken for
@@ -63,8 +65,8 @@ can be put in place as soon as they are obtained: `server/config.py` and
 1. Plan stage 2 into steps and submit them for approval.
 2. Obtain API keys for Anthropic and Deepgram, copy `server/.env.example` to
    `server/.env`, and fill them in. See [SECRETS.md](SECRETS.md).
-3. Obtain a USB power meter with peak hold, and preferably a multimeter,
-   before stage 2 (R9).
+3. Obtain a multimeter for the continuity checks before the circuit is
+   soldered (R9).
 
 ## Open decisions
 
