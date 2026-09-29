@@ -44,11 +44,14 @@ inadequate.
 
 ### R3 — Display refresh rate ceiling
 
-A full-screen refresh moves about 121 KB and takes roughly 12-25 ms depending
-on SPI clock. Full-screen animation at high frame rates is not achievable.
+A full-screen refresh moves 121,552 bytes. Measured on 2026-09-29 with
+`display test`: 12.5 ms at 80 MHz, the highest SPI clock the chip supports,
+so about 80 full frames per second at the very most, before any drawing
+time. Full-screen animation at high frame rates is not achievable.
 
 *Mitigation:* animations are designed as partial-region redraws from the start.
-This constrains the visual design and is not a limitation that can be optimised
+The stage 3 animations change a 142 x 142 region, about 4 ms per frame. This
+constrains the visual design and is not a limitation that can be optimised
 away later.
 
 ### R6 — Three external services in the latency path
@@ -125,17 +128,6 @@ of flash.
 or flash encryption, is to be adopted together with provisioning and OTA in
 stage 8.
 
-### R11 — Backlight pin left floating
-
-The firmware does not yet configure the display's backlight pin (GPIO14), nor
-do the `mic_test` and `amp_test` programs. A pin no code drives is
-"floating": it settles high or low unpredictably. Observed on 2026-09-28: the
-backlight was off under `mic_test` and on under `amp_test` and the stage 1
-firmware. The amplifier's `SD` pin had the same problem until stage 2, which
-drives it low at boot and high only during playback.
-
-*Mitigation:* the backlight comes under explicit control in stage 3.
-
 ### R12 — Speech arrives quietly from the microphone
 
 Speech at 0.5-1 m measured about -52 dBFS RMS on 2026-09-28, against a
@@ -150,6 +142,34 @@ so it is not yet known whether this matters.
 results: wake-word detection in stage 4 and transcripts in stage 6. A smaller
 shift adds gain in 6 dB steps and must clip rather than wrap.
 
+### R13 — The display tears during fast movement
+
+The panel has no tearing-effect (TE) output, so the firmware cannot tell
+when the panel is between refreshes of its glass. When a frame arrives
+while the panel is part-way through showing the previous one, the picture
+briefly shows the top of one frame and the bottom of the other. Observed on
+2026-09-29: the `display test` bar, which moves across the full height of
+the screen, shows a step. The state animations, which are small and redraw
+in about 4 ms, showed no visible tearing.
+
+*Mitigation:* keep animations small and avoid fast horizontal movement of
+tall shapes. The 80 MHz clock keeps each transfer short, which makes tearing
+smaller and rarer but cannot remove it.
+
+### R14 — LVGL's version is not locked
+
+`firmware/components/display/idf_component.yml` asks for LVGL `^9.4.0`, any 9.x from
+9.4 on. The file that records the exact version chosen,
+`firmware/dependencies.lock`, is excluded by `.gitignore`, so a fresh
+checkout, or deleting `managed_components/`, can fetch a newer 9.x than the
+9.6.0 that stage 3 was built and tested with. LVGL renames functions between
+minor versions (9.5 did), so this can break the build or change behaviour
+without any change in this repository.
+
+*Mitigation:* none yet. Committing `dependencies.lock` would fix the version.
+It holds no secrets, only component names, versions and checksums, but the
+decision to ignore it predates stage 3 and is left for review.
+
 ## Resolved
 
 - **R4 — Provisional pinout unvalidated.** Built on the breadboard and each
@@ -159,6 +179,11 @@ shift adds gain in 6 dB steps and must clip rather than wrap.
   `VDD` at 3.3 V, and its backlight is switched by an on-board transistor, so
   `BL` is driven directly from a GPIO. The 8-pin order is `GND VDD SCL SDA RES
   DC CS BL`, as printed on the module.
+- **R11 — Backlight pin left floating.** From stage 3, the firmware drives
+  the backlight pin (GPIO14) low within about a second of reset, in
+  `display_init()`, and lights it only after the first frame is drawn. It
+  still floats between reset and that point, as the amplifier's `SD` pin
+  does before `audio_init()`.
 
 ## Caveats
 
@@ -182,6 +207,12 @@ shift adds gain in 6 dB steps and must clip rather than wrap.
 - **`audio loop` playback includes audible hiss.** The test boosts quiet
   recordings by up to 36 dB so that speech can be heard, which raises the
   microphone's own noise with it. The recorded audio itself is not boosted.
+- **The `state` console commands set the state directly.** They stand in for
+  the state machine built in stage 6 and would conflict with it; stage 6
+  replaces them.
+- **The screen is dark for about two seconds after reset.** The panel's
+  start-up sequence has required pauses of about a second, and the
+  backlight is lit only once the first frame is on the panel.
 - **About one second passes between the boot banner and WiFi start.** Observed
   on every boot; the cause has not been investigated. It is a boot-time cost,
   not a latency on requests.

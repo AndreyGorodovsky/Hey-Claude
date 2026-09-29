@@ -12,18 +12,26 @@
  *   2. Audio          - microphone started (it runs from here on), amplifier
  *                       switched off. Early, because until then the
  *                       amplifier's on/off pin floats.
- *   3. NVS            - flash-backed key-value storage that holds the settings.
- *   4. Network stack  - TCP/IP layer and the default event loop, needed by WiFi.
- *   5. Settings       - read from NVS into memory, once.
- *   6. Console        - serial command line for settings and audio tests.
- *   7. WiFi           - only if a network has been configured.
+ *   3. Event loop     - delivers system events; the state and WiFi use it.
+ *   4. State          - the device state, starting at BOOT.
+ *   5. Display        - backlight off at once (its pin floats until then),
+ *                       then the panel starts in the background and shows
+ *                       the state.
+ *   6. NVS            - flash-backed key-value storage that holds the settings.
+ *   7. Network stack  - TCP/IP layer, needed by WiFi.
+ *   8. Settings       - read from NVS into memory, once.
+ *   9. Console        - serial command line for settings and tests.
+ *  10. WiFi           - only if a network has been configured. The state
+ *                       moves to CONNECTING, or to SETUP if there are no
+ *                       usable WiFi settings.
  *
- * The display and the server connection are added in later stages (see
- * STATUS.md).
+ * The server connection is added in a later stage (see STATUS.md).
  */
 #include "app_config.h"
+#include "app_state.h"
 #include "audio.h"
 #include "console.h"
+#include "display.h"
 #include "net.h"
 
 #include "esp_app_desc.h"
@@ -134,13 +142,21 @@ void app_main(void)
         ESP_LOGE(TAG, "audio not available: %s", esp_err_to_name(err));
     }
 
+    /* The default event loop is a background task that delivers system events
+     * (WiFi connected, IP address received, state changed, ...) to handlers
+     * registered for them. Everything that posts events needs it first. */
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(app_state_init());
+    /* Not ESP_ERROR_CHECK, for the same reason as audio: the device is still
+     * usable, and diagnosable, with a dark screen */
+    err = display_init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "display not available: %s", esp_err_to_name(err));
+    }
+
     init_nvs();
     /* esp_netif is ESP-IDF's layer over the TCP/IP stack; WiFi attaches to it. */
     ESP_ERROR_CHECK(esp_netif_init());
-    /* The default event loop is a background task that delivers system events
-     * (WiFi connected, IP address received, ...) to handlers registered for
-     * them. The WiFi driver posts its events here, so it must exist first. */
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(app_config_load());
     /* The console runs in its own task from here on, independently of app_main */
     ESP_ERROR_CHECK(console_start());
@@ -150,6 +166,7 @@ void app_main(void)
         /* First boot, or settings erased: wait for them to be entered over serial */
         ESP_LOGW(TAG, "WiFi not configured. Enter: config set wifi_ssid \"<name>\", "
                       "config set wifi_pass \"<password>\", then reboot");
+        app_state_set(APP_STATE_SETUP, "WiFi not set up");
         return;
     }
 
@@ -161,7 +178,12 @@ void app_main(void)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "WiFi not started: %s. Check the settings with: config show",
                  esp_err_to_name(err));
+        app_state_set(APP_STATE_SETUP, "WiFi settings rejected");
+        return;
     }
+    /* Boot is complete. The state stays CONNECTING until the server
+     * connection, added in stage 6, moves it on. */
+    app_state_set(APP_STATE_CONNECTING, NULL);
     /* app_main returns here. WiFi keeps connecting in the background, driven
      * by events, and the console task keeps accepting commands. */
 }

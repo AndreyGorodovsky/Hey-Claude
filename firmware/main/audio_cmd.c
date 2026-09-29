@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "audio.h"
+#include "console.h"
 #include "esp_check.h"
 #include "esp_console.h"
 #include "esp_heap_caps.h"
@@ -211,20 +212,6 @@ static void tone_task(void *arg)
     finish();
 }
 
-/* Parses a whole number in [min, max]; false if the text is anything else.
- * strtol() stops at the first character that is not a digit and points `end`
- * at it, so anything left over, as in "5x", means the text was not a number. */
-static bool parse_int(const char *s, int min, int max, int *out)
-{
-    char *end;
-    long v = strtol(s, &end, 10);
-    if (end == s || *end != '\0' || v < min || v > max) {
-        return false;
-    }
-    *out = (int)v;
-    return true;
-}
-
 /* Handles `audio ...`. Runs in the console task, which has already split the
  * line into words (see console.c). Returns 0 on success, like a shell command. */
 static int cmd_audio(int argc, char **argv)
@@ -236,8 +223,8 @@ static int cmd_audio(int argc, char **argv)
     int seconds = SECONDS_DEFAULT;
     int percent = 0;
     if ((!loop && !tone)
-        || (tone && !parse_int(argv[2], 1, 100, &percent))
-        || (argc > secs_arg && !parse_int(argv[secs_arg], 1, SECONDS_MAX, &seconds))) {
+        || (tone && !console_parse_int(argv[2], 1, 100, &percent))
+        || (argc > secs_arg && !console_parse_int(argv[secs_arg], 1, SECONDS_MAX, &seconds))) {
         printf("usage: audio loop [seconds] | audio tone <percent 1-100> [seconds]; "
                "seconds 1-%d, default %d\n", SECONDS_MAX, SECONDS_DEFAULT);
         return 1;

@@ -178,6 +178,22 @@ background hiss audible; the printed level is that of the unboosted recording.
 `audio tone 100` is loud and draws the most supply current the device will
 ever need, which makes it the test for a weak supply or cable.
 
+The display shows the device's state. Until the real triggers exist (wake
+word, server), states can be set from the console, and the panel checked:
+
+```
+state                     print the current state
+state set idle            show a state; setup and error take a detail text
+state cycle 2             step through every state, 2 s each
+state stop                stop cycling
+display test 30           test pattern for 30 s, then frame timing
+```
+
+The test pattern draws a 1-pixel frame in a different colour on each edge:
+red top, green bottom, blue left, white right. A missing edge means the
+drawing offset is wrong; stray or wrongly coloured pixels mean the SPI clock
+is too fast for the wiring.
+
 ## Repository layout
 
 Directories are created as the corresponding stage begins.
@@ -186,7 +202,8 @@ Directories are created as the corresponding stage begins.
 firmware/          ESP-IDF application for the ESP32-S3
   main/            Startup and the serial console
   components/      app_config (settings), net (WiFi), audio (microphone and
-                   amplifier), board (pin map)
+                   amplifier), app_state (device state), display (panel,
+                   backlight, animations), board (pin map)
   tools/           Standalone hardware test programs
 server/            Python server: transport, speech, Claude, session store
 docs/              Diagrams and supporting material

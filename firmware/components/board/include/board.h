@@ -41,3 +41,11 @@
 #define BOARD_LCD_DC        GPIO_NUM_9
 #define BOARD_LCD_RST       GPIO_NUM_8
 #define BOARD_LCD_BL        GPIO_NUM_14
+
+/* Panel geometry, in the controller's native portrait orientation: 142
+ * visible columns by 428 rows. The controller's memory is 168 columns wide,
+ * so the visible columns start part-way across it, with 12 unused columns
+ * on one side and 14 on the other. Which of the two applies depends on the
+ * orientation the display is used in; see display.c. */
+#define BOARD_LCD_WIDTH         142
+#define BOARD_LCD_HEIGHT        428

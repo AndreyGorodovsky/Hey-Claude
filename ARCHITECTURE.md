@@ -24,11 +24,13 @@ made during the feasibility review and are binding unless explicitly revisited.
 
 | Component | Responsibility |
 | --- | --- |
-| `main` | Startup order, boot banner, serial console and its commands, including audio test commands |
+| `main` | Startup order, boot banner, serial console and its commands, including audio, state and display test commands |
 | `app_config` | Settings stored in NVS: loading the running configuration, validating and storing edits. No user interface of its own |
 | `net` | WiFi station: joining, reconnecting with backoff, readable failure reasons |
 | `audio` | Microphone capture and amplifier playback over I2S: plain 16-bit samples in and out, no buffering or tasks of its own |
-| `board` | The verified pin map, the single source of pin numbers |
+| `app_state` | The device state and its detail text: stored, and announced on change. Decides no transitions |
+| `display` | The NV3007 panel, its backlight, and what is drawn for each state, from a single task that is the only user of LVGL |
+| `board` | The verified pin map and panel geometry, the single source of both |
 
 Settings are loaded once at boot into a read-only structure. Edits change only
 what is stored and apply after a reboot, so no running code has to cope with a
@@ -38,6 +40,15 @@ so later provisioning methods reuse the same validation.
 `net` keeps no connection state for other components to query. Consumers
 subscribe to the standard `IP_EVENT_STA_GOT_IP` and
 `WIFI_EVENT_STA_DISCONNECTED` events on the default event loop.
+
+`app_state` announces changes the same way, as `APP_STATE_CHANGED` on the
+default event loop, and the display follows them without being called.
+`app_state` has exactly one writer: the state machine built in stage 6.
+Components that detect something (the wake word, a server message, a lost
+connection) report it to the state machine and never set states themselves;
+otherwise two tasks setting states at once would leave the screen on
+whichever came last. Until stage 6, the boot sequence and the console's
+`state` command stand in for that writer.
 
 Every boot logs the firmware version, flash size, free internal RAM and PSRAM,
 and the reset reason. Brownout and power-glitch resets are logged as errors,
@@ -64,6 +75,7 @@ flash layout. Flash runs in QIO mode at 80 MHz; PSRAM is octal at 80 MHz.
 | State | Trigger to enter | Display animation |
 | --- | --- | --- |
 | `BOOT` | Power on | Splash |
+| `SETUP` | WiFi settings missing or rejected at boot | Setup needed, with the reason |
 | `CONNECTING` | Boot complete | Connecting indicator |
 | `IDLE` | Server session ready | Waiting for wake word |
 | `CAPTURING` | Wake word detected | Listening |
@@ -71,8 +83,11 @@ flash layout. Flash runs in QIO mode at 80 MHz; PSRAM is octal at 80 MHz.
 | `SPEAKING` | First reply audio chunk arrives | Playing |
 | `ERROR` | Transport or server error | Error indicator |
 
-`ERROR` returns to `CONNECTING` after a backoff. Every other transition is
-driven either by local audio events or by server messages.
+`ERROR` returns to `CONNECTING` after a backoff. `SETUP` does not retry:
+retrying cannot fix missing or wrong settings, so it stays until settings
+are entered and the device is rebooted. Every other transition is driven
+either by local audio events or by server messages. `SETUP` and `ERROR`
+carry a short detail text naming the cause; no other state does.
 
 ### Task and core allocation
 
@@ -85,12 +100,29 @@ Isolating the audio chain from the WiFi stack is deliberate: I2S DMA underruns
 produce audible artefacts, and WiFi driver interrupt latency is the most likely
 cause of them.
 
+Task priorities decide which ready task a core runs first; higher runs first.
+This table is the single place that records them, so that code comments
+refer here instead of quoting each other's numbers.
+
+| Task | Priority | Core | Notes |
+| --- | --- | --- | --- |
+| WiFi driver | 23 | 0 | ESP-IDF's; must keep up with the radio |
+| `esp_timer` | 22 | 0 | ESP-IDF's; runs software timer callbacks, which must be short |
+| Default event loop | 20 | 0 | ESP-IDF's; delivers WiFi and state events |
+| Audio test tasks | 10 | 1 | Console `audio` commands, short-lived |
+| Display | 4 | 0 | LVGL drawing and animation; sleeps between frames |
+| Console | 2 | either | ESP-IDF's REPL; typing must not stall animation or audio |
+| `main` | 1 | 0 | Runs the start-up sequence, then ends |
+
+The audio set-up in `audio_init()` runs briefly on core 1 at the caller's
+priority, so that the I2S interrupts are placed on core 1.
+
 ### Memory placement
 
 | Buffer | Location | Reason |
 | --- | --- | --- |
 | Audio ring buffers | PSRAM | Large, latency-tolerant |
-| LVGL frame buffer (~121 KB) | PSRAM | Too large for internal SRAM |
+| LVGL frame buffer (~121 KB) | PSRAM | Too large for internal SRAM. DMA sends it to the panel directly from PSRAM, at no measurable cost (see Display) |
 | Wake-word tensor arena | Internal SRAM | Inference runs continuously; PSRAM latency would cost frames |
 | Network TX/RX queues | Internal SRAM | Touched from interrupt context |
 
@@ -134,16 +166,38 @@ for queued audio to finish.
 
 ### Display
 
-LVGL 9 drives the NV3007 panel over SPI. A full-screen refresh at RGB565 moves
-about 121 KB, roughly 12-25 ms depending on SPI clock, which is too slow for
-full-screen animation at high frame rates. State animations are therefore
-designed as partial-region redraws within the panel's narrow 142x428 format.
-The panel is write-only over SPI with no MISO line, which LVGL accommodates.
+LVGL 9 (9.6.0 when stage 3 was built, fetched from the ESP Component
+Registry) drives the NV3007 panel over SPI2 at 80 MHz, the highest clock SPI2
+supports; GPIO 10-12 are its dedicated pins, which that speed requires. The
+panel is write-only, with no MISO line, and has no tearing-effect (TE)
+output, so drawing cannot be synchronised with the panel's own refresh
+(KNOWN-ISSUES R13). The initialisation sequence is LVGL's `lv_nv3007`
+driver sequence, which works on this module as verified during stage 0.
 
-The controller's frame memory is 168x428, wider than the 142 visible columns,
-so drawing needs a column offset. The offset is determined in stage 3. The
-initialisation sequence is LVGL's `lv_nv3007` driver sequence, which works on
-this module as verified during stage 0.
+The panel is used in landscape, 428 x 142, by setting the controller's
+address mode so that it swaps rows and columns itself; rotation costs no
+processor time. The controller's memory is 168 columns wide for the 142
+visible, with 12 unused on one side and 14 on the other. In the orientation
+used (LVGL's `ROTATION_270`), drawing is offset by 14 rows, measured with a
+test pattern.
+
+LVGL draws into one full-screen buffer (121,552 bytes) in PSRAM, in the
+panel's byte order (`RGB565_SWAPPED`), so no conversion pass precedes each
+transfer. It redraws only the rectangles that changed, and DMA sends each one
+straight from PSRAM. A full frame takes 12.5 ms at 80 MHz, against a
+theoretical 12.2 ms, and 98.7 ms at 10 MHz (measured 2026-09-29 with
+`display test`, on the breadboard). The state animations change only a
+142 x 142 region at the left, which takes about 4 ms to send.
+
+The backlight is dimmed by PWM from the LEDC peripheral at 25 kHz, above
+hearing. It stays off until the first frame has been drawn, so the random
+contents of the panel at power-on are never visible, then fades in. It dims
+to 25 % in `IDLE`. No noise was heard from the audio path at 25 % duty
+(2026-09-29).
+
+The state animations are placeholders, refined in stage 8. Each state's
+title, default detail text, animation and brightness are kept together in
+one table in `display_ui.c`.
 
 ## Protocol
 

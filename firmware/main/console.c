@@ -18,13 +18,16 @@
  *   config unset <key>            remove a stored setting
  *   reboot                        restart, applying changed settings
  *   audio ...                     audio tests, listed in audio_cmd.c
+ *   state ..., display ...        mock states and display test, in ui_cmd.c
  */
 #include "console.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "app_config.h"
 #include "audio_cmd.h"
+#include "ui_cmd.h"
 #include "esp_check.h"
 #include "esp_console.h"
 #include "esp_system.h"
@@ -124,6 +127,20 @@ static int cmd_config(int argc, char **argv)
     return 0;
 }
 
+bool console_parse_int(const char *s, int min, int max, int *out)
+{
+    /* strtol() stops at the first character that is not a digit and points
+     * `end` at it, so anything left over, as in "5x", means the text was not
+     * a number */
+    char *end;
+    long v = strtol(s, &end, 10);
+    if (end == s || *end != '\0' || v < min || v > max) {
+        return false;
+    }
+    *out = (int)v;
+    return true;
+}
+
 esp_err_t console_start(void)
 {
     esp_console_repl_t *repl = NULL;
@@ -158,6 +175,7 @@ esp_err_t console_start(void)
     };
     ESP_RETURN_ON_ERROR(esp_console_cmd_register(&config), TAG, "config");
     ESP_RETURN_ON_ERROR(audio_cmd_register(), TAG, "audio");
+    ESP_RETURN_ON_ERROR(ui_cmd_register(), TAG, "state and display");
 
     /* Starts the console task and returns; the task runs from now on */
     return esp_console_start_repl(repl);

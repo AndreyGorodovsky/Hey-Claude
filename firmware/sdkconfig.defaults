@@ -47,3 +47,22 @@ CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
 # --- Logging ---
 # Log level compiled in: errors, warnings and informational messages.
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# --- Display: LVGL graphics library ---
+# The panel's controller. Also brings in LVGL's generic driver for MIPI-style
+# controllers, which the NV3007 driver is built on.
+CONFIG_LV_USE_NV3007=y
+# Draw in RGB565 with each pixel's bytes in the order the panel expects
+# (high byte first), so no conversion pass is needed before sending.
+CONFIG_LV_COLOR_FORMAT_RGB565_SWAPPED=y
+# LVGL allocates its objects with the C library's malloc, from the normal
+# heap, instead of reserving a fixed 64 KB pool of internal RAM of its own.
+CONFIG_LV_USE_CLIB_MALLOC=y
+# Fonts: the 14 px default for small text, 28 px for titles.
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+# LVGL's warnings and errors go to the log (display.c forwards them).
+CONFIG_LV_USE_LOG=y
+# LVGL's bundled examples and demos are not needed in the firmware.
+# CONFIG_LV_BUILD_EXAMPLES is not set
+# CONFIG_LV_BUILD_DEMOS is not set

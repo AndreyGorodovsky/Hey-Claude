@@ -1,0 +1,5 @@
+# Dependencies fetched from the ESP Component Registry on the first build and
+# placed in firmware/managed_components/ (not committed).
+dependencies:
+  # 9.4 is the first release with the NV3007 driver (lv_nv3007)
+  lvgl/lvgl: "^9.4.0"
