@@ -63,7 +63,7 @@ static const char *TAG = "audio_cmd";
  * audio; below the WiFi driver (23, shown in the boot log), which must keep
  * up with the radio. */
 #define TASK_PRIORITY       10
-#define AUDIO_CORE          1
+/* Test tasks run on AUDIO_CORE, from audio.h, alongside the I2S interrupts */
 
 /* True while a test task exists. Set by the console task only when false, and
  * cleared by the test task only when true, so the two never write at the same

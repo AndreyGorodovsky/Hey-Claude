@@ -22,6 +22,12 @@
  * wake-word model and the speech-to-text service expect. */
 #define AUDIO_CAPTURE_RATE  16000
 
+/* The CPU core reserved for audio work (ARCHITECTURE.md, task and core
+ * allocation). audio_init() sets up the I2S interrupts on this core, and tasks
+ * that move audio samples should be pinned to it, away from the WiFi
+ * interrupts on core 0. */
+#define AUDIO_CORE          1
+
 /* Sets up both I2S controllers, starts the microphone, and drives the
  * amplifier's SD pin low so it stays off until something plays. Call once,
  * early in boot, from any core: the set-up itself runs on core 1, so the I2S

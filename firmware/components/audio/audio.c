@@ -103,8 +103,7 @@ static const char *TAG = "audio";
  * change it is decided with real speech-to-text results (KNOWN-ISSUES R12). */
 #define CAPTURE_SHIFT       16
 
-/* Core that runs the set-up, and so the I2S interrupts */
-#define AUDIO_CORE          1
+/* The set-up runs on AUDIO_CORE (audio.h), and so do the I2S interrupts */
 #define INIT_TASK_STACK     3072    /* bytes; the set-up calls need little, this leaves margin */
 
 /* Handles for the two I2S channels, created once by audio_init() and never
