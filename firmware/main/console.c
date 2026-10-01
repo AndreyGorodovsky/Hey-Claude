@@ -19,6 +19,7 @@
  *   reboot                        restart, applying changed settings
  *   audio ...                     audio tests, listed in audio_cmd.c
  *   state ..., display ...        mock states and display test, in ui_cmd.c
+ *   wake ...                      wake-word counters and tuning, in wake_cmd.c
  */
 #include "console.h"
 
@@ -28,6 +29,7 @@
 #include "app_config.h"
 #include "audio_cmd.h"
 #include "ui_cmd.h"
+#include "wake_cmd.h"
 #include "esp_check.h"
 #include "esp_console.h"
 #include "esp_system.h"
@@ -176,6 +178,7 @@ esp_err_t console_start(void)
     ESP_RETURN_ON_ERROR(esp_console_cmd_register(&config), TAG, "config");
     ESP_RETURN_ON_ERROR(audio_cmd_register(), TAG, "audio");
     ESP_RETURN_ON_ERROR(ui_cmd_register(), TAG, "state and display");
+    ESP_RETURN_ON_ERROR(wake_cmd_register(), TAG, "wake");
 
     /* Starts the console task and returns; the task runs from now on */
     return esp_console_start_repl(repl);

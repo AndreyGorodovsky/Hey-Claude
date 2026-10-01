@@ -43,7 +43,8 @@ Work proceeds in numbered stages listed in [STATUS.md](STATUS.md).
 | Component | Version | Note |
 | --- | --- | --- |
 | ESP-IDF | v5.5.x | Not v5.3, which predates the NV3007 and LVGL reference work. Not v6.x, which is a beta or an untested major. |
-| LVGL | 9.4+ | Ships the NV3007 driver |
+| LVGL | 9.6.0 | Ships the NV3007 driver (9.4+). Locked in `firmware/dependencies.lock` |
+| esp-tflite-micro, esp-nn, esp-micro-speech-features | 1.3.3~1, 1.1.2, 1.2.3 | Pinned exactly: the tuned wake-word cutoff depends on their arithmetic |
 | Python | 3.11+ | |
 | Claude model | `claude-opus-5` | |
 

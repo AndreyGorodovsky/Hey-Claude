@@ -21,6 +21,24 @@ more than 500 speakers, so there is no drop-in alternative.
 6 are not blocked on wake-word quality, then substitute the trained model.
 Tuning is measured over a multi-hour false-accept run, not by informal trials.
 
+*Stock model results.* Observed on 2026-10-01 with the stock "Hey Jarvis"
+model at its own cutoff of 0.97, on the breadboard in a room with ordinary
+background sound, one speaker. These are spot checks, not the tuning run.
+
+- At 0.5, 1 and 2 m, nearly every try was detected, with averaged scores
+  of about 0.98.
+- At 3-4 m, about half were detected, and only when spoken loudly. The
+  misses scored about 0.7.
+- Speech with a strong Russian or Hebrew accent was often missed, while
+  the same speaker with a more English accent was detected reliably.
+  microWakeWord models are trained on synthetic voices; the custom model's
+  training should include varied voices and accents, and possibly the
+  user's own recordings, which stay out of the repository.
+
+The targets for the custom model, agreed for stage 4: at most 0.5 false
+detections per hour against continuous speech-heavy background sound (TV,
+podcasts), and at least 90 % detection at 1 m in a quiet room.
+
 ### R2 — Brownout under amplifier load
 
 Peak draw is roughly 1.4 A at 5 V when amplifier transients into the 4 Ω load
@@ -142,6 +160,11 @@ so it is not yet known whether this matters.
 results: wake-word detection in stage 4 and transcripts in stage 6. A smaller
 shift adds gain in 6 dB steps and must clip rather than wrap.
 
+Wake-word detection does not need more gain: the stock model detected
+reliably up to 2 m with the shift at 16 (2026-10-01), and its feature
+frontend evens out loudness itself. The value stays at 16 until stage 6
+shows whether transcripts need more.
+
 ### R13 — The display tears during fast movement
 
 The panel has no tearing-effect (TE) output, so the firmware cannot tell
@@ -156,19 +179,19 @@ in about 4 ms, showed no visible tearing.
 tall shapes. The 80 MHz clock keeps each transfer short, which makes tearing
 smaller and rarer but cannot remove it.
 
-### R14 — LVGL's version is not locked
+### R15 — Microphone overflow is not counted
 
-`firmware/components/display/idf_component.yml` asks for LVGL `^9.4.0`, any 9.x from
-9.4 on. The file that records the exact version chosen,
-`firmware/dependencies.lock`, is excluded by `.gitignore`, so a fresh
-checkout, or deleting `managed_components/`, can fetch a newer 9.x than the
-9.6.0 that stage 3 was built and tested with. LVGL renames functions between
-minor versions (9.5 did), so this can break the build or change behaviour
-without any change in this repository.
+The ring buffer counts audio a listener missed by falling more than 2 s
+behind, and the `wake` command reports it. It cannot see a loss one step
+earlier: if the capture task were ever more than 75 ms late reading the
+microphone, the I2S driver would drop the oldest audio without any count.
+The "no audio lost" results in this repository therefore cover the ring,
+not the whole path from the microphone.
 
-*Mitigation:* none yet. Committing `dependencies.lock` would fix the version.
-It holds no secrets, only component names, versions and checksums, but the
-decision to ignore it predates stage 3 and is left for review.
+*Mitigation:* the capture task runs at the highest audio priority on core 1
+and holds the ring's lock only briefly, so a 75 ms delay is not expected.
+If audio skips are ever heard, the driver's receive-overflow callback
+(`on_recv_q_ovf`) can count such losses.
 
 ## Resolved
 
@@ -184,6 +207,12 @@ decision to ignore it predates stage 3 and is left for review.
   `display_init()`, and lights it only after the first frame is drawn. It
   still floats between reset and that point, as the amplifier's `SD` pin
   does before `audio_init()`.
+- **R14 — LVGL's version not locked.** From stage 4,
+  `firmware/dependencies.lock` is committed, fixing the exact version of
+  every component fetched from the registry: LVGL 9.6.0, and the wake-word
+  libraries, which are also pinned exactly in their manifest because the
+  tuned cutoff depends on them. Updating any of them is now a deliberate
+  change (`idf.py update-dependencies`), followed by retesting.
 
 ## Caveats
 
@@ -207,6 +236,14 @@ decision to ignore it predates stage 3 and is left for review.
 - **`audio loop` playback includes audible hiss.** The test boosts quiet
   recordings by up to 36 dB so that speech can be heard, which raises the
   microphone's own noise with it. The recorded audio itself is not boosted.
+- **Wake-word detections show only from `IDLE`.** Until the server
+  connection exists the device does not reach `IDLE` by itself, so it is
+  set with `state set idle` before testing. The stand-in that reacts to
+  detections is replaced in stage 6. It reads the state and then changes
+  it, so a `state set` typed at the same instant can be overwritten, and it
+  changes the state from inside the event loop that announces the change.
+  Both are harmless for a test aid and are not to be copied into the state
+  machine.
 - **The `state` console commands set the state directly.** They stand in for
   the state machine built in stage 6 and would conflict with it; stage 6
   replaces them.

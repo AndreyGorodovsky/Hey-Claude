@@ -1,0 +1,15 @@
+# Dependencies fetched from the ESP Component Registry on the first build and
+# placed in firmware/managed_components/ (not committed). The exact versions
+# chosen are recorded in firmware/dependencies.lock, which is committed.
+#
+# Pinned to exact versions, not ranges: the wake-word model's scores depend
+# on the arithmetic of these libraries, and the cutoff is tuned against those
+# scores, so an update must be a deliberate change followed by re-tuning.
+# These are the versions ESPHome's micro_wake_word uses with the same models.
+dependencies:
+  # TensorFlow Lite for Microcontrollers: runs the model
+  espressif/esp-tflite-micro: "==1.3.3~1"
+  # Espressif's optimised neural-network kernels, used by the above
+  espressif/esp-nn: "==1.1.2"
+  # Turns audio into the spectrogram features the model was trained on
+  esphome/esp-micro-speech-features: "==1.2.3"

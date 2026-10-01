@@ -235,24 +235,6 @@ esp_err_t audio_init(void)
     return s_init_result;
 }
 
-esp_err_t audio_capture_flush(void)
-{
-    ESP_RETURN_ON_FALSE(s_ready, ESP_ERR_INVALID_STATE, TAG, "not initialised");
-
-    /* Each read with a zero timeout takes one waiting buffer, or returns an
-     * error at once when none is left. The oldest waiting buffer is also the
-     * next one the DMA fills, so it may already be partly overwritten with
-     * new audio; it is discarded with the rest. The limit only guards
-     * against looping forever; at most DMA_DESC - 1 buffers wait. */
-    for (int i = 0; i < 2 * DMA_DESC; i++) {
-        size_t got = 0;
-        if (i2s_channel_read(s_rx, s_raw, sizeof(s_raw), &got, 0) != ESP_OK) {
-            break;
-        }
-    }
-    return ESP_OK;
-}
-
 esp_err_t audio_capture_read(int16_t *out, size_t frames, uint32_t timeout_ms)
 {
     ESP_RETURN_ON_FALSE(s_ready, ESP_ERR_INVALID_STATE, TAG, "not initialised");

@@ -10,13 +10,21 @@
  *
  * Threading: each direction has one user at a time. Capture functions must
  * not be called from two tasks at once, nor playback functions, but capture
- * and playback may run concurrently in different tasks.
+ * and playback may run concurrently in different tasks. Capture's one user
+ * is the audio_ring component's task, which shares the audio with everything
+ * else that listens; other code reads from the ring, not from here.
  */
 #pragma once
 
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_err.h"
+
+/* C linkage when included from C++ (the wakeword component), so the
+ * function names match those compiled from C */
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* Samples per second delivered by the microphone. 16 kHz is what both the
  * wake-word model and the speech-to-text service expect. */
@@ -37,10 +45,6 @@
  * The microphone then runs continuously. Its output takes about 2 s to settle
  * after this call, so audio from the first seconds after boot is not usable. */
 esp_err_t audio_init(void);
-
-/* Discards audio buffered while nobody was reading, up to about 75 ms of it,
- * so the next read starts with sound from now. Returns without waiting. */
-esp_err_t audio_capture_flush(void);
 
 /* Fills `out` with exactly `frames` samples, blocking until they have been
  * recorded. Reads continue where the previous read stopped, so a caller
@@ -64,3 +68,7 @@ esp_err_t audio_play_write(const int16_t *samples, size_t frames, uint32_t timeo
 /* Waits for queued audio to finish playing, then turns the amplifier off.
  * Blocks for up to about 105 ms at 16 kHz, 70 ms at 24 kHz. */
 esp_err_t audio_play_stop(void);
+
+#ifdef __cplusplus
+}
+#endif

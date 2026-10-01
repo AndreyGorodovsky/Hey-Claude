@@ -1,8 +1,10 @@
 # Status
 
-**Current stage:** Stage 3 complete; stage 4 not yet planned.
+**Current stage:** Stage 4, wake word. Part A (the detection pipeline, on a
+stock model) is complete; part B (training and tuning the project's own
+phrase) is next.
 
-**Last updated:** 2026-09-29
+**Last updated:** 2026-10-01
 
 ## Where the project stands
 
@@ -31,6 +33,19 @@ A ten-minute run through every state showed no faults, and audio loopback
 and tone playback sounded as in stage 2 while the display animated, at full
 and at dimmed brightness.
 
+Wake-word detection runs on the device from boot, added in stage 4. A
+capture task is the microphone's only reader and keeps the last 2 s of
+audio in a ring buffer, from which every listener reads at its own
+position. A microWakeWord model, for now the stock "Hey Jarvis", runs on
+that audio every 30 ms and announces each detection; until the stage 6
+state machine exists, a detection in `IDLE` shows `CAPTURING` for 3 s. The
+`wake` console command shows detections, scores and timing, and changes
+the cutoff for tuning. Measured on the breadboard: a run of the model takes
+2.2 ms on average, about 8 % of core 1; detection was reliable up to 2 m
+and partial at 3-4 m; playback and the loopback test were unaffected. The
+review agents defined in `.claude/agents/` reviewed the stage before it
+was committed.
+
 The server exists only as a configuration skeleton.
 
 ## Stages
@@ -41,7 +56,7 @@ The server exists only as a configuration skeleton.
 | 1 | Foundations | Done | ESP-IDF project skeleton, NVS-backed configuration for WiFi, server URL and device identity, logging. Device boots, joins WiFi and logs. |
 | 2 | Audio I/O bring-up | Done | INMP441 capture on I2S0 and MAX98357A playback on I2S1. A three-second record-then-play loopback runs cleanly. Also the first point at which peak current can be measured under amplifier load, completing the record started in stage 0. |
 | 3 | Display and state machine | Done | LVGL 9 driving the NV3007 panel, backlight under control, and the state animations driven by a mock state machine that cycles on a timer. No network. |
-| 4 | Wake word | Not started | microWakeWord integrated with a continuous ring buffer; detection drives the state transition. Custom phrase trained and thresholds tuned against a multi-hour false-accept run. |
+| 4 | Wake word | Part A done; part B not started | microWakeWord integrated with a continuous ring buffer; detection drives the state transition. Custom phrase trained and thresholds tuned against a multi-hour false-accept run. |
 | 5 | Server v1 | Not started | WebSocket server, device authentication, day-scoped conversation store, and the speech-to-text, Claude and text-to-speech chain. Validated end to end by a desktop client script with no device involved. |
 | 6 | Integration | Not started | Device WebSocket client, streaming upload during capture, server-driven endpointing, streaming playback, real state machine, and error, timeout and reconnect paths. First end-to-end conversation. |
 | 7 | Latency and robustness | Not started | Measured end-to-end latency against the budget, per-sentence synthesis chunking, WiFi and server-drop recovery, watchdogs, brownout guard. |
@@ -60,6 +75,14 @@ playback peak is still to be measured in stage 2 (R9 in
 [KNOWN-ISSUES.md](KNOWN-ISSUES.md)). Results are in
 [docs/BRINGUP.md](docs/BRINGUP.md).
 
+Stage 4 is split in two, as KNOWN-ISSUES R1 advises. Part A built the
+pipeline on a stock model, so that later stages are not blocked on
+wake-word quality. Part B trains a model for the project's own two-syllable
+phrase in Google Colab, then tunes its cutoff against the targets in R1: at
+most 0.5 false detections per hour and at least 90 % detection at 1 m. If a
+two-syllable phrase cannot meet them, a longer phrase is tried. Each part is
+reviewed and committed separately.
+
 Stage 5 does not depend on stages 0 through 4 and can be built in parallel.
 Keeping it independently testable means a server defect cannot be mistaken for
 a firmware defect during stage 6.
@@ -76,7 +99,9 @@ can be put in place as soon as they are obtained: `server/config.py` and
 
 ## Next steps
 
-1. Plan stage 4 into steps and submit them for approval.
+1. Stage 4 part B: train the custom phrase in Google Colab, with varied
+   voices and accents (R1), then tune it against the targets. Steps 8-10 of
+   the approved stage 4 plan.
 2. Obtain API keys for Anthropic and Deepgram, copy `server/.env.example` to
    `server/.env`, and fill them in. See [SECRETS.md](SECRETS.md).
 3. Obtain a multimeter for the continuity checks before the circuit is
@@ -93,5 +118,6 @@ can be put in place as soon as they are obtained: `server/config.py` and
 | Over-the-air updates | Undecided, revisited at stage 8; the flash layout already allows it |
 | Server discovery | mDNS on the LAN, with `server_url` as an override; built in stages 5 and 6 |
 | Device settings entry | Serial console for now; stage 8 provisioning reuses the same validation |
-| Locking dependency versions | Undecided: whether to commit `firmware/dependencies.lock` so LVGL's version is fixed (R14) |
+| Locking dependency versions | Settled: `firmware/dependencies.lock` is committed, and the wake-word libraries are pinned exactly (R14) |
+| Wake phrase | A two-syllable phrase first; a longer one if it cannot meet the R1 targets |
 | `SETUP` and `ERROR` detail text | Callers pass display wording for now; before stage 6 adds server errors, decide whether to pass a reason code that the display turns into words |

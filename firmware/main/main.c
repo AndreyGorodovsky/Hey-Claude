@@ -17,11 +17,14 @@
  *   5. Display        - backlight off at once (its pin floats until then),
  *                       then the panel starts in the background and shows
  *                       the state.
- *   6. NVS            - flash-backed key-value storage that holds the settings.
- *   7. Network stack  - TCP/IP layer, needed by WiFi.
- *   8. Settings       - read from NVS into memory, once.
- *   9. Console        - serial command line for settings and tests.
- *  10. WiFi           - only if a network has been configured. The state
+ *   6. Listening      - the capture task starts filling the audio ring, and
+ *                       wake-word detection starts reading it. Needs audio
+ *                       and the event loop, which detections are posted to.
+ *   7. NVS            - flash-backed key-value storage that holds the settings.
+ *   8. Network stack  - TCP/IP layer, needed by WiFi.
+ *   9. Settings       - read from NVS into memory, once.
+ *  10. Console        - serial command line for settings and tests.
+ *  11. WiFi           - only if a network has been configured. The state
  *                       moves to CONNECTING, or to SETUP if there are no
  *                       usable WiFi settings.
  *
@@ -30,9 +33,12 @@
 #include "app_config.h"
 #include "app_state.h"
 #include "audio.h"
+#include "audio_ring.h"
 #include "console.h"
 #include "display.h"
 #include "net.h"
+#include "wake_standin.h"
+#include "wakeword.h"
 
 #include "esp_app_desc.h"
 #include "esp_chip_info.h"
@@ -137,9 +143,9 @@ void app_main(void)
     /* Not ESP_ERROR_CHECK: without audio the device can still join WiFi and
      * take console commands, which is more useful for diagnosing the fault
      * than a restart loop. The audio functions refuse to run afterwards. */
-    esp_err_t err = audio_init();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "audio not available: %s", esp_err_to_name(err));
+    esp_err_t audio_err = audio_init();
+    if (audio_err != ESP_OK) {
+        ESP_LOGE(TAG, "audio not available: %s", esp_err_to_name(audio_err));
     }
 
     /* The default event loop is a background task that delivers system events
@@ -149,9 +155,24 @@ void app_main(void)
     ESP_ERROR_CHECK(app_state_init());
     /* Not ESP_ERROR_CHECK, for the same reason as audio: the device is still
      * usable, and diagnosable, with a dark screen */
-    err = display_init();
+    esp_err_t err = display_init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "display not available: %s", esp_err_to_name(err));
+    }
+
+    /* Listening needs a working microphone. Failures are logged and not
+     * fatal, like audio's: the rest of the device stays usable. */
+    if (audio_err == ESP_OK) {
+        err = audio_ring_start();
+        if (err == ESP_OK) {
+            err = wakeword_start();
+        }
+        if (err == ESP_OK) {
+            err = wake_standin_start();
+        }
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "wake word not available: %s", esp_err_to_name(err));
+        }
     }
 
     init_nvs();

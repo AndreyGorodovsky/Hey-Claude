@@ -24,10 +24,12 @@ made during the feasibility review and are binding unless explicitly revisited.
 
 | Component | Responsibility |
 | --- | --- |
-| `main` | Startup order, boot banner, serial console and its commands, including audio, state and display test commands |
+| `main` | Startup order, boot banner, serial console and its commands (settings, audio, state, display and wake-word tests), and until stage 6 a stand-in reaction to the wake word |
 | `app_config` | Settings stored in NVS: loading the running configuration, validating and storing edits. No user interface of its own |
 | `net` | WiFi station: joining, reconnecting with backoff, readable failure reasons |
 | `audio` | Microphone capture and amplifier playback over I2S: plain 16-bit samples in and out, no buffering or tasks of its own |
+| `audio_ring` | The microphone's only reader: a capture task filling a ring buffer of the last 2 s, from which every listener reads at its own position |
+| `wakeword` | On-device wake-word detection with a microWakeWord model; announces detections and decides nothing else |
 | `app_state` | The device state and its detail text: stored, and announced on change. Decides no transitions |
 | `display` | The NV3007 panel, its backlight, and what is drawn for each state, from a single task that is the only user of LVGL |
 | `board` | The verified pin map and panel geometry, the single source of both |
@@ -43,12 +45,22 @@ subscribe to the standard `IP_EVENT_STA_GOT_IP` and
 
 `app_state` announces changes the same way, as `APP_STATE_CHANGED` on the
 default event loop, and the display follows them without being called.
+`wakeword` announces each detection as `WAKEWORD_DETECTED`, carrying the
+position in the audio stream where the phrase ended.
 `app_state` has exactly one writer: the state machine built in stage 6.
 Components that detect something (the wake word, a server message, a lost
 connection) report it to the state machine and never set states themselves;
 otherwise two tasks setting states at once would leave the screen on
-whichever came last. Until stage 6, the boot sequence and the console's
-`state` command stand in for that writer.
+whichever came last. Until stage 6, the boot sequence, the console's
+`state` command and a stand-in that shows `CAPTURING` for 3 s after a
+detection in `IDLE` take its place.
+
+The state machine must also learn when the device can no longer hear: the
+wake-word model failing, the microphone stalling, or detection failing to
+start. Today these are logged and shown by the `wake` command only. Stage 6
+adds a "listening failed" event from `wakeword`, which the state machine
+turns into `ERROR` with a reason, so the screen never shows `IDLE` on a
+device that cannot hear.
 
 Every boot logs the firmware version, flash size, free internal RAM and PSRAM,
 and the reset reason. Brownout and power-glitch resets are logged as errors,
@@ -108,8 +120,10 @@ refer here instead of quoting each other's numbers.
 | --- | --- | --- | --- |
 | WiFi driver | 23 | 0 | ESP-IDF's; must keep up with the radio |
 | `esp_timer` | 22 | 0 | ESP-IDF's; runs software timer callbacks, which must be short |
-| Default event loop | 20 | 0 | ESP-IDF's; delivers WiFi and state events |
+| Default event loop | 20 | 0 | ESP-IDF's; delivers WiFi, state and wake-word events |
+| Capture | 12 | 1 | Reads the microphone into the ring; must never fall 75 ms behind |
 | Audio test tasks | 10 | 1 | Console `audio` commands, short-lived |
+| Wake word | 8 | 1 | Features and model every 30 ms; sleeps between |
 | Display | 4 | 0 | LVGL drawing and animation; sleeps between frames |
 | Console | 2 | either | ESP-IDF's REPL; typing must not stall animation or audio |
 | `main` | 1 | 0 | Runs the start-up sequence, then ends |
@@ -121,9 +135,10 @@ priority, so that the I2S interrupts are placed on core 1.
 
 | Buffer | Location | Reason |
 | --- | --- | --- |
-| Audio ring buffers | PSRAM | Large, latency-tolerant |
+| Audio ring buffer (64 KB, 2 s) | PSRAM | Large, latency-tolerant |
 | LVGL frame buffer (~121 KB) | PSRAM | Too large for internal SRAM. DMA sends it to the panel directly from PSRAM, at no measurable cost (see Display) |
-| Wake-word tensor arena | Internal SRAM | Inference runs continuously; PSRAM latency would cost frames |
+| Wake-word tensor arena (~25 KB) | Internal SRAM | Inference runs continuously; PSRAM latency would cost frames |
+| Wake-word model copy (~51 KB) | PSRAM | Read-only weights, read through the cache; copied from flash at boot for alignment |
 | Network TX/RX queues | Internal SRAM | Touched from interrupt context |
 
 ### Audio path
@@ -157,12 +172,41 @@ contend. The I2S interrupt handlers run on core 1 with the rest of the audio
 chain: ESP-IDF places an interrupt on the core that sets it up, so the audio
 set-up runs in a short-lived task there.
 
-The `audio` component allows one reader of the microphone at a time. Stage 4
-adds a single capture task on core 1 as that reader, feeding the PSRAM ring
-buffer from which wake-word detection and the upload in stage 6 both read;
-the `audio loop` test command then reads from the ring as well. Stage 6 adds
-an immediate stop for playback, for error and cancel paths that cannot wait
-for queued audio to finish.
+The `audio` component allows one reader of the microphone at a time. That
+reader is the capture task in `audio_ring`, on core 1, which copies every
+15 ms chunk into a 2 s ring buffer in PSRAM. Every listener reads from the
+ring at its own position: wake-word detection, the `audio loop` test, and
+from stage 6 the upload. A listener more than 2 s behind skips forward and
+is told how many samples it missed. A listener can also start at an earlier
+position, which is how the upload will begin exactly where the wake word
+ended. A mutex guards the ring; copies are short, so the capture task waits
+about a millisecond at most, against the 75 ms the microphone driver
+allows. Stage 6 adds an immediate stop for playback, for error and cancel
+paths that cannot wait for queued audio to finish.
+
+### Wake word
+
+Detection runs entirely on the device, on core 1, using a microWakeWord
+model with TensorFlow Lite for Microcontrollers and ESPHome's port of its
+audio feature frontend. Every 10 ms the frontend turns the latest 30 ms of
+audio into 40 frequency-band values, evening out steady noise and loudness
+on the way; every third slice the model runs on the new slices and gives
+the probability that the phrase has just ended. The last five
+probabilities are averaged, and a detection fires when the average exceeds
+the cutoff. After a detection, and at start-up, the detector waits a second
+before it can fire again.
+
+The model is two files in `firmware/components/wakeword/models/`: the
+network and a manifest of the settings it was trained with. The build reads
+the cutoff, averaging window, step and memory size from the manifest, so it
+is their only source. The component versions are pinned exactly, because
+the scores, and so the tuned cutoff, depend on their arithmetic.
+
+Measured on 2026-10-01 with the stock `hey_jarvis` model, on the
+breadboard, USB-powered, with WiFi connected: one run of the model takes
+2.2 ms on average and 5.7 ms at most, every 30 ms, about 8 % of core 1; the
+model uses 22,492 bytes of working memory. In a 10-minute run with the
+display cycling through every state, no audio was lost.
 
 ### Display
 
@@ -339,3 +383,5 @@ deferred.
 | mDNS server discovery | Fixed server address | The server machine's LAN address changes; a fixed address would need re-entering each time |
 | OTA-ready partition layout | Single application slot | Costs nothing in 16 MB, and keeps OTA open without a later layout change |
 | Streaming transport | Request and response | Fourfold latency difference; cannot be retrofitted cheaply |
+| Ring buffer shared by position | One queue per listener | Listeners never take audio from each other, and a past position (the wake word's end) can be replayed |
+| Component versions locked (`dependencies.lock` committed, wake-word libraries pinned exactly) | Version ranges | A newer library can break the build or shift the model's scores without any change in the repository |

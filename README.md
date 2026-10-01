@@ -4,10 +4,11 @@ A self-contained voice assistant built on an ESP32-S3. Say the wake word, ask a
 question, and hear Claude answer out loud. A small TFT panel shows what the
 device is doing at each moment.
 
-> **Project status: foundations.** The circuit is built and verified on a
-> breadboard, and the firmware boots, stores its settings and joins WiFi. Audio,
-> display, wake word and the server are not built yet. See
-> [STATUS.md](STATUS.md) for the current stage.
+> **Project status: wake word.** The circuit is built on a breadboard. The
+> firmware joins WiFi, records and plays audio, shows its state on the
+> display, and detects a wake word on the device, so far with a stock
+> "Hey Jarvis" model in place of the project's own phrase. The server is not
+> built yet. See [STATUS.md](STATUS.md) for the current stage.
 
 ## How it works
 
@@ -194,6 +195,22 @@ red top, green bottom, blue left, white right. A missing edge means the
 drawing offset is wrong; stray or wrongly coloured pixels mean the SPI clock
 is too fast for the wiring.
 
+Wake-word detection runs from boot. A detection while the state is `idle`
+shows `capturing` for 3 s; without a server the device does not reach `idle`
+by itself, so set it first with `state set idle`. The `wake` command shows
+and tunes detection:
+
+```
+wake                      detections, rate per hour, scores, model timing
+wake reset                clear the counters to start a measurement
+wake log on               print the highest score once a second
+wake cutoff 0.95          change the detection threshold until reboot
+```
+
+A false-accept measurement is `wake reset`, then hours of background sound
+with nobody saying the wake phrase, then `wake`: every detection counted is
+a false one.
+
 ## Repository layout
 
 Directories are created as the corresponding stage begins.
@@ -202,8 +219,10 @@ Directories are created as the corresponding stage begins.
 firmware/          ESP-IDF application for the ESP32-S3
   main/            Startup and the serial console
   components/      app_config (settings), net (WiFi), audio (microphone and
-                   amplifier), app_state (device state), display (panel,
-                   backlight, animations), board (pin map)
+                   amplifier), audio_ring (shared microphone audio),
+                   wakeword (detection and its model), app_state (device
+                   state), display (panel, backlight, animations), board
+                   (pin map)
   tools/           Standalone hardware test programs
 server/            Python server: transport, speech, Claude, session store
 docs/              Diagrams and supporting material

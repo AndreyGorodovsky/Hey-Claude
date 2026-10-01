@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "audio.h"
+#include "audio_ring.h"
 #include "console.h"
 #include "esp_check.h"
 #include "esp_console.h"
@@ -118,10 +119,21 @@ static void loop_task(void *arg)
     }
 
     printf("Recording %d s. Speak now.\n", s_job.seconds);
-    /* Drop what was buffered before the command, so the recording starts now */
-    esp_err_t err = audio_capture_flush();
-    if (err == ESP_OK) {
-        err = audio_capture_read(rec, frames, IO_TIMEOUT_MS);
+    /* The microphone is shared through the ring (audio_ring.h). A reader
+     * started at 0 ms back records from now on. Reads are a chunk at a time
+     * so that each completes well within IO_TIMEOUT_MS. */
+    audio_ring_reader_t reader;
+    audio_ring_reader_init(&reader, 0);
+    uint32_t dropped = 0;
+    esp_err_t err = ESP_OK;
+    for (size_t pos = 0; pos < frames && err == ESP_OK; pos += CHUNK) {
+        size_t n = frames - pos < CHUNK ? frames - pos : CHUNK;
+        err = audio_ring_read(&reader, rec + pos, n, IO_TIMEOUT_MS, &dropped);
+    }
+    /* Should never happen: the ring holds 2 s and this task copies each chunk
+     * as soon as it arrives. A gap would be audible as a skip. */
+    if (err == ESP_OK && dropped > 0) {
+        printf("audio loop: %lu samples lost while recording\n", (unsigned long)dropped);
     }
     if (err != ESP_OK) {
         printf("audio loop: recording failed: %s\n", esp_err_to_name(err));

@@ -2,8 +2,10 @@
 # PRIV_REQUIRES lists the components this code uses. Under MINIMAL_BUILD a
 # component missing from this list is not built at all.
 idf_component_register(SRCS "main.c" "console.c" "audio_cmd.c" "ui_cmd.c"
+                            "wake_cmd.c" "wake_standin.c"
                        INCLUDE_DIRS "."
-                       PRIV_REQUIRES app_config net audio app_state display
+                       PRIV_REQUIRES app_config net audio audio_ring app_state display
+                                     wakeword
                                      console          # serial command line
                                      nvs_flash        # settings storage
                                      esp_event        # default event loop

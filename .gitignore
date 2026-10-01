@@ -16,7 +16,8 @@ credentials.h
 # --- ESP-IDF build output ---
 build/
 managed_components/
-dependencies.lock
+# dependencies.lock is committed: it fixes the exact versions of the
+# components above (KNOWN-ISSUES R14). It holds names, versions and checksums.
 *.bin
 *.elf
 *.map
