@@ -13,7 +13,8 @@ Work proceeds in numbered stages listed in [STATUS.md](STATUS.md).
 2. **Implement** the approved steps only. Anything discovered mid-stage that
    falls outside them is recorded in [KNOWN-ISSUES.md](KNOWN-ISSUES.md), not
    silently fixed.
-3. **Review agents**, in this order, after every stage or major feature:
+3. **Review agents**, defined in [.claude/agents/](.claude/agents/), in this
+   order, after every stage or major feature:
    1. `code-reviewer` — correctness, memory safety, task and DMA discipline,
       error paths, resource leaks.
    2. `challenger` — reads the code cold and argues against anything that is
