@@ -36,11 +36,11 @@
  * uint8 from 0 to 255, standing for 0 to 1. The cutoff is kept in the same
  * 0-255 form so the comparison needs no conversion.
  *
- * Memory. The model's weights (about 50 KB) are read on every run; they are
- * copied into PSRAM at start-up (see load_model() for why). Its working
- * memory, the "tensor arena" (about 23 KB), is in internal RAM because it is
- * read and written throughout every run, and PSRAM would slow inference
- * (ARCHITECTURE.md, memory placement).
+ * Memory. The model's weights (50-60 KB for the models in models/) are read
+ * on every run; they are copied into PSRAM at start-up (see load_model() for
+ * why). Its working memory, the "tensor arena" (23-26 KB), is in internal
+ * RAM because it is read and written throughout every run, and PSRAM would
+ * slow inference (ARCHITECTURE.md, memory placement).
  *
  * Context. wakeword_start() runs in the caller's task (main, at boot). The
  * detection loop runs in its own task on AUDIO_CORE (core 1). The stats and
@@ -78,7 +78,9 @@ extern const uint8_t model_start[] asm("_binary_wakeword_model_tflite_start");
 extern const uint8_t model_end[] asm("_binary_wakeword_model_tflite_end");
 
 /* WAKEWORD_PHRASE, WAKEWORD_CUTOFF, WAKEWORD_WINDOW, WAKEWORD_STEP_MS and
- * WAKEWORD_ARENA come from the model's manifest, through CMakeLists.txt. */
+ * WAKEWORD_ARENA come from the model's manifest, through CMakeLists.txt;
+ * WAKEWORD_MODEL_NAME is the model's file name there, such as
+ * "hey_claude_run2". */
 
 /* --- Feature settings shared by every microWakeWord model --- */
 #define FEATURES            40      /* frequency bands per slice */
@@ -253,8 +255,8 @@ static esp_err_t load_model(void)
      * values are read as 32-bit words, which this processor cannot read from
      * a misaligned address. EMBED_FILES does not promise any alignment, so
      * the model is copied into a block that starts on a 16-byte boundary.
-     * PSRAM, because 50 KB is too much internal RAM for something only read
-     * through the cache. */
+     * PSRAM, because 50-60 KB is too much internal RAM for something only
+     * read through the cache. */
     size_t size = model_end - model_start;
     s_model = (uint8_t *)heap_caps_aligned_alloc(16, size, MALLOC_CAP_SPIRAM);
     ESP_RETURN_ON_FALSE(s_model != NULL, ESP_ERR_NO_MEM, TAG, "model copy");
@@ -305,9 +307,10 @@ static esp_err_t load_model(void)
                         ESP_ERR_NOT_SUPPORTED, TAG, "unexpected model output");
     s_stride = in->dims->data[1];
 
-    ESP_LOGI(TAG, "'%s': %u-byte model, stride %d (runs every %d ms), arena %u of %d bytes "
-                  "used, cutoff %.3f, window %d",
-             WAKEWORD_PHRASE, (unsigned)size, s_stride, s_stride * WAKEWORD_STEP_MS,
+    ESP_LOGI(TAG, "'%s' (%s): %u-byte model, stride %d (runs every %d ms), arena %u of %d "
+                  "bytes used, cutoff %.3f, window %d",
+             WAKEWORD_PHRASE, WAKEWORD_MODEL_NAME, (unsigned)size, s_stride,
+             s_stride * WAKEWORD_STEP_MS,
              (unsigned)s_interp->arena_used_bytes(), ARENA_SIZE, s_cutoff / 255.0f,
              WAKEWORD_WINDOW);
     return ESP_OK;
@@ -513,6 +516,11 @@ extern "C" esp_err_t wakeword_start(void)
 extern "C" const char *wakeword_phrase(void)
 {
     return WAKEWORD_PHRASE;
+}
+
+extern "C" const char *wakeword_model(void)
+{
+    return WAKEWORD_MODEL_NAME;
 }
 
 extern "C" esp_err_t wakeword_set_cutoff(float cutoff)

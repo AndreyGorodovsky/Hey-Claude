@@ -33,6 +33,13 @@ nvs*.bin
 *.raw
 *.mp3
 *.opus
+*.m4a
+*.aac
+*.flac
+*.ogg
+*.3gp
+*.amr
+*.webm
 *.db
 *.sqlite
 *.sqlite3
@@ -54,6 +61,10 @@ venv/
 # --- Wake-word training artefacts ---
 .ipynb_checkpoints/
 training/
+# Downloads from the training notebook, left in the repository root before
+# being copied into firmware/components/wakeword/models/. Anchored to the
+# root so that the models directory, which uses the same names, is not hidden.
+/hey_claude_run*
 
 # --- Editors and OS ---
 .vscode/

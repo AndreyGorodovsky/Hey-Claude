@@ -77,6 +77,10 @@ esp_err_t wakeword_start(void);
  * such as "Hey Jarvis" */
 const char *wakeword_phrase(void);
 
+/* The built-in model's name, which for a trained model includes its
+ * training run, such as "hey_claude_run2" */
+const char *wakeword_model(void);
+
 /* Changes the cutoff while running, for tuning; `cutoff` is between 0 and 1,
  * exclusive. It is kept in steps of 1/255, and values that round to 0 or 1
  * are refused (ESP_ERR_INVALID_ARG). Not stored: every boot starts with the

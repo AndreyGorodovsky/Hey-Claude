@@ -6,9 +6,9 @@ device is doing at each moment.
 
 > **Project status: wake word.** The circuit is built on a breadboard. The
 > firmware joins WiFi, records and plays audio, shows its state on the
-> display, and detects a wake word on the device, so far with a stock
-> "Hey Jarvis" model in place of the project's own phrase. The server is not
-> built yet. See [STATUS.md](STATUS.md) for the current stage.
+> display, and detects the wake word "Hey Claude" on the device. The
+> wake-word model is still being trained to the accuracy it needs. The
+> server is not built yet. See [STATUS.md](STATUS.md) for the current stage.
 
 ## How it works
 

@@ -32,7 +32,7 @@ static int wake_status(void)
     uint32_t secs = st.seconds;
     float hours = secs / 3600.0f;
 
-    printf("wake word '%s'%s, cutoff %.3f\n", wakeword_phrase(),
+    printf("wake word '%s' (%s)%s, cutoff %.3f\n", wakeword_phrase(), wakeword_model(),
            st.running ? "" : ", NOT RUNNING (see the boot log)", st.cutoff);
     printf("  over %lu h %02lu min: %lu detections",
            (unsigned long)(secs / 3600), (unsigned long)(secs / 60 % 60),

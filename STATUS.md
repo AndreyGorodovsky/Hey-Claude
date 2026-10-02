@@ -1,10 +1,12 @@
 # Status
 
 **Current stage:** Stage 4, wake word. Part A (the detection pipeline, on a
-stock model) is complete; part B (training and tuning the project's own
-phrase) is next.
+stock model) is complete. Part B (training and tuning the project's own
+phrase, "Hey Claude") is in progress: the second training run is done and
+its model is in the firmware but falls short on the device; recordings
+of real voices are next.
 
-**Last updated:** 2026-10-01
+**Last updated:** 2026-10-02
 
 ## Where the project stands
 
@@ -36,15 +38,28 @@ and at dimmed brightness.
 Wake-word detection runs on the device from boot, added in stage 4. A
 capture task is the microphone's only reader and keeps the last 2 s of
 audio in a ring buffer, from which every listener reads at its own
-position. A microWakeWord model, for now the stock "Hey Jarvis", runs on
-that audio every 30 ms and announces each detection; until the stage 6
+position. A microWakeWord model runs on that audio every 30 ms and
+announces each detection; until the stage 6
 state machine exists, a detection in `IDLE` shows `CAPTURING` for 3 s. The
 `wake` console command shows detections, scores and timing, and changes
 the cutoff for tuning. Measured on the breadboard: a run of the model takes
 2.2 ms on average, about 8 % of core 1; detection was reliable up to 2 m
 and partial at 3-4 m; playback and the loopback test were unaffected. The
-review agents defined in `.claude/agents/` reviewed the stage before it
-was committed.
+review agents defined in `.claude/agents/` reviewed part A before it was
+committed. Those figures are for the stock "Hey Jarvis" model.
+
+Part B so far, reviewed and committed before run 3. "Hey Claude" models
+are trained in Google Colab with a notebook in
+`firmware/tools/wakeword_training/`, described in
+[docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md), whose run history
+is the one record of each run's results. Two runs on synthetic voices only
+fall well short of the targets on the device. The firmware builds the
+second, `hey_claude_run2`, and the boot log and `wake` command name the
+model, so each device test can be tied to its run. Making the notebook run
+on Colab's free plan took several fixes, all recorded in it; the changes it
+needs before it is rerun with new inputs are listed in KNOWN-ISSUES R16.
+Run 3 adds recordings of real voices, following
+[docs/WAKEWORD-RECORDING.md](docs/WAKEWORD-RECORDING.md).
 
 The server exists only as a configuration skeleton.
 
@@ -56,7 +71,7 @@ The server exists only as a configuration skeleton.
 | 1 | Foundations | Done | ESP-IDF project skeleton, NVS-backed configuration for WiFi, server URL and device identity, logging. Device boots, joins WiFi and logs. |
 | 2 | Audio I/O bring-up | Done | INMP441 capture on I2S0 and MAX98357A playback on I2S1. A three-second record-then-play loopback runs cleanly. Also the first point at which peak current can be measured under amplifier load, completing the record started in stage 0. |
 | 3 | Display and state machine | Done | LVGL 9 driving the NV3007 panel, backlight under control, and the state animations driven by a mock state machine that cycles on a timer. No network. |
-| 4 | Wake word | Part A done; part B not started | microWakeWord integrated with a continuous ring buffer; detection drives the state transition. Custom phrase trained and thresholds tuned against a multi-hour false-accept run. |
+| 4 | Wake word | Part A done; part B in progress (run 3, with real recordings, next) | microWakeWord integrated with a continuous ring buffer; detection drives the state transition. Custom phrase trained and thresholds tuned against a multi-hour false-accept run. |
 | 5 | Server v1 | Not started | WebSocket server, device authentication, day-scoped conversation store, and the speech-to-text, Claude and text-to-speech chain. Validated end to end by a desktop client script with no device involved. |
 | 6 | Integration | Not started | Device WebSocket client, streaming upload during capture, server-driven endpointing, streaming playback, real state machine, and error, timeout and reconnect paths. First end-to-end conversation. |
 | 7 | Latency and robustness | Not started | Measured end-to-end latency against the budget, per-sentence synthesis chunking, WiFi and server-drop recovery, watchdogs, brownout guard. |
@@ -99,12 +114,22 @@ can be put in place as soon as they are obtained: `server/config.py` and
 
 ## Next steps
 
-1. Stage 4 part B: train the custom phrase in Google Colab, with varied
-   voices and accents (R1), then tune it against the targets. Steps 8-10 of
-   the approved stage 4 plan.
-2. Obtain API keys for Anthropic and Deepgram, copy `server/.env.example` to
+1. Plan and, once approved, write the run 3 notebook changes: the
+   recordings step, with its separate test set, and the fixes in
+   KNOWN-ISSUES R16.
+2. Record real voices following
+   [docs/WAKEWORD-RECORDING.md](docs/WAKEWORD-RECORDING.md), including
+   sound-alikes such as "hey cloud" and a separate test session, then
+   train run 3. Then repeat the device test: 10 tries each at 0.5,
+   1 and 2 m, plus "Claude" alone and sound-alikes, which must not
+   trigger. If a two-syllable phrase still falls short after that,
+   consider a longer phrase.
+3. Once detection meets the target, tune the cutoff with the multi-hour
+   false-accept run (step 9 of the stage 4 plan), then review, update the
+   documents and commit part B (step 10).
+4. Obtain API keys for Anthropic and Deepgram, copy `server/.env.example` to
    `server/.env`, and fill them in. See [SECRETS.md](SECRETS.md).
-3. Obtain a multimeter for the continuity checks before the circuit is
+5. Obtain a multimeter for the continuity checks before the circuit is
    soldered (R9).
 
 ## Open decisions

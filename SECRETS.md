@@ -34,7 +34,9 @@ history. Check what is tracked, not only what is staged.
 Captured audio, transcripts and conversation history are personal data and are
 excluded regardless of whose voice they contain.
 
-- Audio files: `.wav`, `.pcm`, `.raw`, `.mp3`, `.opus`
+- Audio files: `.wav`, `.pcm`, `.raw`, `.mp3`, `.opus`, and the formats
+  phone and computer recorders produce: `.m4a`, `.aac`, `.flac`, `.ogg`,
+  `.3gp`, `.amr`, `.webm`
 - The session SQLite database and any dump of it
 - Server logs, which contain transcripts
 - Wake-word training recordings and datasets
@@ -96,7 +98,7 @@ git diff --cached -U0 | grep -nE \
 
 ```sh
 git ls-files | grep -Ei \
-  '(^|/)(sdkconfig|\.env)$|\.(wav|pcm|raw|mp3|opus|db|sqlite3?|bin|elf|pem|key|p12)$|(^|/)build/'
+  '(^|/)(sdkconfig|\.env)$|\.(wav|pcm|raw|mp3|opus|m4a|aac|flac|ogg|3gp|amr|webm|db|sqlite3?|bin|elf|pem|key|p12)$|(^|/)build/'
 ```
 
 This must return nothing. Anything it returns is already in the repository and

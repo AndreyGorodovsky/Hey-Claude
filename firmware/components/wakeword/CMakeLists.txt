@@ -4,8 +4,10 @@
 # manifest (.json) with the settings it was trained and tuned with. The
 # settings are read from the manifest here and handed to the code as
 # compile-time constants, so the manifest is their only source; changing the
-# model means changing WAKEWORD_MODEL below and nothing else.
-set(WAKEWORD_MODEL "hey_jarvis")
+# model means changing WAKEWORD_MODEL below and nothing else. Trained models
+# keep their run in the name (hey_claude_run2), so that the boot log and
+# `wake` show which run a device test was made with.
+set(WAKEWORD_MODEL "hey_claude_run2")
 
 set(manifest_path "${CMAKE_CURRENT_LIST_DIR}/models/${WAKEWORD_MODEL}.json")
 file(READ "${manifest_path}" manifest)
@@ -41,6 +43,7 @@ idf_component_register(SRCS "wakeword.cc"
                        EMBED_FILES "${model_copy}")
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    WAKEWORD_MODEL_NAME="${WAKEWORD_MODEL}"
     WAKEWORD_PHRASE="${mww_phrase}"
     WAKEWORD_CUTOFF=${mww_cutoff}f
     WAKEWORD_WINDOW=${mww_window}
