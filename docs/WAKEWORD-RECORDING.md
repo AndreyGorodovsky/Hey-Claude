@@ -65,6 +65,10 @@ Record them as a separate session, on a different day or at least in a
 separate take, mirroring the device test: 10 tries each at 0.5, 1 and 2 m,
 and a few sound-alikes. A test set cut from the same takes as the training
 recordings would contain near-copies of them and look better than it is.
+Each distance goes in its own folder (see Uploading), so that the
+notebook reports each separately. Once a run has been measured on it,
+keep the test set as it is: runs are compared only on the same set, and
+recordings added later make a new one.
 
 ## How to record
 
@@ -79,19 +83,21 @@ the table above are measured from there.
 - One recording per phrase is easiest to handle. Long takes are also fine:
   say the phrase, wait about 2 seconds in silence, say it again, and so on.
   A take of a few minutes holding 20-30 phrases saves a lot of tapping. The
-  pauses let the training notebook cut the take into single phrases.
+  pauses let the training notebook cut the take into single phrases; the
+  short pause inside "hey, Claude" stays within one phrase.
 - WAV is best. MP3, M4A and the formats phone apps produce are converted by
   the notebook.
 - Mono or stereo, any sample rate: everything is converted to 16 kHz mono,
   the rate of the device's microphone.
-- Avoid long silences at the start and end of single recordings; a second
-  or so is fine.
+- Silence at the start and end of a recording does no harm: the notebook
+  trims every phrase to its speech.
 
 ### Naming
 
-Names help in checking the spread later, but nothing depends on them. A
-pattern such as `alex_1m_normal_03.m4a`: who, distance, manner, number.
-Use a first name or initials only.
+Names help in checking the spread later, and the notebook's test on real
+voices lists each test recording by its file name, but nothing else depends
+on them. A pattern such as `alex_1m_normal_03.m4a`: who, distance, manner,
+number. Use a first name or initials only.
 
 ## Uploading
 
@@ -99,22 +105,30 @@ Put the recordings in Google Drive, in the folder the training notebook
 uses:
 
 ```
-My Drive/hey_claude_wakeword/recordings/hey_claude/    the wake phrase
-My Drive/hey_claude_wakeword/recordings/not_wake/      phrases that must not trigger
-My Drive/hey_claude_wakeword/recordings/test/          the test set
+My Drive/hey_claude_wakeword/recordings/hey_claude/               the wake phrase
+My Drive/hey_claude_wakeword/recordings/not_wake/                 phrases that must not trigger
+My Drive/hey_claude_wakeword/recordings/test/hey_claude/0.5m/     the test set: the wake phrase at 0.5 m,
+My Drive/hey_claude_wakeword/recordings/test/hey_claude/1m/         at 1 m,
+My Drive/hey_claude_wakeword/recordings/test/hey_claude/2m/         at 2 m,
+My Drive/hey_claude_wakeword/recordings/test/not_wake/alikes/       and phrases that must not trigger
 ```
 
-Subfolders inside these are fine, for example one per person.
+Subfolders inside `hey_claude/` and `not_wake/` are fine, for example one
+per person. The test set has the same two kinds; each folder inside them
+is reported separately, so others, such as `test/hey_claude/3m/`, can be
+added.
 
 ## How the recordings are used
 
-The notebook converts the recordings to 16 kHz mono, cuts long takes at
-their pauses, and adds the wake-phrase and sound-alike recordings to the
-synthetic samples in training, weighted up because there are far fewer of
-them. The test set is kept out of training and reported on separately.
-The notebook does not yet contain this step; it is added for run 3, and
-the details, such as whether recordings made across a room also get
-artificial room echo, are settled then.
+Version 2 of the training notebook converts the recordings to 16 kHz
+mono, cuts long takes at their pauses and trims each phrase to its speech,
+printing how many phrases it found in each file. The wake-phrase and
+sound-alike recordings join the synthetic samples in training, each used
+as many differently augmented copies without artificial room echo. The
+test set is never trained on: after training, the notebook runs the model
+on it the way the device decides, and reports detections for each folder
+and the score of each recording. The details are in
+[WAKEWORD-TRAINING.md](WAKEWORD-TRAINING.md).
 
 The device's own microphone would be the ideal recorder, since it is what the
 model hears in use, but the firmware cannot yet save recordings. A phone or

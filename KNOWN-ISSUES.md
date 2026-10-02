@@ -200,36 +200,34 @@ and holds the ring's lock only briefly, so a 75 ms delay is not expected.
 If audio skips are ever heard, the driver's receive-overflow callback
 (`on_recv_q_ovf`) can count such losses.
 
-### R16 — The training notebook is not yet safe to rerun with changes
+### R16 — Limits of the training notebook
 
-The notebook was built to get one run through Colab's free plan, and run
-3 will be the first to change its inputs. Reviews after run 2 found that:
+Version 1 of the training notebook was built to get one run through
+Colab's free plan, and reviews after run 2 found it unsafe to rerun with
+changed inputs. Version 2 (`hey_claude_v2.ipynb`) fixes that: steps are
+skipped only when a marker of their settings matches, the training
+settings are written by the training cell itself, a run cannot be
+continued with changed settings, each run records its settings, model
+shape and package versions, sections are named rather than numbered, and
+the manifest is generated. These limits remain:
 
-- Steps are skipped when their output exists, not when it is complete and
-  made with the current settings. A step stopped part-way, a failed
-  download in the negative-examples step, or a changed spelling, voice or
-  speed list can be skipped silently, and the features are shared across
-  runs, so a new run could train on the previous run's features.
-- The training settings are written in the cell before the restart that
-  training requires, so a run name or setting changed after that restart
-  does not reach training, which could then write into the previous run's
-  checkpoints.
-- A run does not record its own settings, so its result cannot be traced
-  to them afterwards.
-- Cells are referred to by number throughout the notebook and the training
-  document, so inserting a cell means renumbering both by hand.
-- The manifest is written by hand from the test report and settings.
 - Only microWakeWord, the sample generator and two audio libraries are
-  pinned; the rest comes from whatever Colab provides.
+  pinned; the rest comes from whatever Colab provides. Each run records
+  the full list, from which a later run can pin.
 - After a disconnect, training resumes from the last weights but restarts
-  its step count and its record of the best checkpoint.
+  its step count and its record of the best checkpoint. This is inside
+  microWakeWord.
 - Checkpoints are chosen by recall on synthetic samples, which run 2
-  showed does not predict the device.
+  showed does not predict the device. The test on real voices reports on
+  the chosen model but does not take part in choosing it, which would need
+  a further set of recordings beyond the test set.
+- The test on real voices mirrors the device's arithmetic and decision,
+  but its feature front end, like training's, is microWakeWord's own
+  build of the same TensorFlow Lite Micro code, not the firmware's.
+  The device test remains the final word.
 
-*Mitigation:* addressed together with the recordings step for run 3,
-which is planned and approved before it is written. Real recordings are
-to include a separate test set, recorded in its own session and never
-trained on, so that the notebook reports on real voices.
+*Mitigation:* the real-voice test and the device test, not the notebook's
+synthetic test, decide whether a run is better.
 
 ## Resolved
 

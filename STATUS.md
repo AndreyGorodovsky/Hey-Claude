@@ -48,18 +48,25 @@ and partial at 3-4 m; playback and the loopback test were unaffected. The
 review agents defined in `.claude/agents/` reviewed part A before it was
 committed. Those figures are for the stock "Hey Jarvis" model.
 
-Part B so far, reviewed and committed before run 3. "Hey Claude" models
-are trained in Google Colab with a notebook in
-`firmware/tools/wakeword_training/`, described in
+Part B so far. "Hey Claude" models are trained in Google Colab with a
+notebook in `firmware/tools/wakeword_training/`, described in
 [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md), whose run history
 is the one record of each run's results. Two runs on synthetic voices only
 fall well short of the targets on the device. The firmware builds the
 second, `hey_claude_run2`, and the boot log and `wake` command name the
-model, so each device test can be tied to its run. Making the notebook run
-on Colab's free plan took several fixes, all recorded in it; the changes it
-needs before it is rerun with new inputs are listed in KNOWN-ISSUES R16.
-Run 3 adds recordings of real voices, following
-[docs/WAKEWORD-RECORDING.md](docs/WAKEWORD-RECORDING.md).
+model, so each device test can be tied to its run. Version 2 of the
+notebook, for run 3, adds recordings of real voices, made following
+[docs/WAKEWORD-RECORDING.md](docs/WAKEWORD-RECORDING.md), and a test on a
+separate set of them that is never trained on. It is also safe to rerun
+with changed inputs, and generates the firmware manifest; its remaining
+limits are in KNOWN-ISSUES R16. Its helpers, the recordings step, the
+feature building, the training settings and refusals, the sample
+migration from version 1 and the real-voice test were run locally against
+stand-ins for Colab and Google Drive, with the run 2 model and Windows
+text-to-speech clips; the sample generation, downloads and training run
+only in Colab. In that local test the run 2 model scored the
+text-to-speech "hey cloud" and "okay Claude" above 0.95, which agrees with
+the device test.
 
 The server exists only as a configuration skeleton.
 
@@ -114,22 +121,21 @@ can be put in place as soon as they are obtained: `server/config.py` and
 
 ## Next steps
 
-1. Plan and, once approved, write the run 3 notebook changes: the
-   recordings step, with its separate test set, and the fixes in
-   KNOWN-ISSUES R16.
-2. Record real voices following
+1. Record real voices following
    [docs/WAKEWORD-RECORDING.md](docs/WAKEWORD-RECORDING.md), including
-   sound-alikes such as "hey cloud" and a separate test session, then
-   train run 3. Then repeat the device test: 10 tries each at 0.5,
-   1 and 2 m, plus "Claude" alone and sound-alikes, which must not
-   trigger. If a two-syllable phrase still falls short after that,
-   consider a longer phrase.
-3. Once detection meets the target, tune the cutoff with the multi-hour
+   sound-alikes such as "hey cloud" and a separate test session. Score
+   run 2 on the test set as the baseline, then train run 3 with
+   `hey_claude_v2.ipynb`, both as the training document describes. Then
+   repeat the device test:
+   10 tries each at 0.5, 1 and 2 m, plus "Claude" alone and sound-alikes,
+   which must not trigger. If a two-syllable phrase still falls short
+   after that, consider a longer phrase.
+2. Once detection meets the target, tune the cutoff with the multi-hour
    false-accept run (step 9 of the stage 4 plan), then review, update the
    documents and commit part B (step 10).
-4. Obtain API keys for Anthropic and Deepgram, copy `server/.env.example` to
+3. Obtain API keys for Anthropic and Deepgram, copy `server/.env.example` to
    `server/.env`, and fill them in. See [SECRETS.md](SECRETS.md).
-5. Obtain a multimeter for the continuity checks before the circuit is
+4. Obtain a multimeter for the continuity checks before the circuit is
    soldered (R9).
 
 ## Open decisions
