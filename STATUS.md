@@ -141,12 +141,24 @@ can be put in place as soon as they are obtained: `server/config.py` and
 ## Next steps
 
 1. Begin stage 5, the server.
-2. Before any release: the work left out of stage 4, described under
-   Stages and in KNOWN-ISSUES R1.
+2. Work through the Before release list below once the last stage is
+   done; nothing in it blocks stages 5 to 8.
 3. Obtain API keys for Anthropic and Deepgram, copy `server/.env.example` to
    `server/.env`, and fill them in. See [SECRETS.md](SECRETS.md).
 4. Obtain a multimeter for the continuity checks before the circuit is
    soldered (R9).
+
+## Before release
+
+Once every stage is complete, a release version of the repository is
+prepared. Work that was deferred to that point is listed here, so that it
+comes up then.
+
+| Item | From | Detail |
+| --- | --- | --- |
+| Multi-hour false-accept run, and the cutoff tuned with it | Stage 4 | Made on the model that is released, after any further training run. KNOWN-ISSUES R1; how to make it is in [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md) |
+| Counted detection test | Stage 4 | 10 tries at each distance, in a quiet room, with scores noted; by more than one speaker if others will use the device. KNOWN-ISSUES R1 |
+| A further training run, if wanted | Stage 4 | For other speakers, and for "hey cloud". The notebook's limits to deal with first are in KNOWN-ISSUES R16 |
 
 ## Open decisions
 

@@ -140,17 +140,22 @@ on real voices**. Its report is saved with that run in Drive.
 | `hey_claude_run3_settings.json` | The run's settings, sample and recording counts, and package versions |
 
 Git ignores these files in the repository's root, where a browser download
-may land, but not anywhere else in the repository: keep them out of its
-other directories.
+may land, but not anywhere else in the repository. Four of them belong in
+it, beside the model (see the next section): the model, its manifest,
+the report and the settings record, which together are the record of the
+run. The settings record counts recordings by kind and names none. The
+real-voice test names them, and stays out.
 
 ## Putting a model into the firmware
 
 Each run's model keeps its run in its name, so that the device's boot log
 and `wake` command show which run a test was made with.
 
-1. Copy `hey_claude_run3.tflite` and `hey_claude_run3.json` to
-   `firmware/components/wakeword/models/`. The manifest's cutoff is the
-   lowest in the test report with under 0.5 false detections per hour, a
+1. Copy `hey_claude_run3.tflite`, `hey_claude_run3.json`,
+   `hey_claude_run3_report.txt` and `hey_claude_run3_settings.json` to
+   `firmware/components/wakeword/models/`, having read the last two
+   against [SECRETS.md](../SECRETS.md). The build uses the first two.
+   The manifest's cutoff is the lowest in the test report with under 0.5 false detections per hour, a
    starting point that on-device tuning adjusts. Its arena size is
    `ARENA` in Settings, measured for the model's shape; the firmware logs
    the bytes actually used at start-up, and the manifest is corrected if

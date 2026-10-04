@@ -5,6 +5,12 @@ Each model is a pair of files: the network (`.tflite`) and its manifest
 and tuned with. `../CMakeLists.txt` selects one model by name and reads its
 settings from the manifest.
 
+Beside them is the record of the training run that made the model, which
+the build does not use: the training notebook's test report
+(`_report.txt`) and its settings record (`_settings.json`), which holds
+every setting of the run, the counts of samples and recordings, and the
+versions of the packages it ran with.
+
 | Model | Phrase | Source | Licence |
 | --- | --- | --- | --- |
 | `hey_claude_run3` | "Hey Claude" | Training run 3 (2026-10-04) of `firmware/tools/wakeword_training/hey_claude_v2.ipynb`, with recordings of a real voice; results in the run history of `docs/WAKEWORD-TRAINING.md` | Non-commercial use: some of the background-sound data it was trained with, and the L2-ARCTIC recordings behind one of its voices, are licensed for non-commercial use only |
