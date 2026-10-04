@@ -5,9 +5,9 @@
 # settings are read from the manifest here and handed to the code as
 # compile-time constants, so the manifest is their only source; changing the
 # model means changing WAKEWORD_MODEL below and nothing else. Trained models
-# keep their run in the name (hey_claude_run2), so that the boot log and
+# keep their run in the name (hey_claude_run3), so that the boot log and
 # `wake` show which run a device test was made with.
-set(WAKEWORD_MODEL "hey_claude_run2")
+set(WAKEWORD_MODEL "hey_claude_run3")
 
 set(manifest_path "${CMAKE_CURRENT_LIST_DIR}/models/${WAKEWORD_MODEL}.json")
 file(READ "${manifest_path}" manifest)
@@ -25,6 +25,12 @@ string(JSON mww_arena GET "${manifest}" micro tensor_arena_size)
 # Version 2 is the streaming format wakeword.cc is written for
 if(NOT mww_version EQUAL 2)
     message(FATAL_ERROR "${manifest_path}: microWakeWord model version ${mww_version}, expected 2")
+endif()
+# The boot log and `wake` report WAKEWORD_MODEL, but the network embedded is
+# the file the manifest names. They must be the same model, or a device test
+# would be credited to the wrong training run.
+if(NOT mww_file STREQUAL "${WAKEWORD_MODEL}.tflite")
+    message(FATAL_ERROR "${manifest_path}: names the model file ${mww_file}, expected ${WAKEWORD_MODEL}.tflite")
 endif()
 
 # Embedded under a fixed name, so the symbol the code refers to

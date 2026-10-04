@@ -9,7 +9,8 @@ Why synthetic speech, and how accuracy is judged, is in KNOWN-ISSUES R1;
 how to make the recordings is in [WAKEWORD-RECORDING.md](WAKEWORD-RECORDING.md).
 
 Version 1 of the notebook, `hey_claude.ipynb` beside it, trained runs 1 and
-2 and is kept unchanged as the record of how they were made. Version 2
+2. It is kept as it was for run 2; run 1's settings survive only as the
+summary in the run history. Version 2
 adds the recordings, a test on real voices, and safe reruns. The notebook's
 sections are referred to below by their headings.
 
@@ -156,9 +157,10 @@ and `wake` command show which run a test was made with.
    they differ.
 2. Set `WAKEWORD_MODEL` to `hey_claude_run3` in
    `firmware/components/wakeword/CMakeLists.txt`, build and flash.
-3. Add the model to `firmware/components/wakeword/models/README.md`. Once a
-   run is chosen as final, earlier runs' files are deleted; they remain in
-   git history and in Google Drive.
+3. Describe the model in `firmware/components/wakeword/models/README.md`.
+   Only the built model is kept in that directory: when a run replaces
+   another as the firmware's model, the earlier run's files are deleted.
+   They remain in git history and in Google Drive.
 
 ## Run history
 
@@ -168,12 +170,14 @@ augmented synthetic samples and the 5.3-hour test part of the dinner-party
 recording, so they are harsher than a quiet room. Real-voice figures come
 from Test on real voices, named by the test set's fingerprint; runs are
 compared only on the same test set. Device figures were measured on the
-breadboard with one speaker, saying the phrase 10 times at each distance.
+breadboard with one speaker, saying the phrase 10 times at each distance,
+unless the entry says otherwise.
 
 | Run | Date | Notebook | Changes | Synthetic test at about 0.4 false detections per hour | Real voices | On the device |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 2026-10-01 | v1 | First run: 8,600 samples, background up to 5 dB louder than the voice, 10,000 steps | 53 % missed (cutoff 0.58); AUC 0.876 | Not measured | About half of tries detected at cutoff 0.60 |
-| 2 | 2026-10-02 | v1 | 17,600 samples, background never louder than the voice, 30,000 steps | 16 % missed (cutoff 0.50, 0.375 per hour); AUC 0.298 | To be measured on run 3's test set | At cutoff 0.50: 5 of 5 at 0.5 m (scores about 0.6), 5 of 10 at 1 m (hits about 0.51, misses about 0.48), 1 of 10 at 2 m (most scores under 0.2); "hey cloud" triggered once |
+| 2 | 2026-10-02 | v1 | 17,600 samples, background never louder than the voice, 30,000 steps | 16 % missed (cutoff 0.50, 0.375 per hour); AUC 0.298 | Test set `0eefa601a1481452`, at cutoff 0.50: 9, 8 and 8 of 10 at 0.5, 1 and 2 m; 3 of 5 sound-alikes triggered | At cutoff 0.50: 5 of 5 at 0.5 m (scores about 0.6), 5 of 10 at 1 m (hits about 0.51, misses about 0.48), 1 of 10 at 2 m (most scores under 0.2); "hey cloud" triggered once |
+| 3 | 2026-10-04 | v2 | Run 2's samples, plus recordings of one real speaker: 100 of the wake phrase and 50 of phrases that must not trigger, each a fifth of the examples of its kind | 42 % missed (cutoff 0.83, 0.375 per hour); AUC 0.608 | Test set `0eefa601a1481452`, at cutoff 0.83: 10, 9 and 10 of 10 at 0.5, 1 and 2 m; 1 of 5 sound-alikes triggered ("hey cloud", score 0.949) | At cutoff 0.83, 7 tries at each distance by the recorded speaker: 7 of 7 at 0.5 m, 7 of 7 at 1 m, 6 of 7 at 2 m; 1 of 10 sound-alike tries triggered: "hey cloud", once in the few times it was tried. Scores and room conditions were not noted |
 
 The AUC is the area under the curve of the share missed against false
 detections per hour, so lower is better.
@@ -185,8 +189,48 @@ under 0.2, so a lower cutoff cannot close the gap. The stock "Hey Jarvis"
 model detected reliably at 2 m on the same hardware, which places the
 shortfall in the model rather than the audio pipeline. Synthetic
 training alone has not reached the targets in KNOWN-ISSUES R1, so run 3
-adds recordings of real speakers, as described in
+adds recordings of a real speaker, as described in
 [WAKEWORD-RECORDING.md](WAKEWORD-RECORDING.md).
+
+Run 3 showed what the recordings do, though not cleanly: they were added
+on top of the synthetic examples, so run 3 also weighs wake phrases and
+sound-alikes more heavily than run 2 did (KNOWN-ISSUES R16). On the
+synthetic test it is worse
+than run 2: to stay under 0.5 false detections per hour its cutoff rises
+from 0.50 to 0.83, where it misses 42 % of the synthetic voices. On the
+recorded speaker's test set it is better at that stricter cutoff, 29 of
+30 against run 2's 25 of 30, with scores mostly above 0.9 where run 2's
+sat near its cutoff, and the device test agrees: 20 of 21 tries
+detected, where run 2 managed 1 of 10 at 2 m. Seven tries at a distance,
+by the speaker the model was trained on, are too few to establish the
+90 % target of KNOWN-ISSUES R1; they show only that nothing contradicts
+it. The model has
+specialised towards the recorded voice: the test set and the device
+test are both by the speaker it was trained on, so neither says how it
+performs for anyone else, and the synthetic test suggests worse. Each
+further person who will use the device should be recorded for a later
+run. "Hey cloud" is the one sound-alike that still gets through: it scored
+0.949 in the real-voice test, above any usable cutoff, and on the device
+it triggered once in the few times it was tried. A cutoff cannot fix it;
+a further run would need more recordings of it.
+
+The real-voice test is itself a loose guide to the device. For run 2 it
+gave 8 of 10 at 2 m where the device gave 1 of 10, probably because the
+test recordings were not made with the device's microphone, which hears
+speech quietly (KNOWN-ISSUES R12). It compares runs; the device test
+decides.
+
+Run 3's cutoff of 0.83 is the notebook's starting value, taken from the
+dinner-party recording. Its 0.375 false detections per hour there are 2
+detections in 5.3 hours, at a cutoff chosen on that same recording, so
+the figure is an optimistic one. It has not been tuned on the device: the
+multi-hour false-accept run, with the device left in idle beside
+speech-heavy sound such as television or podcasts, was not made. It is
+recommended before any release, and after any further training run,
+because it is made per model. It is the only measure of the
+false-detection target in KNOWN-ISSUES R1 on the device itself: `wake
+reset` at the start, `wake` at the end for the rate per hour, and `wake
+cutoff` to try other values without reflashing.
 
 ## Licences and privacy
 

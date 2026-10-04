@@ -39,10 +39,28 @@ The targets for the custom model, agreed for stage 4: at most 0.5 false
 detections per hour against continuous speech-heavy background sound (TV,
 podcasts), and at least 90 % detection at 1 m in a quiet room.
 
-*Trained "Hey Claude" models.* Not yet met. Two runs trained on synthetic
-voices only have improved in the notebook's own test but remain well short
-on the device, and the notebook's test has proved a poor predictor of the
-device. Real recordings are the next step, and a longer phrase after that.
+*Trained "Hey Claude" models.* Not yet established. Two runs trained on
+synthetic voices only fell well short on the device, and the notebook's
+test proved a poor predictor of the device. Run 3, with recordings of one
+real speaker, is the first to work on the device: on 2026-10-04 that
+speaker was detected in nearly every try at 0.5, 1 and 2 m. Four things
+remain open.
+
+- The detection target is not established. The device test was 7 tries
+  at each distance, by the speaker the model was trained on, with the
+  room conditions not noted: too few to show 90 %.
+- The false-detection target has not been measured on the device. Stage 4
+  closed without the multi-hour false-accept run, so the cutoff is the
+  training notebook's starting value, not a tuned one. The run is
+  recommended before any release, and after any further training run,
+  since it is made per model.
+- The model is specialised to the recorded voice. It misses far more of
+  the notebook's synthetic voices than run 2 did, so other speakers
+  should expect more misses until they are recorded for a further run.
+- "Hey cloud" can trigger, and did once in the device test. It scores
+  above any usable cutoff in the real-voice test, so the remedy is more
+  recordings of it in a further run, not a higher cutoff.
+
 Each run's results are recorded in one place, the run history in
 [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md).
 
@@ -225,9 +243,53 @@ the manifest is generated. These limits remain:
   but its feature front end, like training's, is microWakeWord's own
   build of the same TensorFlow Lite Micro code, not the firmware's.
   The device test remains the final word.
+- Speech in a recording is found by level alone: sound at least `above_db`
+  over the recording's quietest tenth, for at least 0.3 s. A recording
+  with a loud background can be dropped as holding no speech, and the same
+  rule sets where each kept phrase is trimmed. Measured on run 3's
+  recordings (185 single-phrase files, 16 kHz mono): at the original
+  12 dB, 6 of the 100 wake-phrase training recordings were dropped, 5 of
+  them among the 14 made with a kitchen running, where the voice peaked
+  about 13 dB over the background; at 9 dB none were, and `above_db` is
+  now 9. Recordings made in louder surroundings may still be dropped. The
+  value is part of the test set's identity, so runs compared on real
+  voices must be scored with the same one. The Recordings section's count
+  of phrases per file shows any that are lost, but as one line among
+  many; a closing count of files with no speech would be harder to miss.
+- The real-voice test is a loose guide to the device. For run 2 it gave
+  8 of 10 at 2 m where the device gave 1 of 10; the test recordings are
+  not made with the device's microphone. Recordings from the device
+  itself would close the gap. The streaming upload of stage 6 could
+  supply them, which would need its own decision on where such audio is
+  kept.
+- The real-voice test may score each step one count low. It rounds the
+  model's output, as returned by microWakeWord, the way the firmware
+  rounds the cutoff; if that output is the raw value divided by 256, as
+  the model files suggest, a raw 213 becomes 212. Not confirmed by
+  running it. The error is at most 0.4 % of a score, and no recording of
+  run 2's or run 3's tests is that close to its cutoff.
+- The test set's fingerprint is taken from every converted test folder on
+  the session's disk. A test folder removed or renamed in Drive during a
+  session still counts until the session is restarted, so the same test
+  set can show two fingerprints.
+- The recordings' `share` adds to the synthetic examples instead of
+  replacing part of them: with a share of 0.2, wake phrases are drawn 1.25
+  times as often as without recordings, and sound-alikes likewise, so a
+  run with recordings differs from one without in balance as well as in
+  data. Recordings are also drawn per clip from all speakers together, so
+  a second speaker with fewer recordings gets a smaller part of the share.
+- The manifest is written by the notebook, and its cutoff is then meant
+  to be adjusted by hand after tuning. Nothing in the file says which
+  value it holds, and downloading the results again replaces a tuned
+  value. Likewise, Keep results records whatever Settings holds when it
+  is run, not what the run was trained with.
+- The code that accepts version 1's samples has done its work and can be
+  removed.
 
-*Mitigation:* the real-voice test and the device test, not the notebook's
-synthetic test, decide whether a run is better.
+*Mitigation:* the device test decides whether a run is better. The
+real-voice test compares runs on the same test set, and the notebook's
+synthetic test does neither. The notebook is kept as it trained run 3;
+the items above that change it are for the start of a further run.
 
 ## Resolved
 

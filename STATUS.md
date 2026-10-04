@@ -1,12 +1,11 @@
 # Status
 
-**Current stage:** Stage 4, wake word. Part A (the detection pipeline, on a
-stock model) is complete. Part B (training and tuning the project's own
-phrase, "Hey Claude") is in progress: the second training run is done and
-its model is in the firmware but falls short on the device; recordings
-of real voices are next.
+**Current stage:** Stage 4, wake word, is complete, with a deviation
+described under Stages. The firmware runs the model from the third
+training run of the project's own phrase, "Hey Claude", the first run
+with recordings of a real voice. Stage 5, the server, is next.
 
-**Last updated:** 2026-10-02
+**Last updated:** 2026-10-04
 
 ## Where the project stands
 
@@ -48,14 +47,14 @@ and partial at 3-4 m; playback and the loopback test were unaffected. The
 review agents defined in `.claude/agents/` reviewed part A before it was
 committed. Those figures are for the stock "Hey Jarvis" model.
 
-Part B so far. "Hey Claude" models are trained in Google Colab with a
+Part B. "Hey Claude" models are trained in Google Colab with a
 notebook in `firmware/tools/wakeword_training/`, described in
 [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md), whose run history
 is the one record of each run's results. Two runs on synthetic voices only
-fall well short of the targets on the device. The firmware builds the
-second, `hey_claude_run2`, and the boot log and `wake` command name the
+fell well short of the targets on the device. The firmware builds the
+third, `hey_claude_run3`, and the boot log and `wake` command name the
 model, so each device test can be tied to its run. Version 2 of the
-notebook, for run 3, adds recordings of real voices, made following
+notebook, which trained run 3, adds recordings of real voices, made following
 [docs/WAKEWORD-RECORDING.md](docs/WAKEWORD-RECORDING.md), and a test on a
 separate set of them that is never trained on. It is also safe to rerun
 with changed inputs, and generates the firmware manifest; its remaining
@@ -68,6 +67,15 @@ only in Colab. In that local test the run 2 model scored the
 text-to-speech "hey cloud" and "okay Claude" above 0.95, which agrees with
 the device test.
 
+Run 3, trained on 2026-10-04 with 150 recordings of one speaker, is the
+first to work on the device: in the device test that speaker was
+detected in nearly every try at 0.5, 1 and 2 m. It is specialised to the
+recorded voice. The notebook's test on synthetic voices suggests other
+speakers will be missed far more often until they are recorded too, and
+"hey cloud" can still trigger. The figures and their limits are in the
+run history; what remains open is in KNOWN-ISSUES R1 and R16. The models
+of earlier runs and the stock model were removed from the firmware.
+
 The server exists only as a configuration skeleton.
 
 ## Stages
@@ -78,7 +86,7 @@ The server exists only as a configuration skeleton.
 | 1 | Foundations | Done | ESP-IDF project skeleton, NVS-backed configuration for WiFi, server URL and device identity, logging. Device boots, joins WiFi and logs. |
 | 2 | Audio I/O bring-up | Done | INMP441 capture on I2S0 and MAX98357A playback on I2S1. A three-second record-then-play loopback runs cleanly. Also the first point at which peak current can be measured under amplifier load, completing the record started in stage 0. |
 | 3 | Display and state machine | Done | LVGL 9 driving the NV3007 panel, backlight under control, and the state animations driven by a mock state machine that cycles on a timer. No network. |
-| 4 | Wake word | Part A done; part B in progress (run 3, with real recordings, next) | microWakeWord integrated with a continuous ring buffer; detection drives the state transition. Custom phrase trained and thresholds tuned against a multi-hour false-accept run. |
+| 4 | Wake word | Done, with a deviation (see below) | microWakeWord integrated with a continuous ring buffer; detection drives the state transition. Custom phrase trained and thresholds tuned against a multi-hour false-accept run. |
 | 5 | Server v1 | Not started | WebSocket server, device authentication, day-scoped conversation store, and the speech-to-text, Claude and text-to-speech chain. Validated end to end by a desktop client script with no device involved. |
 | 6 | Integration | Not started | Device WebSocket client, streaming upload during capture, server-driven endpointing, streaming playback, real state machine, and error, timeout and reconnect paths. First end-to-end conversation. |
 | 7 | Latency and robustness | Not started | Measured end-to-end latency against the budget, per-sentence synthesis chunking, WiFi and server-drop recovery, watchdogs, brownout guard. |
@@ -105,6 +113,17 @@ most 0.5 false detections per hour and at least 90 % detection at 1 m. If a
 two-syllable phrase cannot meet them, a longer phrase is tried. Each part is
 reviewed and committed separately.
 
+Stage 4 closed on 2026-10-04 without the multi-hour false-accept run its
+exit criteria name, and with neither target established. Detection was
+observed, not established: the recorded speaker was detected in 7 of 7
+tries at 1 m, which is too few tries, by the one speaker the model was
+trained on, to show 90 %. False detections are not measured on the
+device at all: the cutoff is the training notebook's starting value and
+has not been tuned. The false-accept run is recommended before any
+release, and after any further training run, since it is made per model.
+The open items are in R1 of [KNOWN-ISSUES.md](KNOWN-ISSUES.md); how to
+make the run is in [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md).
+
 Stage 5 does not depend on stages 0 through 4 and can be built in parallel.
 Keeping it independently testable means a server defect cannot be mistaken for
 a firmware defect during stage 6.
@@ -121,18 +140,9 @@ can be put in place as soon as they are obtained: `server/config.py` and
 
 ## Next steps
 
-1. Record real voices following
-   [docs/WAKEWORD-RECORDING.md](docs/WAKEWORD-RECORDING.md), including
-   sound-alikes such as "hey cloud" and a separate test session. Score
-   run 2 on the test set as the baseline, then train run 3 with
-   `hey_claude_v2.ipynb`, both as the training document describes. Then
-   repeat the device test:
-   10 tries each at 0.5, 1 and 2 m, plus "Claude" alone and sound-alikes,
-   which must not trigger. If a two-syllable phrase still falls short
-   after that, consider a longer phrase.
-2. Once detection meets the target, tune the cutoff with the multi-hour
-   false-accept run (step 9 of the stage 4 plan), then review, update the
-   documents and commit part B (step 10).
+1. Begin stage 5, the server.
+2. Before any release: the work left out of stage 4, described under
+   Stages and in KNOWN-ISSUES R1.
 3. Obtain API keys for Anthropic and Deepgram, copy `server/.env.example` to
    `server/.env`, and fill them in. See [SECRETS.md](SECRETS.md).
 4. Obtain a multimeter for the continuity checks before the circuit is

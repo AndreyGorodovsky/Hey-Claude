@@ -80,7 +80,7 @@ extern const uint8_t model_end[] asm("_binary_wakeword_model_tflite_end");
 /* WAKEWORD_PHRASE, WAKEWORD_CUTOFF, WAKEWORD_WINDOW, WAKEWORD_STEP_MS and
  * WAKEWORD_ARENA come from the model's manifest, through CMakeLists.txt;
  * WAKEWORD_MODEL_NAME is the model's file name there, such as
- * "hey_claude_run2". */
+ * "hey_claude_run3". */
 
 /* --- Feature settings shared by every microWakeWord model --- */
 #define FEATURES            40      /* frequency bands per slice */

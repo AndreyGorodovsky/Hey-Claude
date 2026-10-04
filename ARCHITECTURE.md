@@ -137,7 +137,7 @@ priority, so that the I2S interrupts are placed on core 1.
 | --- | --- | --- |
 | Audio ring buffer (64 KB, 2 s) | PSRAM | Large, latency-tolerant |
 | LVGL frame buffer (~121 KB) | PSRAM | Too large for internal SRAM. DMA sends it to the panel directly from PSRAM, at no measurable cost (see Display) |
-| Wake-word tensor arena (~26 KB) | Internal SRAM | Inference runs continuously; PSRAM latency would cost frames |
+| Wake-word tensor arena (~28 KB allocated, 25.5 KB used) | Internal SRAM | Inference runs continuously; PSRAM latency would cost frames |
 | Wake-word model copy (~60 KB) | PSRAM | Read-only weights, read through the cache; copied from flash at boot for alignment |
 | Network TX/RX queues | Internal SRAM | Touched from interrupt context |
 
@@ -201,11 +201,12 @@ network and a manifest of the settings it was trained with. The phrase is
 "Hey Claude", trained for this project in Google Colab
 ([docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md)); each training
 run's model keeps its run in its name, which the boot log and `wake`
-command print. The stock "Hey Jarvis" model used to bring the pipeline up
-remains beside it. The build reads
+command print. Only the built model is kept there; the stock "Hey Jarvis"
+model used to bring the pipeline up, and earlier training runs, remain in
+git history. The build reads
 the cutoff, averaging window, step and memory size from the manifest, so it
 is their only source. The component versions are pinned exactly, because
-the scores, and so the tuned cutoff, depend on their arithmetic.
+the scores, and so the cutoff, depend on their arithmetic.
 
 Measured on 2026-10-01 with the stock `hey_jarvis` model, on the
 breadboard, USB-powered, with WiFi connected: one run of the model takes
@@ -215,7 +216,9 @@ display cycling through every state, no audio was lost. The second "Hey
 Claude" model, `hey_claude_run2`, takes 2.1 ms on average and 4.9 ms at
 most, and uses 25,548 bytes of working memory and a 60,896-byte model copy
 (measured 2026-10-02 on the breadboard, USB-powered, over a one-minute idle
-run).
+run). The built model, `hey_claude_run3`, has the same shape, and its boot
+log shows the same working memory and model copy (2026-10-04); its timing
+was not measured again.
 
 ### Display
 

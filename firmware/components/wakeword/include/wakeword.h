@@ -15,8 +15,9 @@
  * Scores. For every 30 ms of audio the model gives a probability, from 0 to
  * 1, that the phrase has just been said. The detector averages the last few
  * of these and reports a detection when the average exceeds the "cutoff". A
- * higher cutoff means fewer false detections but more missed phrases; it is
- * tuned by measurement (KNOWN-ISSUES R1).
+ * higher cutoff means fewer false detections but more missed phrases. It
+ * comes from the model's manifest, and is meant to be tuned by measurement
+ * on the device (KNOWN-ISSUES R1).
  *
  * Threading: wakeword_start() is called once at boot. The other functions
  * may be called from any task.
@@ -74,11 +75,11 @@ typedef struct {
 esp_err_t wakeword_start(void);
 
 /* The phrase the built-in model listens for, as written in its manifest,
- * such as "Hey Jarvis" */
+ * such as "Hey Claude" */
 const char *wakeword_phrase(void);
 
 /* The built-in model's name, which for a trained model includes its
- * training run, such as "hey_claude_run2" */
+ * training run, such as "hey_claude_run3" */
 const char *wakeword_model(void);
 
 /* Changes the cutoff while running, for tuning; `cutoff` is between 0 and 1,

@@ -17,7 +17,9 @@ Recordings of a real voice are personal data.
 - Record other people only with their agreement, and tell them where the
   recordings are kept and that they can be deleted.
 - The trained model does not contain the recordings and cannot reproduce a
-  voice; it can be shared like the synthetic-only models.
+  voice. It is published with this repository, though, and stays in its
+  history, and a model trained on few speakers is tuned to them. A
+  speaker's agreement should cover that as well.
 
 ## What to record
 
@@ -122,7 +124,9 @@ added.
 
 Version 2 of the training notebook converts the recordings to 16 kHz
 mono, cuts long takes at their pauses and trims each phrase to its speech,
-printing how many phrases it found in each file. The wake-phrase and
+printing how many phrases it found in each file. A recording with a loud
+background can come back as "no speech found" and is then left out, so
+check the list for these (KNOWN-ISSUES R16). The wake-phrase and
 sound-alike recordings join the synthetic samples in training, each used
 as many differently augmented copies without artificial room echo. The
 test set is never trained on: after training, the notebook runs the model
@@ -132,4 +136,6 @@ and the score of each recording. The details are in
 
 The device's own microphone would be the ideal recorder, since it is what the
 model hears in use, but the firmware cannot yet save recordings. A phone or
-computer at the device's position is a close substitute.
+computer at the device's position is the substitute for now, and an
+imperfect one: run 2 scored far better on such recordings than on the
+device (see the run history).

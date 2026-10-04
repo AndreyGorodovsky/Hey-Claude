@@ -4,10 +4,11 @@ A self-contained voice assistant built on an ESP32-S3. Say the wake word, ask a
 question, and hear Claude answer out loud. A small TFT panel shows what the
 device is doing at each moment.
 
-> **Project status: wake word.** The circuit is built on a breadboard. The
+> **Project status: wake word done, server next.** The circuit is built on a breadboard. The
 > firmware joins WiFi, records and plays audio, shows its state on the
 > display, and detects the wake word "Hey Claude" on the device. The
-> wake-word model is still being trained to the accuracy it needs. The
+> wake-word model is trained on one speaker's recordings and detects that
+> speaker well; its false detections are not yet measured on the device. The
 > server is not built yet. See [STATUS.md](STATUS.md) for the current stage.
 
 ## How it works

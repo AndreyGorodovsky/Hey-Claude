@@ -2,11 +2,13 @@
   "type": "micro",
   "wake_word": "Hey Claude",
   "author": "Hey Claude project",
-  "model": "hey_claude_run2.tflite",
-  "trained_languages": ["en"],
+  "model": "hey_claude_run3.tflite",
+  "trained_languages": [
+    "en"
+  ],
   "version": 2,
   "micro": {
-    "probability_cutoff": 0.5,
+    "probability_cutoff": 0.83,
     "feature_step_size": 10,
     "sliding_window_size": 5,
     "tensor_arena_size": 26000,
