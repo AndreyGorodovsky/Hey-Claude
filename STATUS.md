@@ -1,11 +1,11 @@
 # Status
 
-**Current stage:** Stage 4, wake word, is complete, with a deviation
-described under Stages. The firmware runs the model from the third
-training run of the project's own phrase, "Hey Claude", the first run
-with recordings of a real voice. Stage 5, the server, is next.
+**Current stage:** Stage 5, the server, is complete. It takes a spoken
+request over a WebSocket and returns a spoken reply, and has been run end
+to end from a desktop client with synthetic speech. The device and the
+server have not yet met. Stage 6, integration, is next.
 
-**Last updated:** 2026-10-04
+**Last updated:** 2026-10-06
 
 ## Where the project stands
 
@@ -76,7 +76,29 @@ speakers will be missed far more often until they are recorded too, and
 run history; what remains open is in KNOWN-ISSUES R1 and R16. The models
 of earlier runs and the stock model were removed from the firmware.
 
-The server exists only as a configuration skeleton.
+The server, built in stage 5, runs with `python -m server`. A device
+connects over a WebSocket with its identifier and token, and each request
+goes through Deepgram speech-to-text, Claude and Deepgram text-to-speech,
+with the reply sent back sentence by sentence as it is generated. The
+server decides when the speaker has finished, keeps each device's
+conversation for the current day in SQLite, deletes earlier days, and
+advertises itself on the network by mDNS. A request cannot be interrupted
+by another. The protocol is written down in
+[docs/PROTOCOL.md](docs/PROTOCOL.md), which is what the stage 6 firmware
+is built against.
+
+The server is tested at two levels. Its own tests, 82 of them, run the
+whole path with stand-ins for the three services and need no keys or
+network. A desktop client, `server/tools/desktop_client.py`, plays recorded
+requests to a running server as the device will. Measured with it on
+2026-10-06, with synthetic speech, on the server's machine: four of five
+requests were answered aloud and the fifth, whose words speech-to-text
+withdrew, ended without a reply as designed; the server was found by mDNS, a later request was answered from
+the conversation's history, prompt caching took effect from the third
+request, and the first reply audio came 2.4-3.5 s after the end of speech,
+above the budget (KNOWN-ISSUES R19). The review agents reviewed the stage
+before it was committed; what they found and what was deferred is in
+[KNOWN-ISSUES.md](KNOWN-ISSUES.md) (R17 to R19, and the caveats).
 
 ## Stages
 
@@ -87,9 +109,9 @@ The server exists only as a configuration skeleton.
 | 2 | Audio I/O bring-up | Done | INMP441 capture on I2S0 and MAX98357A playback on I2S1. A three-second record-then-play loopback runs cleanly. Also the first point at which peak current can be measured under amplifier load, completing the record started in stage 0. |
 | 3 | Display and state machine | Done | LVGL 9 driving the NV3007 panel, backlight under control, and the state animations driven by a mock state machine that cycles on a timer. No network. |
 | 4 | Wake word | Done, with a deviation (see below) | microWakeWord integrated with a continuous ring buffer; detection drives the state transition. Custom phrase trained and thresholds tuned against a multi-hour false-accept run. |
-| 5 | Server v1 | Not started | WebSocket server, device authentication, day-scoped conversation store, and the speech-to-text, Claude and text-to-speech chain. Validated end to end by a desktop client script with no device involved. |
-| 6 | Integration | Not started | Device WebSocket client, streaming upload during capture, server-driven endpointing, streaming playback, real state machine, and error, timeout and reconnect paths. First end-to-end conversation. |
-| 7 | Latency and robustness | Not started | Measured end-to-end latency against the budget, per-sentence synthesis chunking, WiFi and server-drop recovery, watchdogs, brownout guard. |
+| 5 | Server v1 | Done | WebSocket server, device authentication, day-scoped conversation store, and the speech-to-text, Claude and text-to-speech chain, with the reply synthesised sentence by sentence. Validated end to end by a desktop client script with no device involved. |
+| 6 | Integration | Not started | Device WebSocket client and mDNS lookup, streaming upload during capture, server-driven endpointing, streaming playback, real state machine, and error, timeout and reconnect paths, all as [docs/PROTOCOL.md](docs/PROTOCOL.md) describes. First end-to-end conversation. |
+| 7 | Latency and robustness | Not started | Measured end-to-end latency against the budget, and the server brought within it; the end-of-speech silence tuned; WiFi and server-drop recovery, watchdogs, brownout guard. |
 | 8 | Polish | Not started | Animation refinement, volume control, provisioning experience, and over-the-air update if adopted. |
 
 Stage 0 is hardware only and produces no code. Peripherals cannot be
@@ -124,9 +146,11 @@ release, and after any further training run, since it is made per model.
 The open items are in R1 of [KNOWN-ISSUES.md](KNOWN-ISSUES.md); how to
 make the run is in [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md).
 
-Stage 5 does not depend on stages 0 through 4 and can be built in parallel.
-Keeping it independently testable means a server defect cannot be mistaken for
-a firmware defect during stage 6.
+Stage 5 was built without the device, and is testable without it. That
+keeps a server defect from being mistaken for a firmware defect during
+stage 6. Splitting the reply into sentences, first listed under stage 7,
+was built in stage 5, because it shapes the reply pipeline; stage 7 keeps
+the tuning.
 
 ## Environment
 
@@ -134,17 +158,20 @@ ESP-IDF v5.5.5 is installed and verified by a successful `hello_world` build
 targeting `esp32s3`. No other ESP-IDF version remains on the development
 machine.
 
-The server configuration skeleton exists ahead of stage 5, so that credentials
-can be put in place as soon as they are obtained: `server/config.py` and
-`server/.env.example`. Nothing else in the server is built.
+The server runs on Python 3.11 in a virtual environment, `server/.venv`,
+with the packages in `server/requirements.txt`. API keys for Anthropic and
+Deepgram, a device token and the timezone are in the untracked
+`server/.env`.
 
 ## Next steps
 
-1. Begin stage 5, the server.
+1. Begin stage 6, integration. Two things are to be settled first: how
+   reply audio is held or paced (KNOWN-ISSUES R17), and the error wording
+   under Open decisions.
 2. Work through the Before release list below once the last stage is
-   done; nothing in it blocks stages 5 to 8.
-3. Obtain API keys for Anthropic and Deepgram, copy `server/.env.example` to
-   `server/.env`, and fill them in. See [SECRETS.md](SECRETS.md).
+   done; nothing in it blocks stages 6 to 8.
+3. Add the device's own identifier and a token for it to `DEVICE_TOKENS`
+   in `server/.env`, and enter the same token on the device.
 4. Obtain a multimeter for the continuity checks before the circuit is
    soldered (R9).
 
@@ -164,13 +191,16 @@ comes up then.
 
 | Decision | Status |
 | --- | --- |
-| Speech provider | Deepgram selected as the default for both directions, behind swappable adapters |
-| Day rollover | 04:00 local time, settled |
-| Endpointing | Server-side, settled |
+| Speech provider | Deepgram for both directions, behind adapter interfaces; built in stage 5 |
+| Day rollover | 04:00 local time, settled. Earlier days are deleted |
+| Endpointing | Server-side, settled. The silence that ends a request, 400 ms, is tuned in stage 7 (R18) |
+| Interrupting a request | Not possible, settled: a turn runs to its end |
+| After a failed turn | Settled: the device shows `ERROR` briefly and returns to `IDLE`; only a lost connection leads to `CONNECTING` |
+| Reply audio pacing | Undecided, due at the start of stage 6: the device buffers a whole reply, or the server sends only a set time ahead (R17) |
 | Deployment | LAN only for now; off-LAN deployment deferred and would require TLS |
 | Over-the-air updates | Undecided, revisited at stage 8; the flash layout already allows it |
-| Server discovery | mDNS on the LAN, with `server_url` as an override; built in stages 5 and 6 |
+| Server discovery | mDNS on the LAN, with `server_url` as an override; the server's side is built, the device's is stage 6 |
 | Device settings entry | Serial console for now; stage 8 provisioning reuses the same validation |
 | Locking dependency versions | Settled: `firmware/dependencies.lock` is committed, and the wake-word libraries are pinned exactly (R14) |
 | Wake phrase | A two-syllable phrase first; a longer one if it cannot meet the R1 targets |
-| `SETUP` and `ERROR` detail text | Callers pass display wording for now; before stage 6 adds server errors, decide whether to pass a reason code that the display turns into words |
+| `SETUP` and `ERROR` detail text | Callers pass display wording for now. The server's `error` carries both a code and an English sentence; due at the start of stage 6: whether the display shows the sentence or its own words for the code |

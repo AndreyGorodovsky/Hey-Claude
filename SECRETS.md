@@ -15,7 +15,7 @@ history. Check what is tracked, not only what is staged.
 | --- | --- |
 | Anthropic API key (`sk-ant-...`) | Server environment, pasted into a config file or a test script |
 | Speech provider API keys | Same |
-| Device tokens | Firmware configuration, server seed scripts, test fixtures |
+| Device tokens | The server's `DEVICE_TOKENS` setting, firmware configuration, test fixtures, a command line |
 | WiFi SSID and passphrase | `sdkconfig`, NVS CSV files, hardcoded during bring-up |
 
 ### ESP-IDF specific traps
@@ -37,8 +37,11 @@ excluded regardless of whose voice they contain.
 - Audio files: `.wav`, `.pcm`, `.raw`, `.mp3`, `.opus`, and the formats
   phone and computer recorders produce: `.m4a`, `.aac`, `.flac`, `.ogg`,
   `.3gp`, `.amr`, `.webm`
-- The session SQLite database and any dump of it
-- Server logs, which contain transcripts
+- The conversation SQLite database (`server/data/`) and any dump of it
+- Server logs. They name devices and network addresses, and contain
+  transcripts when `LOG_TRANSCRIPTS` is on
+- Recordings played to the server with the desktop client, and the replies
+  it saves
 - Wake-word training recordings and datasets
 
 ### Network and identity details
@@ -59,7 +62,7 @@ excluded regardless of whose voice they contain.
 
 | Component | Mechanism |
 | --- | --- |
-| Server | Environment variables, loaded from an untracked `.env`. A tracked `.env.example` lists the variable names with empty values. |
+| Server | Environment variables, loaded from the untracked `server/.env`. The tracked `server/.env.example` lists the variable names with empty values. Device tokens are one of them, `DEVICE_TOKENS`. The server never prints a setting's value, in a start-up error or a log line, and the desktop client reads its token from the same file, never from the command line. |
 | Firmware | Values entered through `menuconfig` into the untracked `sdkconfig`, or provisioned into NVS at flash time. `sdkconfig.defaults` carries placeholders only. |
 
 Any new configuration value gets added to `.env.example` or
@@ -107,8 +110,8 @@ needs removing from tracking and from history, not merely ignoring.
 **5. Confirm placeholders are still placeholders.**
 
 ```sh
-cat .env.example
-grep -i -E 'ssid|passw|token|key' sdkconfig.defaults
+cat server/.env.example
+grep -i -E 'ssid|passw|token|key' firmware/sdkconfig.defaults
 ```
 
 Every value must be empty or an obvious placeholder.

@@ -1,8 +1,14 @@
-# Provisional. Pinned to exact versions at stage 5, once the server is built.
+# Exact versions, as tested. What these packages depend on in turn is not
+# pinned here.
 
-anthropic>=1.0
-deepgram-sdk>=3.0
-fastapi>=0.115
-uvicorn[standard]>=0.30
-pydantic>=2.9
-pydantic-settings>=2.5
+anthropic==1.11.0
+fastapi==0.142.2
+httpx==0.28.1
+pydantic==2.13.5
+pydantic-settings==2.15.0
+# The timezone database. Windows has none of its own, and without one the
+# TIMEZONE setting cannot be resolved.
+tzdata==2026.5
+uvicorn[standard]==0.54.0
+websockets==17.2
+zeroconf==0.151.5

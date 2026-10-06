@@ -4,12 +4,15 @@ A self-contained voice assistant built on an ESP32-S3. Say the wake word, ask a
 question, and hear Claude answer out loud. A small TFT panel shows what the
 device is doing at each moment.
 
-> **Project status: wake word done, server next.** The circuit is built on a breadboard. The
-> firmware joins WiFi, records and plays audio, shows its state on the
-> display, and detects the wake word "Hey Claude" on the device. The
-> wake-word model is trained on one speaker's recordings and detects that
-> speaker well; its false detections are not yet measured on the device. The
-> server is not built yet. See [STATUS.md](STATUS.md) for the current stage.
+> **Project status: device and server each built, not yet joined.** The
+> circuit is built on a breadboard. The firmware joins WiFi, records and
+> plays audio, shows its state on the display, and detects the wake word
+> "Hey Claude" on the device. The wake-word model is trained on one
+> speaker's recordings and detects that speaker well; its false detections
+> are not yet measured on the device. The server turns a spoken request
+> into a spoken reply and has been tested from a desktop with synthetic
+> speech. Connecting the two is the next stage. See [STATUS.md](STATUS.md)
+> for the current stage.
 
 ## How it works
 
@@ -34,7 +37,8 @@ device is doing at each moment.
    streamed back to the device, which plays it as it arrives.
 6. The display runs a distinct animation for each state throughout.
 
-Each request requires the wake word. Requests made on the same day continue the
+Each request requires the wake word, and a request runs to its end: a
+second one cannot interrupt it. Requests made on the same day continue the
 same conversation, so follow-up questions retain context. The conversation
 resets at 04:00 local time.
 
@@ -161,7 +165,7 @@ reboot
 | `wifi_pass` | 8-63 characters, or 64 hexadecimal digits. Unset for an open network. |
 | `server_url` | Optional. Empty means the server is discovered on the local network. |
 | `device_id` | Optional. Defaults to `hc-` plus the last six hex digits of the MAC address. Letters, digits and `-`. |
-| `device_token` | Credential for the server, used from stage 6. |
+| `device_token` | Credential for the server, used from stage 6: 24 to 64 characters, the same value as this device's entry in the server's `DEVICE_TOKENS`. |
 
 Values containing spaces go in double quotes. Inside a value, a backslash is
 written `\\` and a double quote `\"`. `config show` never prints the password
@@ -212,6 +216,54 @@ A false-accept measurement is `wake reset`, then hours of background sound
 with nobody saying the wake phrase, then `wake`: every detection counted is
 a false one.
 
+## Running the server
+
+From the repository root, once, to set up:
+
+```sh
+python -m venv server/.venv
+server/.venv/Scripts/python -m pip install -r server/requirements-dev.txt
+```
+
+On Linux and macOS the interpreter is `server/.venv/bin/python`.
+
+Copy `server/.env.example` to `server/.env` and fill it in. Three values
+have no usable default:
+
+| Setting | Meaning |
+| --- | --- |
+| `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY` | The two service keys. See [SECRETS.md](SECRETS.md) for how to create them |
+| `DEVICE_TOKENS` | One JSON object giving each device's identifier and its token, for example `{"hc-a1b2c3":"<token>"}`. A token is the device's password to the server: it stops anything else on the network from spending the keys or continuing a conversation. The file shows how to generate one |
+| `TIMEZONE` | An IANA name such as `Europe/Berlin`. It decides when the day's conversation ends |
+
+Then start it:
+
+```sh
+server/.venv/Scripts/python -m server
+```
+
+The server listens on port 8765 and announces itself on the local network,
+so a device finds it without being told its address.
+
+The server's tests need no keys and no network:
+
+```sh
+server/.venv/Scripts/python -m pytest
+```
+
+To try the server without the device, play it a recorded question with the
+desktop client. The recording must be a 16 kHz, mono, 16-bit WAV file; keep
+it, and the replies, outside the repository.
+
+```sh
+server/.venv/Scripts/python -m server.tools.desktop_client question.wav --out-dir replies
+```
+
+The client needs a `desktop-client` entry in `DEVICE_TOKENS`. It prints how
+long each stage of the turn took and saves the reply as a WAV file. Several
+files make several turns of one conversation, and `--discover` finds the
+server by mDNS, as a device does.
+
 ## Repository layout
 
 Directories are created as the corresponding stage begins.
@@ -225,8 +277,14 @@ firmware/          ESP-IDF application for the ESP32-S3
                    state), display (panel, backlight, animations), board
                    (pin map)
   tools/           Standalone hardware test programs
-server/            Python server: transport, speech, Claude, session store
-docs/              Diagrams and supporting material
+server/            Python server
+  transport/       WebSocket endpoint, device authentication, connections
+  pipeline/        One turn, from request to reply
+  stt/, llm/, tts/ Speech-to-text, Claude, text-to-speech
+  conversation/    The day's conversations, in SQLite
+  tools/           Desktop client that stands in for the device
+  tests/           Tests that need no keys or network
+docs/              Protocol reference and supporting material
 ```
 
 ## Documentation
@@ -237,6 +295,7 @@ docs/              Diagrams and supporting material
 | [STATUS.md](STATUS.md) | All | Current stage, completed work, next steps |
 | [KNOWN-ISSUES.md](KNOWN-ISSUES.md) | All | Open risks, defects, caveats |
 | [SECRETS.md](SECRETS.md) | All | Pre-commit checklist for sensitive material |
+| [docs/PROTOCOL.md](docs/PROTOCOL.md) | All | Every message, rule and time limit between device and server |
 | [docs/BRINGUP.md](docs/BRINGUP.md) | All | Breadboard assembly and electrical verification |
 | [CLAUDE.md](CLAUDE.md) | AI assistants | Project rules and conventions |
 
@@ -244,7 +303,8 @@ docs/              Diagrams and supporting material
 
 Audio is captured only after the wake word fires, and wake-word detection runs
 entirely on-device. Captured audio and its transcript are sent to third-party
-speech and language services for processing. Conversation history is retained
-on the server for the duration of the day. Recorded audio, transcripts and
+speech and language services for processing. The server keeps no audio. It
+keeps the day's conversation as text, and deletes it when the next day's
+first exchange is stored. Recorded audio, transcripts and
 conversation logs are treated as personal data and are excluded from version
 control.

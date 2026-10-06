@@ -95,7 +95,10 @@ flash layout. Flash runs in QIO mode at 80 MHz; PSRAM is octal at 80 MHz.
 | `SPEAKING` | First reply audio chunk arrives | Playing |
 | `ERROR` | Transport or server error | Error indicator |
 
-`ERROR` returns to `CONNECTING` after a backoff. `SETUP` does not retry:
+What follows `ERROR` depends on its cause. After an `error` message from
+the server, which ends one turn and leaves the connection open, the device
+shows `ERROR` briefly and returns to `IDLE`. After a lost connection it
+returns to `CONNECTING` after a backoff. `SETUP` does not retry:
 retrying cannot fix missing or wrong settings, so it stays until settings
 are entered and the device is rebooted. Every other transition is driven
 either by local audio events or by server messages. `SETUP` and `ERROR`
@@ -257,6 +260,9 @@ one table in `display_ui.c`.
 
 ## Protocol
 
+This section is an overview. The reference, with every rule, limit and
+close code, is [docs/PROTOCOL.md](docs/PROTOCOL.md).
+
 A single bidirectional WebSocket per device, opened at boot and held open.
 Control messages are JSON text frames; audio travels as binary frames of raw
 little-endian signed 16-bit PCM.
@@ -269,7 +275,11 @@ Authorization: Bearer <device_token>
 X-Device-Id: <device_id>
 ```
 
-The server replies with a `ready` message once the session store is available.
+The token is a shared secret that proves the device is the one its
+identifier names. Without it, anything on the network could spend the
+server's API credit and continue a device's conversation. The server checks
+it before accepting the connection, then sends `ready`. A device has at
+most one connection; a newer one replaces an older one.
 
 ### Server discovery
 
@@ -277,7 +287,10 @@ The device finds the server by mDNS service discovery on the local network,
 so the server machine's address can change without reconfiguring the device.
 The server advertises a service; the device looks it up each time it
 connects. The optional `server_url` setting overrides discovery with a fixed
-address or hostname. Discovery is built in stages 5 and 6.
+address or hostname. The server's side was built in stage 5; the device's
+lookup is built in stage 6. The server advertises one address, the one on
+the machine's default route, since a machine often has others (virtual
+adapters, VPNs) that a device cannot reach.
 
 ### Message sequence
 
@@ -285,14 +298,22 @@ address or hostname. Discovery is built in stages 5 and 6.
 | --- | --- | --- |
 | Device to server | `utterance_start` | Wake word fired; PCM frames follow |
 | Device to server | *binary* | 20 ms frames, 16 kHz mono |
-| Server to device | `stop_capture` | Speaker has finished; stop the microphone |
+| Server to device | `stop_capture` | Speaker has finished; stop sending audio |
 | Server to device | `reply_start` | Audio follows, with format and sample rate |
-| Server to device | *binary* | Reply audio chunks |
-| Server to device | `reply_end` | Playback complete; return to `IDLE` |
-| Server to device | `error` | Abort to `ERROR`, carrying a code and message |
+| Server to device | *binary* | Reply audio, in chunks of at most 40 ms |
+| Server to device | `reply_end` | All reply audio has been sent; return to `IDLE` once it has played |
+| Server to device | `error` | The turn was abandoned, with a code and message. The connection stays open |
 
-WebSocket ping and pong frames provide keepalive. A device-side hard cap of 15
-seconds on capture guards against a server that never sends `stop_capture`.
+A turn, once started, runs to its end. The server accepts `utterance_start`
+only when no turn is running and ignores one that arrives during a turn;
+the device acts on the wake word only in `IDLE`. A request cannot be
+interrupted by a second one. When nothing is said after the wake word, the
+server sends `stop_capture` and then `reply_end`, with no reply.
+
+The server pings every 20 s for keepalive. It ends a capture after 13 s. A
+device-side hard cap of 15 s guards against a server that never sends
+`stop_capture`; when it is reached, or whenever the device is in doubt, the
+device closes the connection, which cancels the turn on the server.
 
 ## Server
 
@@ -301,18 +322,44 @@ health checks.
 
 ```
 server/
-  transport/   WebSocket endpoint, device auth, framing
-  stt/         Speech-to-text adapter interface and implementations
-  llm/         Claude client, prompt construction, streaming
-  tts/         Text-to-speech adapter interface and implementations
-  session/     Day-scoped conversation store
-  config.py    Environment-driven configuration
+  protocol.py     Message shapes and constants of the device protocol
+  transport/      WebSocket endpoint, device auth, one connection per device,
+                  framing of reply audio
+  pipeline/       One turn from request to reply; sentence splitting
+  stt/            Speech-to-text adapter interface and implementations
+  llm/            Claude client, system prompt, streaming
+  tts/            Text-to-speech adapter interface and implementations
+  conversation/   Day-scoped conversation store
+  discovery.py    mDNS advertisement
+  config.py       Environment-driven configuration
+  tools/          Desktop client that stands in for the device
+  tests/          Tests, run with stand-ins for the three services
 ```
+
+A turn is one task in `pipeline/`. It decides what happens and in what
+order, and reports each step (capture done, reply audio, reply done,
+failed) to the connection, which alone knows how a step is put on the wire.
+A turn is added to the conversation only if it completed, so the stored
+history always alternates between the person and the assistant. A turn
+whose device disconnects is cancelled.
+
+Device tokens are configured on the server as one setting, `DEVICE_TOKENS`,
+mapping each device identifier to its token, and compared in constant time.
 
 ### Speech services
 
-Deepgram is the default for both directions, behind adapter interfaces so
-either side can be swapped by configuration.
+Deepgram is the default for both directions, behind adapter interfaces, so
+that either side can be replaced by writing one class. There is no setting
+that selects a provider yet, since there is only one. Deepgram is reached
+directly, over its WebSocket and HTTP interfaces, without its SDK: the
+server uses three event types and one request, and the SDK's interface has
+changed across major versions.
+
+The end of a request is decided from Deepgram's events: silence of a set
+length after speech (400 ms by default), or its second signal based on word
+timings, which still works over background noise. Silence before any speech
+does not end a request; if no word is recognised within 5 s, the turn ends
+with no reply.
 
 Speech-to-text was chosen for its streaming utterance-end events, which supply
 the end-of-speech signal directly. A separate voice-activity detector would
@@ -328,13 +375,23 @@ faster-whisper with Piper for a fully local pipeline requiring no accounts.
 Conversations are keyed by device identifier and chat date, and persisted in
 SQLite so that a server restart does not lose context. The chat date advances
 at **04:00 local time** rather than at midnight, so that a conversation held
-late at night is not split partway through.
+late at night is not split partway through. Only the current day is kept:
+the first exchange stored on a new chat date deletes every earlier day's
+conversations.
 
 History is resent on every turn, which makes **prompt caching** the mechanism
 that keeps cost and time-to-first-token flat across a day rather than growing
-with each exchange. The system prompt is held stable and placed first, and the
-cache breakpoint sits at the end of prior history so that only the new turn
-falls outside the cached prefix.
+with each exchange. The system prompt is held stable and placed first, with
+nothing that varies in it. Cache breakpoints sit at the end of the system
+prompt and at the end of the new request, so each turn reads everything
+before it from the cache and writes only what the last turn added. Caching
+starts once the prompt reaches the model's minimum cacheable length, which a
+day's conversation passes after a few exchanges.
+
+Measured on 2026-10-06 with `claude-opus-5`, in a five-turn conversation of
+synthetic test requests: the first two requests, of 468 and 486 input
+tokens, were not cached; the third wrote 538 tokens to the cache, and the
+next reply read those 538 from it.
 
 Context length is not a constraint. A full day of spoken exchanges stays far
 below the model's context window.
@@ -348,16 +405,25 @@ below the model's context window.
 | Effort | Low | Conversational replies are not reasoning-intensive, and effort is the primary latency lever |
 | Streaming | Enabled | Required to begin synthesis before the reply completes |
 | Fallbacks | Server-side, default routing | Handles refusal stop reasons without a maintained model list |
+| Output ceiling | 8000 tokens | Stops a runaway reply from being synthesised for minutes |
+| Timeout | 20 s of silence on the stream | The SDK's default tolerates ten minutes, which would hold a device in `THINKING` as long |
 
 The system prompt constrains replies to spoken form: no markdown, no lists, no
 headings, and short answers by default. Text shaped for a screen reads badly
-when synthesised.
+when synthesised. It also tells the model that its input is a transcript
+that may contain misheard words, and that it has no clock and no access to
+the internet.
+
+If the model declines a request and says nothing, the server speaks a fixed
+sentence in its place. A declined request is not added to the conversation.
 
 ### Reply pipeline
 
 The response stream is split into sentences as it arrives. Each completed
 sentence is synthesised and forwarded immediately, so playback begins while the
-reply is still being generated.
+reply is still being generated. Sentences are synthesised one after another,
+and the audio is sent as fast as it is produced, in chunks of 40 ms; nothing
+paces it to the speed of playback (KNOWN-ISSUES R17).
 
 ## Latency budget
 
@@ -374,6 +440,15 @@ Target, from wake word to first audible sound:
 
 A non-streaming implementation of the same pipeline lands at 5-9 seconds, which
 is why streaming is a structural requirement rather than an optimisation.
+
+Measured on 2026-10-06, server only, with the desktop client on the same
+machine sending synthetic speech over a home internet connection, across
+four turns: the end of speech was detected within 0.1 s of the recording's
+end, Claude's first text came 1.2-1.8 s after that, and the first reply
+audio 2.4-3.5 s after it. The budget's figures from end-of-speech detection
+onward add up to 1.0-1.8 s, so the server is over budget before the device
+is involved. The recordings end in silence, which hides the wait for
+end-of-speech detection. Bringing this down is stage 7 (KNOWN-ISSUES R19).
 
 ## Deployment
 
@@ -397,3 +472,9 @@ deferred.
 | Streaming transport | Request and response | Fourfold latency difference; cannot be retrofitted cheaply |
 | Ring buffer shared by position | One queue per listener | Listeners never take audio from each other, and a past position (the wake word's end) can be replayed |
 | Component versions locked (`dependencies.lock` committed, wake-word libraries pinned exactly) | Version ranges | A newer library can break the build or shift the model's scores without any change in the repository |
+| A turn cannot be interrupted | Barge-in | With no echo cancellation the device would interrupt itself, and a reply cut short leaves the history unsure of what was heard |
+| `error` ends a turn and keeps the connection | Reconnecting after every error | A failed service does not make the connection unhealthy; reconnecting would only add delay |
+| Newer connection replaces the older | Refusing a second connection | A device back from a power cut must not be locked out by its own dead connection |
+| Device tokens in the server's environment | A table in the database | Keeps credentials apart from the transcripts |
+| Deepgram without its SDK | The Deepgram SDK | The interface used is small and stable; the SDK's has changed across major versions |
+| Only the current day's conversation kept | Keeping every day | Transcripts are personal data and earlier days are never read again |

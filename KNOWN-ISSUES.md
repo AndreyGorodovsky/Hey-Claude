@@ -105,7 +105,12 @@ all three are healthy and reachable over the local network's uplink.
 
 *Mitigation:* adapter interfaces on both speech services allow substitution
 without touching the pipeline. Partial failures surface as an error state on
-the device rather than a hang.
+the device rather than a hang. Built in stage 5: each service's failure
+ends the turn with its own error code, and each wait has a limit (5 s to
+connect to any of them, 20 s of silence from Claude, 10 s from
+text-to-speech), listed in [docs/PROTOCOL.md](docs/PROTOCOL.md). These
+paths are tested with stand-ins for the services; none has been observed
+with a real outage.
 
 ### R7 — Stale ESP-IDF environment variables
 
@@ -139,6 +144,10 @@ local network can read conversation audio in both directions.
 
 *Mitigation:* accepted for LAN-only development. Moving the server off the LAN
 requires TLS and a stronger device credential before it is reachable publicly.
+
+The server keeps the device tokens in plain text too, in its untracked
+`.env` file, beside the API keys. Anyone who can read that file can do
+more with the API keys than with the tokens.
 
 ### R9 — Playback peak known only as an average, continuity not checked
 
@@ -291,6 +300,62 @@ real-voice test compares runs on the same test set, and the notebook's
 synthetic test does neither. The notebook is kept as it trained run 3;
 the items above that change it are for the start of a further run.
 
+### R17 — Reply audio is not paced, and the device must hold it
+
+The server sends reply audio as fast as it is synthesised. Measured on
+2026-10-06 with the desktop client: a reply of 61 s of audio was fully
+received 32 s after the request ended. The device must therefore hold many
+seconds of audio, or lose it. At 24 kHz a second is 48 KB, so a minute is
+close to 3 MB of the 8 MB of PSRAM, and the reply ceiling of 8000 tokens
+allows replies of several minutes.
+
+The device cannot slow the server by reading slowly: a connection that
+stops reading stops answering keepalive pings and is dropped.
+
+Pacing also cannot be added to the server by simply waiting between
+chunks. Sentences are synthesised one after another, each requested only
+when the one before has been sent. With sending slowed to the speed of
+playback, each sentence would be requested as the previous one finishes
+playing, leaving a silence between sentences as long as the synthesiser
+takes to answer.
+
+*Mitigation:* none yet. Stage 6 decides between a device that buffers, with
+a cap on reply length to match, and a server that sends at most a set time
+ahead of playback. The second needs synthesis to run ahead of sending,
+with a bounded queue between the two.
+
+### R18 — A pause between sentences ends the request
+
+The end of a request is taken from 400 ms of silence after speech. A
+speaker who pauses that long between two sentences is cut off after the
+first. Observed on 2026-10-06 with synthetic speech: "Thank you. What is
+two plus two?" ended at the pause, before the question was spoken. A
+longer silence makes every reply later by the same amount.
+
+A related case: speech-to-text can report words and then withdraw them. The
+request then ends at once with nothing heard, and the device returns to
+idle without a reply. Observed once on 2026-10-06, with a synthetic voice.
+
+*Mitigation:* the silence length is one setting, `ENDPOINTING_MS`. It is
+tuned in stage 7 against real requests from the device, together with the
+latency it trades against.
+
+### R19 — The server alone is over the latency budget
+
+Measured on 2026-10-06 with the desktop client on the server's machine,
+synthetic speech and a home internet connection, across four turns: from
+the end of speech, Claude's first text arrived after 1.2-1.8 s and the
+first reply audio after 2.4-3.5 s. The budget in
+[ARCHITECTURE.md](ARCHITECTURE.md) allows 1.0-1.8 s for the same span.
+About half is Claude's time to its first text, with thinking on at low
+effort; the rest is the wait for the first sentence to be complete and
+then synthesised. The device's own delays come on top.
+
+*Mitigation:* stage 7. The server logs both figures for every turn. Known
+levers: synthesising the first clause instead of the first whole sentence,
+keeping a connection to the synthesiser warm, and requesting the next
+sentence while the current one is being sent.
+
 ## Resolved
 
 - **R4 — Provisional pinout unvalidated.** Built on the breadboard and each
@@ -305,6 +370,14 @@ the items above that change it are for the start of a further run.
   `display_init()`, and lights it only after the first frame is drawn. It
   still floats between reset and that point, as the amplifier's `SD` pin
   does before `audio_init()`.
+- **Log redaction broke formatted log lines.** Found in stage 5: the
+  server's redaction turned every log argument into text, so any line with
+  a number format failed to print. Redaction now runs on the finished
+  line, which also brings exception tracebacks under it.
+- **A rejected `DEVICE_TOKENS` setting printed token values.** Found in
+  review in stage 5, before any commit: the start-up error for a token
+  that was too short quoted the whole setting. Configuration errors no
+  longer quote any value.
 - **R14 — LVGL's version not locked.** From stage 4,
   `firmware/dependencies.lock` is committed, fixing the exact version of
   every component fetched from the registry: LVGL 9.6.0, and the wake-word
@@ -318,6 +391,29 @@ the items above that change it are for the start of a further run.
   follow-up questions. This is intended behaviour, not a defect.
 - **Conversation resets at 04:00 local time.** A conversation that spans the
   rollover loses its earlier context. The hour was chosen to make this rare.
+- **Earlier days' conversations are deleted, but not at the rollover
+  itself.** They go when the first exchange of a new day is stored, so a
+  server that is not spoken to keeps the last day's conversation until it
+  is. Deleted rows are not overwritten in the database file.
+- **A request cannot be interrupted.** A wake word during a reply does
+  nothing; the reply plays to its end.
+- **Only completed turns are remembered.** A request whose reply failed, or
+  that the model declined, is not part of the conversation, so a follow-up
+  cannot refer to it.
+- **The assistant does not know the date or time**, and says so when
+  asked. The system prompt is kept free of anything that varies, for
+  prompt caching.
+- **The server has been run only with synthetic speech.** Its end-to-end
+  test used a text-to-speech voice through the desktop client. No real
+  voice, microphone or device has been through it yet.
+- **The desktop client is not the device.** It starts sending audio at the
+  request itself and takes the reply as fast as it comes; the device will
+  first send a burst of audio it already holds, and will take the reply at
+  the speed of playback.
+- **The server's dependencies are pinned one level deep.** The packages it
+  names are pinned exactly; the packages those depend on are not.
+- **The server needs the `tzdata` package on Windows**, which has no
+  timezone database of its own. It is in the server's requirements.
 - **Captured audio and transcripts are personal data.** They are sent to
   third-party services for processing and are excluded from version control.
 - **Wake-word detection runs entirely on-device.** No audio is transmitted
