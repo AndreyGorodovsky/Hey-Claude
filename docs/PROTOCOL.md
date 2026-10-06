@@ -104,8 +104,8 @@ and the wake-word model.
 | `tts_failed` | Text-to-speech failed or could not be reached |
 | `internal` | A fault in the server |
 
-`message` is a short English sentence. Whether the device shows it, or its
-own wording chosen by `code`, is decided in stage 6.
+`message` is a short English sentence, for logs. The device does not show
+it: it shows its own wording, chosen by `code` and sized for its display.
 
 ## A turn
 
@@ -187,8 +187,10 @@ and is dropped. Not reading is therefore not a way to slow the server down.
 
 ## Not in version 1
 
-- **Pacing of reply audio.** The server does not limit how far ahead of
-  playback it sends. See R17 in [KNOWN-ISSUES.md](../KNOWN-ISSUES.md).
+- **Pacing of reply audio.** The server does not yet limit how far ahead of
+  playback it sends. It will, from stage 6: see R17 in
+  [KNOWN-ISSUES.md](../KNOWN-ISSUES.md). Rule 2 and the frame sizes above
+  describe the server as built today.
 - **The device's protocol version.** The server states its version in
   `ready` and in the mDNS record; the device does not state its own.
 - **A turn identifier.** Messages do not say which turn they belong to.

@@ -165,9 +165,9 @@ Deepgram, a device token and the timezone are in the untracked
 
 ## Next steps
 
-1. Begin stage 6, integration. Two things are to be settled first: how
-   reply audio is held or paced (KNOWN-ISSUES R17), and the error wording
-   under Open decisions.
+1. Begin stage 6, integration. It includes the two things settled under
+   Open decisions: the server pacing reply audio (KNOWN-ISSUES R17), and
+   the device's own wording for errors.
 2. Work through the Before release list below once the last stage is
    done; nothing in it blocks stages 6 to 8.
 3. Add the device's own identifier and a token for it to `DEVICE_TOKENS`
@@ -196,11 +196,11 @@ comes up then.
 | Endpointing | Server-side, settled. The silence that ends a request, 400 ms, is tuned in stage 7 (R18) |
 | Interrupting a request | Not possible, settled: a turn runs to its end |
 | After a failed turn | Settled: the device shows `ERROR` briefly and returns to `IDLE`; only a lost connection leads to `CONNECTING` |
-| Reply audio pacing | Undecided, due at the start of stage 6: the device buffers a whole reply, or the server sends only a set time ahead (R17) |
+| Reply audio pacing | Settled: the server sends only a short, set time ahead of playback, so the device holds one small fixed buffer whatever the length of the reply. Built in stage 6 (R17) |
 | Deployment | LAN only for now; off-LAN deployment deferred and would require TLS |
 | Over-the-air updates | Undecided, revisited at stage 8; the flash layout already allows it |
 | Server discovery | mDNS on the LAN, with `server_url` as an override; the server's side is built, the device's is stage 6 |
 | Device settings entry | Serial console for now; stage 8 provisioning reuses the same validation |
 | Locking dependency versions | Settled: `firmware/dependencies.lock` is committed, and the wake-word libraries are pinned exactly (R14) |
 | Wake phrase | A two-syllable phrase first; a longer one if it cannot meet the R1 targets |
-| `SETUP` and `ERROR` detail text | Callers pass display wording for now. The server's `error` carries both a code and an English sentence; due at the start of stage 6: whether the display shows the sentence or its own words for the code |
+| `SETUP` and `ERROR` detail text | Settled: the device shows its own short wording, chosen by reason code and sized for the panel, for server errors and for those the server never sees. The sentence in the server's `error` is for logs. Built in stage 6 |

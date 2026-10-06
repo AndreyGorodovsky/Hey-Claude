@@ -319,10 +319,13 @@ playback, each sentence would be requested as the previous one finishes
 playing, leaving a silence between sentences as long as the synthesiser
 takes to answer.
 
-*Mitigation:* none yet. Stage 6 decides between a device that buffers, with
-a cap on reply length to match, and a server that sends at most a set time
-ahead of playback. The second needs synthesis to run ahead of sending,
-with a bounded queue between the two.
+*Mitigation:* not built yet. Decided on 2026-10-06: the server will send
+at most a short, set time ahead of playback, so that the device needs one
+small fixed buffer whatever the length of the reply. That needs synthesis
+to run ahead of sending, with a bounded queue between the two. It is built
+in stage 6, with the device's playback. The alternative, a device that
+holds the whole reply, was rejected: it needs megabytes of PSRAM and a hard
+cap on reply length.
 
 ### R18 — A pause between sentences ends the request
 
