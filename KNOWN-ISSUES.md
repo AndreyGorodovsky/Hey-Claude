@@ -456,6 +456,8 @@ The record:
 | 2026-10-06 | Same bench, playback level 100 %, late evening, after hours switched off. Just after power-on; and after nine spoken turns in four and a half minutes | 46.5, 52.5 °C |
 | 2026-10-07 | Same bench, playback level 100 %, with the chime. Connected and idle, 40 s after power-on and 90 s later; after three spoken turns; and during a reply of 16.4 s, the fifth turn | 49.5, 51.5, 52.5, 53.5 °C |
 | 2026-10-07 | Same bench, after reflashing. Connected and idle: half a minute and two minutes after power-on with no server running, then twelve minutes after power-on, just before one spoken turn | 52.5, 54.5, 55.5 °C |
+| 2026-10-07 | Same bench, afternoon, after hours switched off. Connected, during the first reply of six spoken turns, 25 s after the log began; and nine minutes later, idle with no server, four minutes after the last reply | 46.5, 54.5 °C |
+| 2026-10-07 | Same bench. Before and after a minute of 440 Hz tone at 35 % of full scale, with no server running, two minutes after a restart | 49.5, 50.5 °C |
 
 The readings during replies were taken at playback levels of 40 % and
 60 %, but for the last, of 2026-10-07, at the present 100 %.
@@ -558,11 +560,62 @@ hand.
   the wake word as measured. Words spoken before that are not sent. The
   sound's level, 30 % of full scale, and its length were set by ear in one
   sitting and have no control.
-- **A reply can pause briefly between sentences.** Seen on 2026-10-07: a
-  reply of 16.4 s ran out of audio three times, for 0.4 s in all, while
-  the next sentence was on its way. Replies of 9.6 s and less the same day
-  did not, nor did one of 33 s the day before. Not looked into; it
-  belongs with the latency work of stage 7 (R19).
+- **A reply can pause briefly.** Seen on 2026-10-07: a reply of 16.4 s ran
+  out of audio three times, for 0.4 s in all. Replies of 9.6 s and less
+  the same day did not, nor did one of 33 s the day before: about one
+  reply in twenty over the two days. Looked into the same day, on the
+  server's machine with no device. The cause was not found; what was
+  established:
+  - *The server's supply of audio is not it.* The synthesiser's first
+    audio came 0.2 to 0.3 s after each request, and it delivers speech
+    in lumps of about 0.7 s of audio every 0.3 s, a little over twice as
+    fast as it plays; a lump is sometimes 0.3 s late. Replayed against
+    the device's 80 ms start-up buffer, that never ran out: not once in
+    120 sentences, and once, by 4 ms, in 14 whole replies sent through
+    the server's own pacing.
+  - *Not the model's speed.* In the reply that paused, all of the text
+    was written 1.2 s after its first word.
+  - *The server did not see the pauses.* It finished sending that reply
+    when an unbroken 2 s lead predicts, to within 0.06 s. So the audio
+    was sent on time and reached the player late. What delayed it is not
+    known: WiFi, or the device's own receiving. It is not the server
+    holding back small packets: its connections have Nagle's algorithm
+    off, as checked in the Python it runs on.
+  - *Tried and taken out:* requesting each sentence from the synthesiser
+    as soon as the one before it began to arrive, on the belief that the
+    wait between the first two sentences left the device short. The
+    waits seen at the start of a reply turned out to be the synthesiser's
+    lumps, and were the same with the change as without it.
+  - *Not settled:* when in the reply the pauses fell. With 2 s in hand
+    in mid-reply, a late delivery can empty the buffer only in the first
+    second or so, unless it is later by more than 2 s.
+
+  The device now logs each pause as it ends, with how far into the reply
+  it fell and how long it lasted. First run with it, later the same day:
+  six spoken turns, replies of 3.4 to 20.9 s, and one pause, 0.84 s into
+  a reply of 16 s and shorter than the 10 ms the device's clock resolves.
+  That is at the start, and at the end of one of the synthesiser's
+  lumps. The console's `temp` and `mem` commands, typed during another
+  of those replies, caused none. One sample is not proof.
+
+  The reply's summary line can count one pause as two: its count goes up
+  again if the buffer is still empty when the player next looks. The
+  line logged for each pause is the one to go by. Not corrected yet.
+
+  A larger start-up buffer, 80 ms raised to about 300 ms, would cover a
+  lump up to 0.3 s late at the start, at the cost of about 0.2 s more
+  wait before every reply. Not tried, and not decided (R19).
+- **The speaker shakes the breadboard, and that can be heard.** On
+  2026-10-07, in the last two of three long replies played almost back
+  to back, the voice turned robotic part-way through each. The device
+  and the server logged nothing wrong, and a minute of test tone at 35 %
+  showed no fault in the logs either. Lifting the breadboard and holding
+  it in the hands made the voice clear: the cause is mechanical, the
+  speaker's vibration acting on the breadboard and what is plugged into
+  it, and nothing in the firmware. To be dealt with when the circuit is
+  soldered and the speaker is mounted apart from the electronics; until
+  then, a distorted voice on the breadboard is to be checked by lifting
+  it before anything else is suspected.
 - **Playback has no volume control.** Reply audio is played at the level
   the server sends it, until stage 8. At 40 % and at 60 % of that level a
   reply was too quiet at arm's length; at 100 % it is a little quiet, as

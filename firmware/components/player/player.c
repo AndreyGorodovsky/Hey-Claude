@@ -298,6 +298,11 @@ static void play_out(uint32_t gen, uint32_t rate, bool is_chime)
     uint32_t played_ms = 0;
     uint32_t silent_ms = 0;     /* time the speaker was on with nothing to play */
     uint32_t underruns = 0;     /* times it ran dry after sound had begun */
+    /* While the buffer is dry after sound has begun: the tick count (the
+     * FreeRTOS clock) at which it ran dry. Timed by the clock and not by
+     * counting waits, because a wait ends early whenever anything is fed. */
+    bool dry = false;
+    TickType_t dry_since = 0;
 
     for (;;) {
         size_t samples = 0;
@@ -321,6 +326,10 @@ static void play_out(uint32_t gen, uint32_t rate, bool is_chime)
             if (amp_on && empty_ms == 0) {
                 underruns++;
             }
+            if (amp_on && !dry) {
+                dry = true;
+                dry_since = xTaskGetTickCount();
+            }
             if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(IDLE_POLL_MS)) == 0) {
                 empty_ms += IDLE_POLL_MS;
                 silent_ms += amp_on ? IDLE_POLL_MS : 0;
@@ -333,6 +342,17 @@ static void play_out(uint32_t gen, uint32_t rate, bool is_chime)
             continue;
         }
         empty_ms = 0;
+        if (dry) {
+            /* Audio again. One line per dry spell, saying where in the
+             * reply it fell: the evidence for what causes them
+             * (KNOWN-ISSUES, "A reply can pause briefly"). Logged here,
+             * with audio in hand, so the logging delays nothing that was
+             * not already late. */
+            dry = false;
+            ESP_LOGW(TAG, "ran dry for %lu ms after %lu ms of the reply",
+                     (unsigned long)pdTICKS_TO_MS(xTaskGetTickCount() - dry_since),
+                     (unsigned long)played_ms);
+        }
 
         if (!amp_on) {
             esp_err_t err = audio_play_start(rate);
