@@ -114,8 +114,8 @@ first spoken test, and was reviewed by both agents by itself.
 | 3. Firmware: state machine | Done and seen working through every state of a turn |
 | 4. Firmware: upload | Done and seen working: two requests in a synthetic voice were transcribed word for word |
 | 5. Firmware: playback | Done and seen working: replies of 0.6 s and 33 s played to their end, and were heard. At 40 % and then 60 % of the server's level they were too quiet; the audio is now played as sent, at 100 %, which was heard and is better, though a little quiet with the voice now in use |
-| 6. Firmware: failure paths | Done. Seen working: a server killed and restarted, a second connection under the device's identifier, a refused token, and a server `error` in the middle of a turn. Not yet seen: the device's own deadlines, an incompatible version |
-| 7. Measurements | Done: memory, stack headroom, chip temperature, pacing, the wait for a reply, a run of nine spoken turns in a row over four and a half minutes, shorter than the ten minutes planned, and a reply of 16.4 s at the full level as the supply check, with no reset (R2) |
+| 6. Firmware: failure paths | Done. Seen working: a server killed and restarted, a second connection under the device's identifier, a refused token, and a server `error` in the middle of a turn. Not yet seen: the device's own deadlines, an incompatible version; put off until after stage 8 (Before release) |
+| 7. Measurements | Done: memory, stack headroom, chip temperature, pacing, the wait for a reply, the long run, taken as made: nine spoken turns in a row over four and a half minutes on 2026-10-06, shorter than the ten minutes planned, and about twenty more turns over several sittings the next day, accepted together in its place, and the supply check, measured on 2026-10-07 with the USB power meter: about 0.582 A at 4.822 V for 10 s of full-scale tone, and about 0.2 A at 4.918 V through a spoken reply of 66.7 s at the full level, with no reset in either (R2) |
 | 8. Firmware: chime | Done and heard, added on 2026-10-07 after the first spoken test: two notes when the wake word is heard, and the request starts when they end |
 
 New firmware components: `server_link` (the connection), `player` (reply
@@ -192,7 +192,13 @@ on a computer on the same network.
 - With no server running, the screen's state read "connecting, Server not
   found on the network". The `display preview` command was accepted for
   two states and refused an unknown one; the panel itself was not looked
-  at.
+  at then.
+- The screens, looked at on 2026-10-07: `display preview` drew each of the
+  eight states in turn for 8 s, three of them with a detail line, with no
+  server running. A person watched the panel and found every one as
+  designed: title, detail line, picture and its movement, the dimmed
+  backlight of `IDLE`, and the return to the real state's screen
+  afterwards. Chip temperature at the end: 56.5 °C.
 
 **Found and corrected in this stage.** By a first attempt at a spoken test: a send
 that timed out after 200 ms ended the connection; the loss was announced
@@ -298,6 +304,7 @@ comes up then.
 | --- | --- | --- |
 | Multi-hour false-accept run, and the cutoff tuned with it | Stage 4 | Made on the model that is released, after any further training run. KNOWN-ISSUES R1; how to make it is in [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md) |
 | Counted detection test | Stage 4 | 10 tries at each distance, in a quiet room, with scores noted; by more than one speaker if others will use the device. KNOWN-ISSUES R1 |
+| Failure paths not yet seen on the device | Stage 6 | The device's own deadlines (15 s of capture, 40 s of waiting, 40 s of a stalled reply) and a server speaking an incompatible protocol version. Written and reviewed, never triggered on the bench. To be done after stage 8 |
 | A further training run, if wanted | Stage 4 | For other speakers, and for "hey cloud". The notebook's limits to deal with first are in KNOWN-ISSUES R16 |
 
 ## Open decisions

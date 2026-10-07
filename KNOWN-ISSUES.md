@@ -79,8 +79,11 @@ baseline is 0.10-0.14 A with the rail at 4.93 V or above. Measured in stage 2
 with a full-scale tone and WiFi connected: 0.556 A average at 4.831 V, with no
 reset, on a PC USB 3.0 port. Seen in stage 6, on 2026-10-07, on the
 breadboard and USB-powered: a spoken reply of 16.4 s played at the full
-level while the device stayed connected, with no reset. No current or
-voltage was read during it.
+level while the device stayed connected, with no reset. Measured the same
+day with the USB power meter, on the breadboard, on WiFi: a full-scale
+tone for 10 s read about 0.582 A at 4.822 V, and a spoken reply of 66.7 s
+at the full level about 0.2 A at 4.918 V, both with no reset. Speech
+draws about a third of what the tone does.
 
 A breadboard compounds this. Contact resistance and shared rails not intended
 for 1 A transients can themselves cause the voltage drop, making the bench the
@@ -162,7 +165,10 @@ The figures were taken afterwards with a USB power meter and are recorded in
   tone test in stage 2 read 0.556 A at 4.831 V, but the meter shows averages
   refreshed a few times per second, so it cannot catch a transient of about
   10 ms, and it reads voltage before the cable rather than at the board. The
-  board did not reset, which is the decisive result for this supply.
+  board did not reset, which is the decisive result for this supply. The
+  stage 6 readings of 2026-10-07, 0.582 A for the tone and about 0.2 A
+  for a spoken reply, were taken with the same meter and have the same
+  limits.
 - **No continuity or short checks were made**, since they need a multimeter.
   The working peripherals show the connections are sound, but not that there
   is no marginal contact.
@@ -458,6 +464,8 @@ The record:
 | 2026-10-07 | Same bench, after reflashing. Connected and idle: half a minute and two minutes after power-on with no server running, then twelve minutes after power-on, just before one spoken turn | 52.5, 54.5, 55.5 °C |
 | 2026-10-07 | Same bench, afternoon, after hours switched off. Connected, during the first reply of six spoken turns, 25 s after the log began; and nine minutes later, idle with no server, four minutes after the last reply | 46.5, 54.5 °C |
 | 2026-10-07 | Same bench. Before and after a minute of 440 Hz tone at 35 % of full scale, with no server running, two minutes after a restart | 49.5, 50.5 °C |
+| 2026-10-07 | Same bench, for the supply check. Ten seconds after a restart and just after 10 s of tone at 100 %; then connected and idle a minute later, before a spoken reply of 66.7 s | 46.5, 48.5, 49.5 °C |
+| 2026-10-07 | Same bench. After the screens of all eight states had been shown in turn, 80 s after a restart, the board warm from the supply check, with no server running | 56.5 °C |
 
 The readings during replies were taken at playback levels of 40 % and
 60 %, but for the last, of 2026-10-07, at the present 100 %.
@@ -551,8 +559,7 @@ hand.
 - **No state can be set from the console.** The `state` command only reads,
   since the state machine is the state's one writer. To look at a state's
   screen, `display preview <state>` draws it for a few seconds and leaves
-  the state alone. It has been run but the panel was not looked at while
-  it ran.
+  the state alone.
 - **The console's audio tests and a reply share the amplifier.** `audio
   tone` or `audio loop` typed while a reply is playing would disturb both.
 - **Speak after the chime.** The device plays two notes when it

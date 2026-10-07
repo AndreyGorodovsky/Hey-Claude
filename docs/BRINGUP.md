@@ -126,9 +126,16 @@ Fill in during bring-up and keep the completed table with the project.
 | 440 Hz tone at 20 % of full scale | — | 4.945 V, up to 0.138 A | Rail holds 4.8 V or above |
 | WiFi connected, power save on | — | 4.932-4.940 V, 0.124-0.143 A | Rail holds 4.8 V or above |
 | **Playback peak (stage 2)** | **~1 A or more** | **4.831 V, 0.556 A average; no reset** | **Rail never falls below 4.7 V** |
+| Playback peak, repeated (stage 6) | As above | 4.822 V, about 0.582 A; no reset | Rail never falls below 4.7 V |
+| Spoken reply at the full level (stage 6) | Below the tone | 4.918 V, about 0.2 A; no reset | Rail never falls below 4.7 V |
 
-Every figure is measured, on 2026-09-28, under the conditions described in
-[Baseline measurement](#baseline-measurement-2026-09-28). The stage 2 row was
+Every figure is measured, on 2026-09-28 unless its row names a later stage,
+under the conditions described in
+[Baseline measurement](#baseline-measurement-2026-09-28). The two stage 6
+rows were measured on 2026-10-07 on the breadboard, with the stage 6
+firmware, WiFi connected and power saving off: the tone with
+`audio tone 100 10`, and the reply a spoken one of 66.7 s through the
+server. Both are readings off the meter's display, as below. The stage 2 row was
 taken with the device firmware's `audio tone 100 5`: a 440 Hz sine at full
 scale, played at 24 kHz for 5 s, with WiFi connected. It is an average read
 off the meter's display, so the true peak is higher (R9); the absence of a
