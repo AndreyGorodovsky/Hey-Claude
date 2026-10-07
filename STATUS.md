@@ -1,11 +1,10 @@
 # Status
 
-**Current stage:** Stage 5, the server, is complete. It takes a spoken
-request over a WebSocket and returns a spoken reply, and has been run end
-to end from a desktop client with synthetic speech. The device and the
-server have not yet met. Stage 6, integration, is next.
+**Current stage:** Stage 6, integration, is done: a person speaks to the
+device and it answers aloud, through the server. Stage 7, latency and
+robustness, is next and has not been started.
 
-**Last updated:** 2026-10-06
+**Last updated:** 2026-10-07
 
 ## Where the project stands
 
@@ -87,7 +86,7 @@ by another. The protocol is written down in
 [docs/PROTOCOL.md](docs/PROTOCOL.md), which is what the stage 6 firmware
 is built against.
 
-The server is tested at two levels. Its own tests, 82 of them, run the
+The server is tested at two levels. Its own tests, 95 of them as of stage 6, run the
 whole path with stand-ins for the three services and need no keys or
 network. A desktop client, `server/tools/desktop_client.py`, plays recorded
 requests to a running server as the device will. Measured with it on
@@ -100,6 +99,120 @@ above the budget (KNOWN-ISSUES R19). The review agents reviewed the stage
 before it was committed; what they found and what was deferred is in
 [KNOWN-ISSUES.md](KNOWN-ISSUES.md) (R17 to R19, and the caveats).
 
+## Stage 6 as built
+
+Closed on 2026-10-07. Everything is written, reviewed by both review
+agents, corrected and run on the breadboard, and a person has held
+conversations with the device on two days, each request answered aloud
+unless noted below. The chime was added on the second day, after the
+first spoken test, and was reviewed by both agents by itself.
+
+| Step | State |
+| --- | --- |
+| 1. Server: paced replies | Done. At most 2 s of reply audio is sent ahead of playback, and the next sentence is synthesised while the current one is sent |
+| 2. Firmware: connection | Done and seen working: finds the server by mDNS, is accepted with its token, reconnects by itself |
+| 3. Firmware: state machine | Done and seen working through every state of a turn |
+| 4. Firmware: upload | Done and seen working: two requests in a synthetic voice were transcribed word for word |
+| 5. Firmware: playback | Done and seen working: replies of 0.6 s and 33 s played to their end, and were heard. At 40 % and then 60 % of the server's level they were too quiet; the audio is now played as sent, at 100 %, which was heard and is better, though a little quiet with the voice now in use |
+| 6. Firmware: failure paths | Done. Seen working: a server killed and restarted, a second connection under the device's identifier, a refused token, and a server `error` in the middle of a turn. Not yet seen: the device's own deadlines, an incompatible version |
+| 7. Measurements | Done: memory, stack headroom, chip temperature, pacing, the wait for a reply, a run of nine spoken turns in a row over four and a half minutes, shorter than the ten minutes planned, and a reply of 16.4 s at the full level as the supply check, with no reset (R2) |
+| 8. Firmware: chime | Done and heard, added on 2026-10-07 after the first spoken test: two notes when the wake word is heard, and the request starts when they end |
+
+New firmware components: `server_link` (the connection), `player` (reply
+playback), `state_machine` (the state machine and the upload) and
+`protocol` (the protocol's numbers, one header). New console commands:
+`link`, the state of the connection; `temp`, the chip's temperature; `mem`,
+free memory and stack headroom; and `display preview`, which draws any
+state's screen for a few seconds. `state` now only reads. Two components are added from the
+ESP Component Registry and pinned: `esp_websocket_client` 1.8.0 and `mdns`
+1.13.1.
+
+**Seen on the breadboard, 2026-10-06.** USB-powered, open air, the server
+on a computer on the same network.
+
+- The device found the server, connected and reached `IDLE` 5 s after
+  power-on.
+- A server killed without warning was noticed within 30 ms. With the
+  server gone the screen showed the loss, then "Server not found" once,
+  then rested on `CONNECTING`. A restarted server was found again by
+  itself, within the wait between attempts.
+- A second connection under the device's identifier displaced it; it
+  showed why and came back 61 s later.
+- A server that did not accept its token put it in `SETUP` with "Server
+  refused this device", where it stayed.
+- Requests in a synthetic voice played from a computer, reaching the
+  microphone at an average level of about -54 dBFS, were transcribed word
+  for word: "What is two plus two?" and "Tell me in detail about the
+  history of the Eiffel Tower." The voice came from a headset lying near
+  the device, so how often the wake word answered it says nothing about
+  the wake-word model, and is not recorded.
+- Each upload began 10 ms behind the microphone, and no audio was lost.
+- A reply of 33 s held at most 2.08 s of the buffer's 4 s and never ran
+  dry.
+- Memory: 100 KB of internal RAM free, 56 KB at its lowest. Chip
+  temperature: 55.5 °C idle, 57.5 °C while speaking (R20).
+- The wait for a reply, over five short questions in a synthetic voice:
+  2.2 to 3.3 s from the server's `stop_capture` to the first sound, 2.8 s
+  on average, of which the device's share is about 0.07 s. From the wake
+  word, including about 3.5 s of speaking the question, 5.5 to 6.7 s. The
+  budget for the whole wait is 1.3 to 2.3 s (R19).
+- Spoken by a person: three requests in English were transcribed word for
+  word and answered, with 2.5, 2.9 and 2.9 s from the end of the request
+  to the first sound, and no audio lost. A request in Russian was not
+  recognised, and the device returned to `IDLE` with no reply: the server
+  is set to English.
+- A run of nine spoken turns in four and a half minutes, by a person, the
+  device freshly powered on. Eight were answered, with 2.4 to 3.2 s from
+  the end of the request to the first sound, 2.7 s on average. The first
+  failed on the server: its first request to the synthesiser timed out
+  while connecting. The device showed "Speech synthesis failed" for 4 s
+  and returned to `IDLE` with its connection intact, and the next request
+  was answered. Through the run no audio was lost, no reply ran dry, the
+  buffer held at most 2.1 s of its 4 s, the connection never dropped, and
+  every detection of the wake word was acted on. Memory at the end:
+  100 KB of internal RAM free, 56 KB at its lowest. Chip temperature:
+  46.5 °C at the start, 52.5 °C at the end.
+- A wake word followed by no request: the device listened for 5.8 s, the
+  server answered with no reply, and the device returned to `IDLE`.
+- With the chime, on 2026-10-07: five spoken turns by a person.
+  The sound played each time, for 140 ms, and the request began 220 ms
+  after the end of the wake word. Four were answered; in the fifth
+  nothing was said, and the device returned to `IDLE` with no reply. No
+  request audio was lost. The longest reply, 16.4 s at the full level,
+  played to its end with no reset; it ran out of audio three times
+  between sentences, for 0.4 s in all (KNOWN-ISSUES, Caveats). Memory:
+  100 KB of internal RAM free, 56 KB at its lowest. Chip temperature:
+  49.5 °C at the start, 53.5 °C during the long reply.
+- After the review agents' corrections to the chime, on 2026-10-07: one
+  spoken turn on the corrected firmware. The chime played for 140 ms, the
+  request began 220 ms after the wake word, and the reply was heard. The
+  log named each phase in turn: chime, capturing, awaiting, buffering,
+  playing, draining, idle. Chip temperature: 55.5 °C, twelve minutes
+  after power-on.
+- With no server running, the screen's state read "connecting, Server not
+  found on the network". The `display preview` command was accepted for
+  two states and refused an unknown one; the panel itself was not looked
+  at.
+
+**Found and corrected in this stage.** By a first attempt at a spoken test: a send
+that timed out after 200 ms ended the connection; the loss was announced
+20 s late, with `IDLE` on the screen meanwhile; later lookups of the
+server failed because its answers came without its address. By the bench
+tests: a refused token was taken for an unreachable server and retried
+for ever. By the review agents: the server counted a pause in a reply as
+playback, which could send more than the device holds; the device's limit
+on a silent reply was shorter than the server's limits in sequence;
+several states depended on a single report that could be lost. The second
+review also led to the protocol's numbers being gathered in one header
+with a test against the server's, to reports reaching the state machine
+directly instead of through the event loop, and to the state machine
+keeping its own phases.
+
+**Chip temperature.** From 2026-10-06 every test on the device records the
+chip's temperature, read with the `temp` console command, with the
+conditions it was taken under. The record is kept in R20 of
+[KNOWN-ISSUES.md](KNOWN-ISSUES.md).
+
 ## Stages
 
 | # | Stage | State | Exit criteria |
@@ -110,7 +223,7 @@ before it was committed; what they found and what was deferred is in
 | 3 | Display and state machine | Done | LVGL 9 driving the NV3007 panel, backlight under control, and the state animations driven by a mock state machine that cycles on a timer. No network. |
 | 4 | Wake word | Done, with a deviation (see below) | microWakeWord integrated with a continuous ring buffer; detection drives the state transition. Custom phrase trained and thresholds tuned against a multi-hour false-accept run. |
 | 5 | Server v1 | Done | WebSocket server, device authentication, day-scoped conversation store, and the speech-to-text, Claude and text-to-speech chain, with the reply synthesised sentence by sentence. Validated end to end by a desktop client script with no device involved. |
-| 6 | Integration | Not started | Device WebSocket client and mDNS lookup, streaming upload during capture, server-driven endpointing, streaming playback, real state machine, and error, timeout and reconnect paths, all as [docs/PROTOCOL.md](docs/PROTOCOL.md) describes. First end-to-end conversation. |
+| 6 | Integration | Done | Device WebSocket client and mDNS lookup, streaming upload during capture, server-driven endpointing, streaming playback, real state machine, and error, timeout and reconnect paths, all as [docs/PROTOCOL.md](docs/PROTOCOL.md) describes. First end-to-end conversation. |
 | 7 | Latency and robustness | Not started | Measured end-to-end latency against the budget, and the server brought within it; the end-of-speech silence tuned; WiFi and server-drop recovery, watchdogs, brownout guard. |
 | 8 | Polish | Not started | Animation refinement, volume control, provisioning experience, and over-the-air update if adopted. |
 
@@ -165,13 +278,13 @@ Deepgram, a device token and the timezone are in the untracked
 
 ## Next steps
 
-1. Begin stage 6, integration. It includes the two things settled under
-   Open decisions: the server pacing reply audio (KNOWN-ISSUES R17), and
-   the device's own wording for errors.
-2. Work through the Before release list below once the last stage is
+1. Plan stage 7. Beyond its exit criteria, it has these to take up or set
+   aside: internet access for the assistant (Open decisions), the pauses
+   between sentences seen in a long reply (KNOWN-ISSUES, Caveats), and
+   whether the request could be announced to the server while the chime
+   plays (R19).
+3. Work through the Before release list below once the last stage is
    done; nothing in it blocks stages 6 to 8.
-3. Add the device's own identifier and a token for it to `DEVICE_TOKENS`
-   in `server/.env`, and enter the same token on the device.
 4. Obtain a multimeter for the continuity checks before the circuit is
    soldered (R9).
 
@@ -196,7 +309,17 @@ comes up then.
 | Endpointing | Server-side, settled. The silence that ends a request, 400 ms, is tuned in stage 7 (R18) |
 | Interrupting a request | Not possible, settled: a turn runs to its end |
 | After a failed turn | Settled: the device shows `ERROR` briefly and returns to `IDLE`; only a lost connection leads to `CONNECTING` |
-| Reply audio pacing | Settled: the server sends only a short, set time ahead of playback, so the device holds one small fixed buffer whatever the length of the reply. Built in stage 6 (R17) |
+| Reply audio pacing | Settled and built: the server sends at most 2 s ahead of playback and the device holds 4 s, whatever the length of the reply (R17) |
+| WiFi power saving | Off, from stage 6: the device is mains-powered, and the radio's sleep delays streamed audio. It raises the current drawn and the chip's temperature somewhat; neither has been measured against power saving on (R20) |
+| Playback volume | Reply audio is played as the server sends it, at 100 %, until volume control in stage 8; 40 % and 60 % were too quiet. If this is still too quiet, the next steps are the amplifier's gain pin, which is hardware, or boosting the audio in software with a limiter |
+| The chime and volume | Open, for stage 8. The chime has a level of its own, 30 % of full scale, and the playback level is applied on top of it, which changes nothing while that level is 100 %. With a volume control, the chime would fade with the volume while the device still waits for it before listening. To decide then: it follows the volume, follows it down to a floor, or keeps a fixed level |
+| Reply voice | Settled: `aura-2-luna-en`. The first voice used had a harsh "s", in the audio itself and not from the device's speaker; this one was chosen by ear from eleven, and was heard on the device and preferred |
+| Loudness | Open. With the chosen voice and playback at 100 %, replies are a little quiet. Four ways to raise it are listed in KNOWN-ISSUES under Caveats: the amplifier's gain pin, a boost in the firmware, levelling on the server, or another voice. To be decided if it proves a nuisance |
+| Languages | English only: speech-to-text is set to English and the synthesiser's voice is English. Speech in another language is not recognised and the turn ends with no reply. Whether to support others is open |
+| Seeing a screen state on demand | Settled and built: `display preview <state>` draws a state's screen for a few seconds without changing the state |
+| A reason on the `CONNECTING` screen | Settled and built: `CONNECTING` shows why the last attempt to reach the server failed |
+| Component names | Settled: the connection is `server_link` and the state machine `state_machine`, renamed before the first commit of stage 6 |
+| Internet access for the assistant | Open, and optional: nothing is committed. The assistant has no tools and is told it has no internet access, so it declines questions such as the weather. If it is taken up, it belongs to stage 7. The ways considered: tools the server runs itself on free data (the date and time from its clock, weather from a free service), at a few hundred tokens a use; Anthropic's web search tool, at $10 per 1,000 searches plus the results as input tokens, estimated at about 4 cents a searched question on `claude-opus-5` and not measured; or both, with the search capped at one a question. Running Claude Code under a subscription login in place of the API was considered and set aside: its documentation directs anything built on it to API keys |
 | Deployment | LAN only for now; off-LAN deployment deferred and would require TLS |
 | Over-the-air updates | Undecided, revisited at stage 8; the flash layout already allows it |
 | Server discovery | mDNS on the LAN, with `server_url` as an override; the server's side is built, the device's is stage 6 |

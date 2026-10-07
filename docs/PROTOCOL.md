@@ -1,9 +1,11 @@
 # Device protocol
 
 The reference for everything that passes between a device and the server.
-The server's side is built and tested (stage 5); the device's side is built
-in stage 6, against this document. Message shapes and constants are defined
-in code in `server/protocol.py`, which follows this document.
+Both sides are built: the server's in stage 5, the device's in stage 6.
+Each keeps the protocol's numbers in one file, `server/protocol.py` and
+`firmware/components/protocol/include/protocol.h`, and a test on the
+server side reads both and fails if they disagree or if a limit that must
+outlast another does not.
 
 Protocol version: **1**.
 
@@ -26,7 +28,8 @@ The server checks the token before accepting the connection.
 
 | Outcome | Meaning | What the device does |
 | --- | --- | --- |
-| Upgrade succeeds, then `ready` arrives | Session open | Enter `IDLE` |
+| Upgrade succeeds, then `ready` arrives | Session open | Enter `IDLE`, if `protocol` in `ready` is the device's own version. Otherwise close, and try again much later: one side needs updating |
+| Upgrade succeeds, no `ready` within 10 s | Server not behaving as one | Close and retry with backoff |
 | HTTP 403 | Unknown device or wrong token | Do not retry with the same settings; they cannot succeed. Show the reason |
 | Connection refused or timed out | Server not running or not reachable | Retry with backoff |
 
@@ -38,8 +41,12 @@ noticed the old connection is dead.
 
 | Close code | Meaning | What the device does |
 | --- | --- | --- |
-| `4000` | Another connection with this identifier took over | Reconnect only after a long backoff. An immediate reconnect means two devices share an identifier, and each would evict the other without end |
+| `4000` | Another connection with this identifier took over | Reconnect only after 60 s. An immediate reconnect means two devices share an identifier, and each would evict the other without end |
 | Any other | Server stopped or connection lost | Reconnect with backoff |
+
+Backoff is the wait before the next attempt: 1 s after a connection that
+had worked, then doubling with each failure up to 30 s. Every attempt
+starts with a new lookup of the server.
 
 ## Discovery
 
@@ -76,11 +83,11 @@ and the wake-word model.
 | Message | Sender | Sent when | What the receiver does |
 | --- | --- | --- | --- |
 | `ready` | Server | Once, after the connection is accepted | Device enters `IDLE` |
-| `utterance_start` | Device | The wake word fired while the device was in `IDLE` | Server starts a turn and takes the audio that follows |
+| `utterance_start` | Device | The wake word fired while the device was in `IDLE`, and the device's chime has played | Server starts a turn and takes the audio that follows |
 | *binary* | Device | From `utterance_start` until `stop_capture` | Server transcribes it |
 | `stop_capture` | Server | The request is over | Device stops sending audio and enters `THINKING` |
 | `reply_start` | Server | Before the first reply audio | Device prepares playback at the stated rate |
-| *binary* | Server | After `reply_start` | Device plays it and enters `SPEAKING` at the first chunk |
+| *binary* | Server | After `reply_start` | Device plays it, and enters `SPEAKING` when the first sound comes out |
 | `reply_end` | Server | The turn is over | Device finishes playing what it holds, then enters `IDLE` |
 | `error` | Server | The turn was abandoned | Device stops playback, discards unplayed audio, shows `ERROR` briefly, then enters `IDLE` |
 
@@ -144,10 +151,10 @@ Every turn ends with exactly one of `reply_end` and `error`.
    during a turn is ignored: it gets no answer and the running turn carries
    on. The device, for its part, acts on the wake word only in `IDLE`.
 2. **`reply_end` means all audio has been sent, not that it has been
-   played.** The server sends reply audio as fast as it is synthesised, so
-   the device still holds audio when `reply_end` arrives. The server is
-   ready for a new turn at once; the device is not in `IDLE`, and so sends
-   no `utterance_start`, until playback is finished.
+   played.** The device still holds up to two seconds of audio when
+   `reply_end` arrives. The server is ready for a new turn at once; the
+   device is not in `IDLE`, and so sends no `utterance_start`, until
+   playback is finished.
 3. **Audio is taken only during capture.** Frames sent before
    `utterance_start` or after `stop_capture` are dropped without comment.
    Frames already on their way when `stop_capture` is sent are expected.
@@ -163,34 +170,61 @@ Every turn ends with exactly one of `reply_end` and `error`.
    closes, and a cancelled turn is not added to the conversation. This is
    the only way a turn ends early.
 
+## Pacing of reply audio
+
+The server never sends more than **2 s** of reply audio ahead of playback,
+however long the reply. It has no report of what the device has played, so
+it works this out for itself: playback is taken to begin when the first
+chunk is sent and to run without pause at the stated rate. Up to the first
+two seconds of a reply therefore arrive as fast as they are made, and the
+rest at the speed of playback.
+
+The device, for its part:
+
+- starts playing as soon as the first chunk arrives, or very shortly
+  after (the firmware waits until 80 ms is in hand);
+- has room for **4 s** of reply audio. The second two seconds are the
+  margin for what the server cannot see: a stall on the network, after
+  which the delayed chunks arrive together, or playback that started late
+  or paused;
+- closes the connection if a chunk arrives that it has no room for
+  (rule 6). It does not drop audio and carry on.
+
 ## Time limits
 
 | Limit | Value | Held by |
 | --- | --- | --- |
 | Wait for the first recognised word | 5 s (server setting) | Server: ends the turn with `stop_capture`, `reply_end` |
 | Longest capture | 13 s from `utterance_start` (server setting) | Server: sends `stop_capture` and answers what was heard |
-| Longest capture, as a guard | 15 s from the wake word | Device: closes the connection (rule 6) |
+| Longest capture, as a guard | 15 s from `utterance_start` | Device: closes the connection (rule 6) |
+| Reaching a service | 5 s | Server: `error` for that service |
 | Silence from Claude | 20 s | Server: `error` with `llm_failed` |
 | Silence from text-to-speech | 10 s | Server: `error` with `tts_failed` |
-| Keepalive | Ping every 20 s; 20 s for the pong | Server: drops a connection that does not answer |
+| First reply audio, from `stop_capture` | 30 s | Server: `error` with `llm_failed` or `tts_failed`, whichever it was waiting on |
+| Wait in `THINKING` | 40 s from `stop_capture` | Device: closes the connection (rule 6) |
+| Silence inside a reply | 40 s with nothing to play | Device: closes the connection (rule 6) |
+| Keepalive, server | Ping every 20 s; 20 s for the pong | Server: drops a connection that does not answer |
+| Keepalive, device | Ping every 10 s; 20 s for the pong | Device: treats the connection as lost |
 
-The server's capture limit is deliberately below the device's, so that a
-request that never seems to end is answered instead of abandoned.
+Each of the device's limits is longer than the server's for the same wait,
+so that the server's `error` arrives first when a service fails:
 
-The device's own deadlines, for the wait between `stop_capture` and the
-first reply audio and for a gap between chunks, are set in stage 6. They
-must be longer than the server's limits above, so that the server's `error`
-arrives first.
+- the server's capture limit, 13 s, is below the device's 15 s, so that a
+  request that never seems to end is answered instead of abandoned;
+- the server sends audio or an `error` within 30 s of `stop_capture`,
+  whatever its services' own limits and retries add up to, and the device
+  waits 40 s;
+- inside a reply, the longest silence the server's services allow is 35 s
+  (20 s from Claude, then 5 s to reach the synthesiser and 10 s of silence
+  from it), and the device allows 40 s.
 
 A device that stops reading from the connection also stops answering pings
 and is dropped. Not reading is therefore not a way to slow the server down.
 
 ## Not in version 1
 
-- **Pacing of reply audio.** The server does not yet limit how far ahead of
-  playback it sends. It will, from stage 6: see R17 in
-  [KNOWN-ISSUES.md](../KNOWN-ISSUES.md). Rule 2 and the frame sizes above
-  describe the server as built today.
+- **A report of playback from the device.** Pacing rests on the server's
+  assumption about when playback began, not on anything the device says.
 - **The device's protocol version.** The server states its version in
   `ready` and in the mDNS record; the device does not state its own.
 - **A turn identifier.** Messages do not say which turn they belong to.

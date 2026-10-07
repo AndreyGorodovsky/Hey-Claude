@@ -208,6 +208,12 @@ esp_err_t net_start(const char *ssid, const char *pass, const char *hostname)
     ESP_RETURN_ON_ERROR(esp_wifi_set_storage(WIFI_STORAGE_RAM), TAG, "storage");
     ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "mode");
     ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &wc), TAG, "config");
+    /* Power saving off. By default the radio sleeps between the router's
+     * beacons, about ten times a second, and data in either direction can
+     * wait up to 100 ms for it to wake. That saves power on a battery; this
+     * device is mains-powered and streams audio, where such waits are heard
+     * as gaps and can stall a send for long enough to lose the connection. */
+    ESP_RETURN_ON_ERROR(esp_wifi_set_ps(WIFI_PS_NONE), TAG, "power save");
     /* Returns at once; WIFI_EVENT_STA_START follows and starts connecting */
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "start");
 

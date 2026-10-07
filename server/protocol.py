@@ -43,6 +43,43 @@ DEVICE_CAPTURE_LIMIT_SECONDS = 15
 #: in ``reply_start``. The last chunk of a reply may be shorter.
 REPLY_CHUNK_MS = 40
 
+#: The server sends reply audio at most this far ahead of where playback
+#: has reached, counting from the first chunk and assuming the device plays
+#: at the stated rate from then on.
+REPLY_LEAD_MS = 2000
+
+#: Reply audio a device must be able to hold: the lead, with as much again
+#: for a stall on the network or a late start to playback.
+DEVICE_REPLY_BUFFER_MS = 4000
+
+# --- Time limits ------------------------------------------------------------
+#
+# The server's limits on its own services, and the device's deadlines that
+# must outlast them, so that the server's ``error`` message reaches a device
+# before the device gives up by itself. The firmware holds the same numbers
+# in firmware/components/protocol/include/protocol.h; a test compares the
+# two files and checks the ordering.
+
+#: Seconds allowed to connect to a service.
+SERVICE_CONNECT_SECONDS = 5
+
+#: Seconds of silence tolerated from Claude while a reply is being generated.
+LLM_SILENCE_SECONDS = 20
+
+#: Seconds of silence tolerated from text-to-speech during one sentence.
+TTS_SILENCE_SECONDS = 10
+
+#: Longest the server takes, from ``stop_capture``, to send the first reply
+#: audio or an ``error``. One limit over the whole wait, whatever the
+#: services' own limits and retries add up to.
+FIRST_AUDIO_LIMIT_SECONDS = 30
+
+#: How long a device waits in its thinking state before giving up.
+DEVICE_THINKING_LIMIT_SECONDS = 40
+
+#: How long a device lets a reply stay silent, once begun, before giving up.
+DEVICE_STALL_LIMIT_SECONDS = 40
+
 #: Longest device identifier and token, as the firmware stores them.
 MAX_DEVICE_ID_LENGTH = 32
 MAX_DEVICE_TOKEN_LENGTH = 64

@@ -1,0 +1,11 @@
+# Dependencies fetched from the ESP Component Registry on the first build and
+# placed in firmware/managed_components/ (not committed). The exact versions
+# chosen are recorded in firmware/dependencies.lock, which is committed.
+#
+# Pinned to exact versions, like the wake-word libraries: an update is then a
+# deliberate change, followed by testing against the server.
+dependencies:
+  # WebSocket client: the connection to the server
+  espressif/esp_websocket_client: "==1.8.0"
+  # Multicast DNS: finds the server on the local network by its service name
+  espressif/mdns: "==1.13.1"

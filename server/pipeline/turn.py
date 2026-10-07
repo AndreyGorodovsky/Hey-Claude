@@ -7,8 +7,9 @@ goes through two phases:
    speaker finishes, nothing is said, or the capture limit is reached. The
    device is then told to stop sending.
 2. Reply. The transcript goes to the language model with the day's earlier
-   exchanges. The reply is cut into sentences as it is generated, and each
-   sentence is synthesised and sent while the next is still being written.
+   exchanges. The reply is cut into sentences as it is generated; each is
+   synthesised while the next is still being written, and sent while the
+   next is being synthesised.
 
 Once started, a turn runs to its end; nothing a device sends interrupts it.
 An exchange is recorded in the conversation only if its turn completed, so
@@ -24,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -33,7 +35,12 @@ from typing import Protocol
 from server.conversation import ConversationStore, Exchange
 from server.llm import LanguageModel, LanguageModelError, ReplyRefused
 from server.pipeline.sentences import SentenceSplitter
-from server.protocol import CAPTURE_SAMPLE_RATE, ErrorCode
+from server.protocol import (
+    CAPTURE_SAMPLE_RATE,
+    FIRST_AUDIO_LIMIT_SECONDS,
+    SAMPLE_WIDTH_BYTES,
+    ErrorCode,
+)
 from server.stt import SpeechToText, SpeechToTextError, SpeechToTextStream
 from server.tts import TextToSpeech, TextToSpeechError
 
@@ -57,7 +64,11 @@ class TurnIO(Protocol):
         """The request is over; the device should stop sending audio."""
 
     async def reply_audio(self, pcm: bytes) -> None:
-        """Reply audio, in pieces of any size, at the playback rate."""
+        """Reply audio, in pieces of any size, at the playback rate.
+
+        Returns when the device can take more, which may be much later:
+        this is where a reply is slowed to the speed of playback.
+        """
 
     async def reply_done(self) -> None:
         """The turn is over. Called with no audio when nothing was said."""
@@ -74,6 +85,11 @@ class TurnLimits:
     max_capture_seconds: float = 13.0
     #: Longest wait for the first recognised word.
     no_speech_timeout_seconds: float = 5.0
+    #: Audio that may wait to be sent before the next sentence is held back
+    #: from the synthesiser.
+    synthesis_ahead_seconds: float = 5.0
+    #: Longest wait for the first reply audio, from the end of the capture.
+    first_audio_seconds: float = FIRST_AUDIO_LIMIT_SECONDS
 
 
 @dataclass(frozen=True)
@@ -214,6 +230,56 @@ async def _capture(
         await stream.aclose()
 
 
+class _SpokenAudio:
+    """Synthesised audio waiting to be sent.
+
+    Synthesis and sending run at different speeds: sending is paced to
+    playback, synthesis is several times faster. This sits between them, so
+    that the next sentence is being synthesised while the current one is
+    still being sent, and no silence falls between sentences.
+    """
+
+    def __init__(self, room_bytes: int) -> None:
+        self._room_bytes = room_bytes
+        self._pieces: deque[bytes] = deque()
+        self._bytes = 0
+        self._closed = False
+        self._changed = asyncio.Condition()
+
+    async def wait_for_room(self) -> None:
+        """Return once less than the allowed amount is waiting.
+
+        Checked between sentences, never within one: a sentence, once
+        requested, is read to its end, so that the synthesiser is not left
+        with a response nobody is reading.
+        """
+        async with self._changed:
+            await self._changed.wait_for(lambda: self._bytes < self._room_bytes)
+
+    async def put(self, piece: bytes) -> None:
+        async with self._changed:
+            self._pieces.append(piece)
+            self._bytes += len(piece)
+            self._changed.notify_all()
+
+    async def close(self) -> None:
+        """Mark the end: no more audio will be added."""
+        async with self._changed:
+            self._closed = True
+            self._changed.notify_all()
+
+    async def get(self) -> bytes | None:
+        """Return the next piece, or None once closed and empty."""
+        async with self._changed:
+            await self._changed.wait_for(lambda: self._pieces or self._closed)
+            if not self._pieces:
+                return None
+            piece = self._pieces.popleft()
+            self._bytes -= len(piece)
+            self._changed.notify_all()
+            return piece
+
+
 async def _reply(
     device_id: str,
     transcript: str,
@@ -221,14 +287,24 @@ async def _reply(
     deps: TurnDeps,
     timings: _Timings,
 ) -> None:
-    """Generate, speak and record the reply to ``transcript``."""
+    """Generate, speak and record the reply to ``transcript``.
+
+    Three things run at once, each feeding the next: the model writes
+    sentences, the synthesiser turns them into audio, and this function
+    sends the audio at the pace the connection allows.
+    """
     now = deps.now()
     history = await deps.store.history(device_id, now)
+    rate = deps.playback_sample_rate
 
-    # The model writes into this queue while earlier sentences are being
-    # synthesised and sent. None marks the end of the reply.
+    # None marks the end of the reply.
     sentences: asyncio.Queue[str | None] = asyncio.Queue()
     reply_parts: list[str] = []
+    audio = _SpokenAudio(
+        int(deps.limits.synthesis_ahead_seconds * rate) * SAMPLE_WIDTH_BYTES
+    )
+    refused = False
+    sent_audio = False
 
     async def generate() -> None:
         splitter = SentenceSplitter()
@@ -244,33 +320,60 @@ async def _reply(
         finally:
             sentences.put_nowait(None)
 
-    sent_audio = False
-
     async def say(sentence: str) -> None:
-        nonlocal sent_audio
-        async for piece in deps.tts.synthesize(sentence, deps.playback_sample_rate):
-            if not sent_audio:
-                sent_audio = True
+        await audio.wait_for_room()
+        async for piece in deps.tts.synthesize(sentence, rate):
+            if timings.first_audio is None:
                 timings.first_audio = time.monotonic()
-            await io.reply_audio(piece)
+            await audio.put(piece)
+
+    async def synthesise(generator: asyncio.Task[None]) -> None:
+        nonlocal refused
+        try:
+            while (sentence := await sentences.get()) is not None:
+                await say(sentence)
+            try:
+                # Collects the model's outcome, once every sentence it did
+                # produce has been synthesised.
+                await generator
+            except ReplyRefused:
+                refused = True
+                if not "".join(reply_parts).strip():
+                    await say(_REFUSAL_LINE)
+        finally:
+            # Whatever happened, the sender must not be left waiting.
+            await asyncio.shield(audio.close())
 
     generator = asyncio.create_task(generate())
-    refused = False
+    synthesiser = asyncio.create_task(synthesise(generator))
     try:
-        while (sentence := await sentences.get()) is not None:
-            await say(sentence)
+        # The services each have their limits, and the model's client may
+        # try twice; together those can exceed what a device waits for. One
+        # limit over the whole wait for the first audio keeps the server's
+        # failure ahead of the device's own deadline.
+        waited = time.monotonic() - (timings.capture_done or time.monotonic())
         try:
-            # Collects the model's outcome, once every sentence it did
-            # produce has been spoken.
-            await generator
-        except ReplyRefused:
-            refused = True
-            if not "".join(reply_parts).strip():
-                await say(_REFUSAL_LINE)
+            async with asyncio.timeout(
+                max(0.0, deps.limits.first_audio_seconds - waited)
+            ):
+                piece = await audio.get()
+        except TimeoutError:
+            if reply_parts:
+                raise TextToSpeechError("no reply audio in time") from None
+            raise LanguageModelError("no reply text in time") from None
+        while piece is not None:
+            sent_audio = True
+            await io.reply_audio(piece)
+            piece = await audio.get()
+        # Audio made before a failure has been sent by now; the failure
+        # itself is raised here.
+        await synthesiser
     finally:
-        generator.cancel()
-        with suppress(asyncio.CancelledError, LanguageModelError):
-            await generator
+        for task in (synthesiser, generator):
+            task.cancel()
+        for task in (synthesiser, generator):
+            with suppress(asyncio.CancelledError, Exception):
+                await task
 
     reply = "".join(reply_parts).strip()
     if not reply and not refused:

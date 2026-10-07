@@ -22,6 +22,7 @@ from pydantic import SecretStr
 
 from server.llm.base import LanguageModel, LanguageModelError, ReplyRefused
 from server.llm.prompt import SYSTEM_PROMPT
+from server.protocol import LLM_SILENCE_SECONDS, SERVICE_CONNECT_SECONDS
 from server.conversation import Exchange
 
 log = logging.getLogger(__name__)
@@ -36,7 +37,9 @@ _CACHE = {"type": "ephemeral"}
 #: Seconds allowed to connect, and seconds of silence tolerated on the reply
 #: stream. The SDK's own default tolerates ten minutes of silence, which
 #: would hold a device in its thinking state for as long.
-_TIMEOUT = anthropic.Timeout(30.0, connect=5.0, read=20.0)
+_TIMEOUT = anthropic.Timeout(
+    30.0, connect=SERVICE_CONNECT_SECONDS, read=LLM_SILENCE_SECONDS
+)
 
 
 def build_messages(history: Sequence[Exchange], user_text: str) -> list[dict[str, Any]]:

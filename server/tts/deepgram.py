@@ -12,12 +12,13 @@ from collections.abc import AsyncIterator
 import httpx
 from pydantic import SecretStr
 
+from server.protocol import SERVICE_CONNECT_SECONDS, TTS_SILENCE_SECONDS
 from server.tts.base import TextToSpeech, TextToSpeechError
 
 _SPEAK_URL = "https://api.deepgram.com/v1/speak"
 
 #: Seconds to connect, and seconds of silence tolerated mid-response.
-_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+_TIMEOUT = httpx.Timeout(TTS_SILENCE_SECONDS, connect=SERVICE_CONNECT_SECONDS)
 
 
 class DeepgramTextToSpeech(TextToSpeech):

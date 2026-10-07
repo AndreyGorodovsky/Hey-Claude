@@ -39,7 +39,8 @@
  * the fraction of time spent on (the duty) sets the brightness. LEDC can
  * also change the duty gradually by itself (a fade).
  *
- * Context. display_init() and display_test_start() run in the caller's task.
+ * Context. display_init(), display_test_start() and display_preview() run
+ * in the caller's task.
  * Everything else runs in the display task, pinned to core 0 with the WiFi
  * work (ARCHITECTURE.md, task and core allocation), except on_color_done(),
  * which runs in the SPI interrupt, and on_state_event(), which runs in the
@@ -107,6 +108,7 @@ static const char *TAG = "display";
 /* Reasons to wake the display task, as bits of its task notification value */
 #define WAKE_STATE          (1 << 0)    /* the device state changed */
 #define WAKE_TEST           (1 << 1)    /* a test pattern was requested */
+#define WAKE_PREVIEW        (1 << 2)    /* a preview of a state was requested */
 
 static TaskHandle_t s_task;
 static esp_lcd_panel_io_handle_t s_io;
@@ -354,6 +356,23 @@ static void on_state_event(void *arg, esp_event_base_t base, int32_t id, void *d
     xTaskNotify(s_task, WAKE_STATE, eSetBits);
 }
 
+/* A requested preview, handed from the requesting task to the display task
+ * under a spinlock (a lock for very short sections; a task on the other
+ * core waits by spinning) */
+static portMUX_TYPE s_preview_lock = portMUX_INITIALIZER_UNLOCKED;
+static app_state_event_t s_preview_req;
+static uint32_t s_preview_req_seconds;
+/* The running preview; display task only */
+static bool s_previewing;
+static uint32_t s_preview_end_ms;
+
+/* Milliseconds since boot. Wraps after 49 days; the signed difference used
+ * with it stays right across the wrap. */
+static uint32_t now_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
 static void show_current_state(void)
 {
     app_state_event_t st;
@@ -405,8 +424,24 @@ static void display_task(void *arg)
             } else {
                 lv_refr_now(s_disp);
             }
-        } else if (reasons & WAKE_STATE) {
-            show_current_state();
+        } else {
+            if (reasons & WAKE_PREVIEW) {
+                app_state_event_t st;
+                taskENTER_CRITICAL(&s_preview_lock);
+                st = s_preview_req;
+                uint32_t seconds = s_preview_req_seconds;
+                taskEXIT_CRITICAL(&s_preview_lock);
+                ui_show_state(&st);
+                backlight_fade(ui_brightness(st.state));
+                s_previewing = true;
+                s_preview_end_ms = now_ms() + seconds * 1000;
+            }
+            if (s_previewing && (int32_t)(now_ms() - s_preview_end_ms) >= 0) {
+                s_previewing = false;
+                show_current_state();   /* whatever the state has become */
+            } else if ((reasons & WAKE_STATE) && !s_previewing) {
+                show_current_state();
+            }
         }
 
         /* Runs due animations and redraws what changed. Returns how long
@@ -444,5 +479,23 @@ esp_err_t display_test_start(uint32_t seconds, display_test_done_cb_t done)
         return ESP_ERR_INVALID_STATE;
     }
     xTaskNotify(s_task, WAKE_TEST, eSetBits);
+    return ESP_OK;
+}
+
+esp_err_t display_preview(app_state_t state, const char *detail, uint32_t seconds)
+{
+    if (state >= APP_STATE_COUNT || seconds < 1 || seconds > 60) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_ready) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    app_state_event_t st = { .state = state };
+    strlcpy(st.detail, detail ? detail : "", sizeof(st.detail));
+    taskENTER_CRITICAL(&s_preview_lock);
+    s_preview_req = st;
+    s_preview_req_seconds = seconds;
+    taskEXIT_CRITICAL(&s_preview_lock);
+    xTaskNotify(s_task, WAKE_PREVIEW, eSetBits);
     return ESP_OK;
 }

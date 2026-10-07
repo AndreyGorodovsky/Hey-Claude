@@ -11,6 +11,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "app_state.h"
 #include "esp_err.h"
 
 /* Turns the backlight off and starts the display task, then returns without
@@ -41,3 +42,12 @@ typedef void (*display_test_done_cb_t)(const display_test_result_t *result);
  * the test ends, and the state view returns. ESP_ERR_INVALID_STATE if the
  * display is not working or a test is already running. */
 esp_err_t display_test_start(uint32_t seconds, display_test_done_cb_t done);
+
+/* Draws `state` with `detail` (may be NULL) for `seconds` (1-60), then goes
+ * back to the device's real state. The device state itself is not touched:
+ * only what is drawn changes, so this cannot disturb the state machine. It
+ * is how a state's screen is looked at without bringing the state about.
+ * Changes of the real state during a preview are drawn when it ends. A new
+ * preview replaces a running one. Returns at once. ESP_ERR_INVALID_STATE if
+ * the display is not working. */
+esp_err_t display_preview(app_state_t state, const char *detail, uint32_t seconds);

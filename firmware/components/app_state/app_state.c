@@ -65,7 +65,8 @@ esp_err_t app_state_set(app_state_t state, const char *detail)
     ESP_RETURN_ON_FALSE(state < APP_STATE_COUNT, ESP_ERR_INVALID_ARG, TAG, "bad state %d", state);
 
     app_state_event_t next = { .state = state };
-    bool has_detail = state == APP_STATE_SETUP || state == APP_STATE_ERROR;
+    bool has_detail = state == APP_STATE_SETUP || state == APP_STATE_ERROR
+                   || state == APP_STATE_CONNECTING;
     /* strlcpy copies at most size - 1 characters and always ends the copy
      * with a NUL, which is what makes cutting long text safe */
     strlcpy(next.detail, has_detail && detail ? detail : "", sizeof(next.detail));

@@ -14,8 +14,8 @@
  * Audio is 16-bit signed mono at AUDIO_CAPTURE_RATE (audio.h). Positions
  * and lengths are counted in samples, one per 1/16000 s. A position is the
  * number of a sample since capture started; it identifies one moment in the
- * stream, so a moment can be passed from one reader to another (the wake
- * word's end, from detection to the upload).
+ * stream, so a moment can be noted in one task and used in another (the end
+ * of the chime, noted by the state machine, is where the upload starts).
  *
  * Threading: audio_ring_start() is called once at boot. After that, any
  * number of tasks may read at once, each with its own reader; one reader
@@ -61,8 +61,13 @@ esp_err_t audio_ring_start(void);
  * AUDIO_RING_READ_MAX, and to what has been captured since boot. */
 void audio_ring_reader_init(audio_ring_reader_t *r, uint32_t back_ms);
 
-/* Points a reader at a position taken from the stream earlier, such as the
- * one in a wake-word detection. A position further back than
+/* The stream's position now: the number of the next sample to be captured.
+ * For noting a moment to start a reader at later, or to measure from. 0
+ * before audio_ring_start(). */
+uint32_t audio_ring_now(void);
+
+/* Points a reader at a position taken from the stream earlier, with
+ * audio_ring_now() or from a wake-word detection. A position further back than
  * AUDIO_RING_READ_MAX is moved forward to that limit. */
 void audio_ring_reader_init_at(audio_ring_reader_t *r, uint32_t pos);
 

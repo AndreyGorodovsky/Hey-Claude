@@ -20,24 +20,34 @@
  *   6. Listening      - the capture task starts filling the audio ring, and
  *                       wake-word detection starts reading it. Needs audio
  *                       and the event loop, which detections are posted to.
- *   7. NVS            - flash-backed key-value storage that holds the settings.
- *   8. Network stack  - TCP/IP layer, needed by WiFi.
- *   9. Settings       - read from NVS into memory, once.
- *  10. Console        - serial command line for settings and tests.
- *  11. WiFi           - only if a network has been configured. The state
- *                       moves to CONNECTING, or to SETUP if there are no
- *                       usable WiFi settings.
+ *   7. Player         - the buffer and task that play replies. It may
+ *                       report to the state machine before that has
+ *                       started; it has nothing to report until a reply.
+ *   8. NVS            - flash-backed key-value storage that holds the settings.
+ *   9. Network stack  - TCP/IP layer, needed by WiFi.
+ *  10. Settings       - read from NVS into memory, once.
+ *  11. Console        - serial command line for settings and tests.
+ *  12. State machine  - from here on the only code that changes the state.
+ *                       Before the link, whose events it must not miss.
+ *  13. Server link    - waits for WiFi, then finds and joins the server.
+ *                       Before WiFi, whose "connected" event it waits for.
+ *  14. WiFi           - starts joining the network.
  *
- * The server connection is added in a later stage (see STATUS.md).
+ * Steps 12 to 14 run only if the settings they need are present. Without
+ * them the state is SETUP, with the reason, and stays there until they are
+ * entered at the console and the device is rebooted.
  */
 #include "app_config.h"
 #include "app_state.h"
 #include "audio.h"
 #include "audio_ring.h"
 #include "console.h"
+#include "state_machine.h"
 #include "display.h"
+#include "server_link.h"
 #include "net.h"
-#include "wake_standin.h"
+#include "player.h"
+#include "protocol.h"
 #include "wakeword.h"
 
 #include "esp_app_desc.h"
@@ -160,19 +170,33 @@ void app_main(void)
         ESP_LOGE(TAG, "display not available: %s", esp_err_to_name(err));
     }
 
-    /* Listening needs a working microphone. Failures are logged and not
-     * fatal, like audio's: the rest of the device stays usable. */
+    /* Listening and speaking need working audio. Failures are logged and
+     * not fatal, like audio's: the console stays usable, and the state
+     * machine shows on the screen that the device cannot hear or speak. */
+    bool listening_ok = false;
+    bool speaker_ok = false;
     if (audio_err == ESP_OK) {
         err = audio_ring_start();
         if (err == ESP_OK) {
             err = wakeword_start();
         }
-        if (err == ESP_OK) {
-            err = wake_standin_start();
-        }
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "wake word not available: %s", esp_err_to_name(err));
         }
+        listening_ok = err == ESP_OK;
+
+        /* The player reports to the state machine, and takes the two times
+         * that are the protocol's from the protocol's header */
+        const player_config_t player = {
+            .buffer_ms = PROTO_REPLY_BUFFER_MS,
+            .stall_ms = PROTO_DEVICE_STALL_LIMIT_MS,
+            .on_report = state_machine_player_report,
+        };
+        err = player_init(&player);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "reply playback not available: %s", esp_err_to_name(err));
+        }
+        speaker_ok = err == ESP_OK;
     }
 
     init_nvs();
@@ -190,21 +214,49 @@ void app_main(void)
         app_state_set(APP_STATE_SETUP, "WiFi not set up");
         return;
     }
+    if (cfg->device_token[0] == '\0') {
+        /* The server accepts no device without its token (docs/PROTOCOL.md) */
+        ESP_LOGW(TAG, "Server token not configured. Enter: "
+                      "config set device_token \"<token>\", then reboot");
+        app_state_set(APP_STATE_SETUP, "Server token not set up");
+        return;
+    }
+
+    /* The last state set from here. The state machine takes over as the
+     * state's only writer, and moves on from CONNECTING when the link
+     * reports the server. */
+    app_state_set(APP_STATE_CONNECTING, NULL);
+    const state_machine_config_t machine = {
+        .speaker_ok = speaker_ok,
+        .listening_ok = listening_ok,
+    };
+    /* ESP_ERROR_CHECK: these fail only if memory has run out this early,
+     * and without them the device can do nothing useful */
+    ESP_ERROR_CHECK(state_machine_start(&machine));
+    const server_link_config_t link = {
+        .server_url = cfg->server_url,
+        .device_id = cfg->device_id,
+        .device_token = cfg->device_token,
+        /* The link's reports and the reply's audio both go to the state
+         * machine, which passes the audio on to the player when a reply
+         * is wanted. This is the one place the three are joined. */
+        .on_report = state_machine_link_report,
+        .sink = { .start = state_machine_reply_start, .data = state_machine_reply_data },
+    };
+    ESP_ERROR_CHECK(server_link_start(&link));
 
     /* Not ESP_ERROR_CHECK: a failure here comes from stored settings (a
      * password the driver rejects, for example). Aborting would restart the
      * chip into the same failure forever, before the console could be used to
-     * fix it. Logging and carrying on keeps the console available. */
+     * fix it. Logging and carrying on keeps the console available. The
+     * state is left as it is: with the state machine running, this code no
+     * longer sets it, and CONNECTING is what a device without WiFi shows. */
     err = net_start(cfg->wifi_ssid, cfg->wifi_pass, cfg->device_id);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "WiFi not started: %s. Check the settings with: config show",
                  esp_err_to_name(err));
-        app_state_set(APP_STATE_SETUP, "WiFi settings rejected");
-        return;
     }
-    /* Boot is complete. The state stays CONNECTING until the server
-     * connection, added in stage 6, moves it on. */
-    app_state_set(APP_STATE_CONNECTING, NULL);
     /* app_main returns here. WiFi keeps connecting in the background, driven
-     * by events, and the console task keeps accepting commands. */
+     * by events; the link, the state machine and the console run in their
+     * own tasks. */
 }

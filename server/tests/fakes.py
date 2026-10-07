@@ -113,10 +113,15 @@ class FakeTts(TextToSpeech):
 
     bytes_per_character: int = 500
     error: Exception | None = None
+    #: Seconds to wait before each sentence after the first, as a slow
+    #: synthesiser or a pausing model would.
+    delay: float = 0.0
     spoken: list[str] = field(default_factory=list)
 
     async def synthesize(self, text: str, sample_rate: int) -> AsyncIterator[bytes]:
         assert sample_rate == PLAYBACK_RATE
+        if self.spoken and self.delay:
+            await asyncio.sleep(self.delay)
         self.spoken.append(text)
         if self.error is not None:
             raise self.error
@@ -157,6 +162,8 @@ def make_deps(
     tts: FakeTts | None = None,
     max_capture_seconds: float = 2.0,
     no_speech_timeout_seconds: float = 1.0,
+    synthesis_ahead_seconds: float = 5.0,
+    first_audio_seconds: float = 30.0,
 ) -> TurnDeps:
     return TurnDeps(
         stt=stt or FakeStt(),
@@ -167,6 +174,8 @@ def make_deps(
         limits=TurnLimits(
             max_capture_seconds=max_capture_seconds,
             no_speech_timeout_seconds=no_speech_timeout_seconds,
+            synthesis_ahead_seconds=synthesis_ahead_seconds,
+            first_audio_seconds=first_audio_seconds,
         ),
         now=lambda: NOON,
     )

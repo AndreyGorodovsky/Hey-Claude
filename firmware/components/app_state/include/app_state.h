@@ -1,16 +1,17 @@
 /*
  * The device's state: what it is doing right now, as the user sees it.
  *
- * One value from the state machine in ARCHITECTURE.md, plus, for SETUP and
- * ERROR, a short detail text saying why. This component only stores the
- * state and announces changes; it does not decide them.
+ * One value from the state machine in ARCHITECTURE.md, plus, for SETUP,
+ * ERROR and CONNECTING, a short detail text saying why. This component only
+ * stores the state and announces changes; it does not decide them.
  *
- * One writer. Transitions belong to the state machine that stage 6 builds:
+ * One writer. Transitions belong to the state machine, the state_machine component:
  * it alone calls app_state_set(), and other components (wake-word
- * detection, the server connection) report what happened to it, never set
- * states themselves. Otherwise two tasks setting states at the same moment
- * would leave the screen on whichever came last. Until stage 6, main.c's
- * boot outcome and the console's `state` command stand in for that writer.
+ * detection, the server connection, the player) report what happened to
+ * it, never set states themselves. Otherwise two tasks setting states at
+ * the same moment would leave the screen on whichever came last. The one
+ * exception is main.c, which sets the first states during boot, before the
+ * state machine starts.
  *
  * Changes are announced as APP_STATE_EVENT / APP_STATE_CHANGED on the default
  * event loop, the same way the WiFi driver announces its events. The event
@@ -30,12 +31,16 @@ typedef enum {
     APP_STATE_BOOT,         /* powered on, starting up */
     APP_STATE_SETUP,        /* cannot continue until settings are entered or
                                corrected; unlike ERROR, retrying cannot help */
-    APP_STATE_CONNECTING,   /* joining WiFi and the server */
+    APP_STATE_CONNECTING,   /* joining WiFi and the server; the detail, if
+                               any, says why the last attempt failed */
     APP_STATE_IDLE,         /* waiting for the wake word */
-    APP_STATE_CAPTURING,    /* recording the request */
+    APP_STATE_CAPTURING,    /* the wake word was heard: the chime plays,
+                               then the request is recorded */
     APP_STATE_THINKING,     /* waiting for the reply */
     APP_STATE_SPEAKING,     /* playing the reply */
-    APP_STATE_ERROR,        /* a transport or server failure; retried */
+    APP_STATE_ERROR,        /* something failed: a turn or the connection, shown
+                               for a few seconds, or the device's own
+                               microphone or speaker, shown until it works */
     APP_STATE_COUNT         /* number of states, not a state */
 } app_state_t;
 
@@ -58,8 +63,8 @@ typedef struct {
  * exists and before any other function here. */
 esp_err_t app_state_init(void);
 
-/* Changes the state and announces it. `detail` is for SETUP and ERROR and
- * may be NULL; it is ignored for other states. Setting the current state
+/* Changes the state and announces it. `detail` is for SETUP, ERROR and
+ * CONNECTING and may be NULL or empty; it is ignored for other states. Setting the current state
  * again with a different detail is announced too; setting exactly what is
  * already there is not. If the announcement fails, the state is left as it
  * was, so a retry is not mistaken for a repeat. */

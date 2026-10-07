@@ -18,8 +18,11 @@
  *   config unset <key>            remove a stored setting
  *   reboot                        restart, applying changed settings
  *   audio ...                     audio tests, listed in audio_cmd.c
- *   state ..., display ...        mock states and display test, in ui_cmd.c
+ *   state, display ...            the device state and the display test, in ui_cmd.c
  *   wake ...                      wake-word counters and tuning, in wake_cmd.c
+ *   link                          the server connection, in link_cmd.c
+ *   temp                          the chip's temperature, in temp_cmd.c
+ *   mem                           free memory and stack headroom, in mem_cmd.c
  */
 #include "console.h"
 
@@ -28,6 +31,9 @@
 #include <string.h>
 #include "app_config.h"
 #include "audio_cmd.h"
+#include "link_cmd.h"
+#include "mem_cmd.h"
+#include "temp_cmd.h"
 #include "ui_cmd.h"
 #include "wake_cmd.h"
 #include "esp_check.h"
@@ -179,6 +185,9 @@ esp_err_t console_start(void)
     ESP_RETURN_ON_ERROR(audio_cmd_register(), TAG, "audio");
     ESP_RETURN_ON_ERROR(ui_cmd_register(), TAG, "state and display");
     ESP_RETURN_ON_ERROR(wake_cmd_register(), TAG, "wake");
+    ESP_RETURN_ON_ERROR(link_cmd_register(), TAG, "link");
+    ESP_RETURN_ON_ERROR(temp_cmd_register(), TAG, "temp");
+    ESP_RETURN_ON_ERROR(mem_cmd_register(), TAG, "mem");
 
     /* Starts the console task and returns; the task runs from now on */
     return esp_console_start_repl(repl);

@@ -190,3 +190,78 @@ async def test_a_cancelled_turn_releases_its_stream(tmp_path):
 
     assert task.cancelled()
     assert stt.streams[0].closed
+
+
+async def test_the_next_sentence_is_synthesised_while_the_first_is_being_sent(tmp_path):
+    class HeldUp(RecordingIO):
+        def __init__(self) -> None:
+            super().__init__()
+            self.release = asyncio.Event()
+
+        async def reply_audio(self, pcm: bytes) -> None:
+            await super().reply_audio(pcm)
+            await self.release.wait()
+
+    tts = FakeTts()
+    io = HeldUp()
+    deps = make_deps(tmp_path, tts=tts)
+    turn = asyncio.create_task(run(deps, io=io))
+    # The first piece of the first sentence is still being sent; the second
+    # sentence is synthesised regardless.
+    async with asyncio.timeout(2):
+        while len(tts.spoken) < 2:
+            await asyncio.sleep(0.01)
+    assert io.steps == ["capture_done", "reply_audio"]
+
+    io.release.set()
+    await turn
+    assert io.steps == ["capture_done", "reply_audio", "reply_done"]
+
+
+async def test_synthesis_waits_when_enough_audio_is_already_waiting(tmp_path):
+    class Stopped(RecordingIO):
+        def __init__(self) -> None:
+            super().__init__()
+            self.release = asyncio.Event()
+
+        async def reply_audio(self, pcm: bytes) -> None:
+            await super().reply_audio(pcm)
+            await self.release.wait()
+
+    # Each sentence is a second of audio; a second may wait.
+    tts = FakeTts(bytes_per_character=4800)
+    llm = FakeLlm(pieces=("Aaaaaaaaa. ", "Bbbbbbbbb. ", "Ccccccccc. ", "Ddddddddd."))
+    io = Stopped()
+    deps = make_deps(tmp_path, llm=llm, tts=tts, synthesis_ahead_seconds=1.0)
+    turn = asyncio.create_task(run(deps, io=io))
+    await asyncio.sleep(0.2)
+    # Nothing is being sent, so synthesis stops once a second is waiting.
+    assert 2 <= len(tts.spoken) < 4
+
+    io.release.set()
+    await turn
+    assert len(tts.spoken) == 4
+    assert io.audio_bytes == 40 * 4800
+
+
+async def test_a_reply_that_does_not_start_in_time_is_a_failure(tmp_path):
+    # The model never produces anything.
+    llm = FakeLlm(gate=asyncio.Event())
+    deps = make_deps(tmp_path, llm=llm, first_audio_seconds=0.1)
+    io = await asyncio.wait_for(run(deps), timeout=2)
+
+    assert io.steps == ["capture_done", "fail"]
+    assert io.failure is ErrorCode.LLM_FAILED
+
+
+async def test_text_without_audio_in_time_is_a_synthesis_failure(tmp_path):
+    class Stuck(FakeTts):
+        async def synthesize(self, text, sample_rate):
+            await asyncio.sleep(30)
+            yield b""
+
+    deps = make_deps(tmp_path, tts=Stuck(), first_audio_seconds=0.2)
+    io = await asyncio.wait_for(run(deps), timeout=2)
+
+    assert io.steps == ["capture_done", "fail"]
+    assert io.failure is ErrorCode.TTS_FAILED

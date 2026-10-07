@@ -10,7 +10,9 @@
  * default event loop, with a wakeword_event_t as its data. This component
  * only reports what it heard: it does not change the device state. Deciding
  * what a detection means (ignore it while already busy, start a request
- * while idle) belongs to the state machine (app_state.h).
+ * while idle) belongs to the state machine (the state_machine component). It likewise only
+ * reports, as WAKEWORD_LISTENING, when it can no longer hear; showing that
+ * on the screen is the state machine's part.
  *
  * Scores. For every 30 ms of audio the model gives a probability, from 0 to
  * 1, that the phrase has just been said. The detector averages the last few
@@ -38,6 +40,11 @@ ESP_EVENT_DECLARE_BASE(WAKEWORD_EVENT);
 
 enum {
     WAKEWORD_DETECTED,      /* event data: wakeword_event_t */
+    WAKEWORD_LISTENING,     /* whether the device can hear has changed; event
+                               data: a bool. false when the microphone's audio
+                               stops arriving, or the model fails; true when
+                               audio arrives again. Not posted at start: the
+                               result of wakeword_start() says how it began. */
 };
 
 typedef struct {

@@ -70,3 +70,6 @@ persisted user environment, not only in the current shell — see R7 in
   docstrings on public functions and classes; less thorough than firmware.
 - Every measured value that replaces an estimate in these documents is marked
   as measured, with the conditions under which it was taken.
+- **Every test on the device records the chip's temperature.** Read it with
+  the `temp` console command during the test, and add it, with the
+  conditions, to the table in R20 of [KNOWN-ISSUES.md](KNOWN-ISSUES.md).

@@ -199,6 +199,19 @@ void audio_ring_reader_init(audio_ring_reader_t *r, uint32_t back_ms)
     xSemaphoreGive(s_lock);
 }
 
+uint32_t audio_ring_now(void)
+{
+    if (s_lock == NULL) {
+        return 0;
+    }
+    /* Under the lock, like every other look at s_head: the capture task
+     * moves it */
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    uint32_t now = s_head;
+    xSemaphoreGive(s_lock);
+    return now;
+}
+
 void audio_ring_reader_init_at(audio_ring_reader_t *r, uint32_t pos)
 {
     if (s_lock == NULL) {

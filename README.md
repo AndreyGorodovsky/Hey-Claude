@@ -4,15 +4,16 @@ A self-contained voice assistant built on an ESP32-S3. Say the wake word, ask a
 question, and hear Claude answer out loud. A small TFT panel shows what the
 device is doing at each moment.
 
-> **Project status: device and server each built, not yet joined.** The
+> **Project status: device and server built, being joined.** The
 > circuit is built on a breadboard. The firmware joins WiFi, records and
 > plays audio, shows its state on the display, and detects the wake word
 > "Hey Claude" on the device. The wake-word model is trained on one
 > speaker's recordings and detects that speaker well; its false detections
 > are not yet measured on the device. The server turns a spoken request
 > into a spoken reply and has been tested from a desktop with synthetic
-> speech. Connecting the two is the next stage. See [STATUS.md](STATUS.md)
-> for the current stage.
+> speech. Connecting the two is under way: the device finds the server and
+> connects to it, and the first spoken conversation is still being
+> debugged. See [STATUS.md](STATUS.md) for the current stage.
 
 ## How it works
 
@@ -29,7 +30,8 @@ device is doing at each moment.
 
 1. The device listens continuously for the wake word, entirely on-device. No
    audio leaves the device until the wake word fires.
-2. After the wake word, captured audio streams to the server as it is spoken.
+2. After the wake word the device plays two short notes to say it is
+   listening. What is said after them streams to the server as it is spoken.
 3. The server transcribes the audio and decides when the speaker has finished,
    then tells the device to stop capturing.
 4. The transcript is appended to the day's conversation and sent to Claude.
@@ -99,7 +101,7 @@ grounds are common.
 | `LRC` | GPIO 16 | Word select |
 | `BCLK` | GPIO 15 | Bit clock |
 | `DIN` | GPIO 7 | Audio data, board to amplifier |
-| `GAIN` | Not connected | Unconnected sets 9 dB |
+| `GAIN` | Not connected | Unconnected sets 9 dB. Tied to ground it sets 12 dB, and to ground through 100 kΩ, 15 dB: the hardware way to make replies louder (KNOWN-ISSUES, Caveats) |
 | `SD` | GPIO 17 | Enable: high = on, low = off |
 | `GND` | Ground | |
 | `Vin` | Board 5 V pin | **5 V, not 3.3 V.** Dedicated lead, not the shared rail |
@@ -184,15 +186,16 @@ background hiss audible; the printed level is that of the unboosted recording.
 `audio tone 100` is loud and draws the most supply current the device will
 ever need, which makes it the test for a weak supply or cable.
 
-The display shows the device's state. Until the real triggers exist (wake
-word, server), states can be set from the console, and the panel checked:
+The display shows the device's state, which the firmware's state machine
+alone decides. The console can read it, and check the panel:
 
 ```
-state                     print the current state
-state set idle            show a state; setup and error take a detail text
-state cycle 2             step through every state, 2 s each
-state stop                stop cycling
+state                     print the current state, with its reason if it
+                          has one
 display test 30           test pattern for 30 s, then frame timing
+display preview error "Speech synthesis failed" 10
+                          draw a state's screen for 10 s; the state itself
+                          is not changed
 ```
 
 The test pattern draws a 1-pixel frame in a different colour on each edge:
@@ -201,9 +204,8 @@ drawing offset is wrong; stray or wrongly coloured pixels mean the SPI clock
 is too fast for the wiring.
 
 Wake-word detection runs from boot. A detection while the state is `idle`
-shows `capturing` for 3 s; without a server the device does not reach `idle`
-by itself, so set it first with `state set idle`. The `wake` command shows
-and tunes detection:
+starts a request to the server; the device is `idle` only while it is
+connected to one. The `wake` command shows and tunes detection:
 
 ```
 wake                      detections, rate per hour, scores, model timing
@@ -211,6 +213,21 @@ wake reset                clear the counters to start a measurement
 wake log on               print the highest score once a second
 wake cutoff 0.95          change the detection threshold until reboot
 ```
+
+Two more commands report on the device itself:
+
+```
+link                      WiFi and server connection: up or not, where the
+                          server was found, why the last connection ended
+temp                      temperature inside the chip
+mem                       free memory, and each task's unused stack
+```
+
+`link` tells "the device cannot find the server" from "the server does not
+answer" when the screen shows `connecting` or `error`. `temp` reads the
+chip's own sensor, which runs hotter than the chip's surface; about 55 °C
+with the device idle is normal. Every test on the device notes it
+(KNOWN-ISSUES R20).
 
 A false-accept measurement is `wake reset`, then hours of background sound
 with nobody saying the wake phrase, then `wake`: every detection counted is
@@ -275,7 +292,10 @@ firmware/          ESP-IDF application for the ESP32-S3
                    amplifier), audio_ring (shared microphone audio),
                    wakeword (detection and its model), app_state (device
                    state), display (panel, backlight, animations), board
-                   (pin map)
+                   (pin map), server_link (server connection), player
+                   (reply playback), state_machine (what the device does
+                   next, and the request upload), protocol (the
+                   protocol's numbers)
   tools/           Standalone hardware test programs
 server/            Python server
   transport/       WebSocket endpoint, device authentication, connections

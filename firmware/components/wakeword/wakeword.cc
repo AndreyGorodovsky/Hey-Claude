@@ -436,6 +436,16 @@ static bool handle_slice(detector_t *d, const FrontendOutput *f, uint32_t end_po
     return true;
 }
 
+/* Announces that the device has stopped, or resumed, hearing. The state
+ * machine shows it, so that the screen never says "waiting for the wake
+ * word" on a device that cannot hear one. Runs in the detection task. */
+static void post_listening(bool listening)
+{
+    /* No wait: if the event loop's queue is full the announcement is lost,
+     * which the log line beside each call still records */
+    esp_event_post(WAKEWORD_EVENT, WAKEWORD_LISTENING, &listening, sizeof(listening), 0);
+}
+
 static void detect_task(void *arg)
 {
     detector_t d = {};
@@ -453,10 +463,15 @@ static void detect_task(void *arg)
             if (!stalled) {
                 ESP_LOGE(TAG, "no audio: %s", esp_err_to_name(err));
                 stalled = true;
+                post_listening(false);
             }
             continue;   /* the read itself waited READ_TIMEOUT_MS */
         }
-        stalled = false;
+        if (stalled) {
+            ESP_LOGI(TAG, "audio is arriving again");
+            stalled = false;
+            post_listening(true);
+        }
         if (dropped > 0) {
             taskENTER_CRITICAL(&s_lock);
             s_count.dropped += dropped;
@@ -481,6 +496,7 @@ static void detect_task(void *arg)
                 /* A model that has failed once will fail again; stopping is
                  * clearer than logging the same error every 30 ms */
                 ESP_LOGE(TAG, "model failed to run; wake word detection stopped");
+                post_listening(false);
                 taskENTER_CRITICAL(&s_lock);
                 s_stopped = true;
                 taskEXIT_CRITICAL(&s_lock);

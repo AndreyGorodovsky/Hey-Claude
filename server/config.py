@@ -89,7 +89,9 @@ class Settings(BaseSettings):
 
     stt_model: str = "nova-3"
     stt_language: str = "en"
-    tts_model: str = "aura-2-thalia-en"
+    #: The voice. Chosen by ear on 2026-10-06 from eleven of the provider's
+    #: English voices, for the least harsh "s".
+    tts_model: str = "aura-2-luna-en"
 
     #: Silence after speech that counts as the end of the utterance. Shorter
     #: answers sooner but cuts off a speaker who pauses mid-sentence.

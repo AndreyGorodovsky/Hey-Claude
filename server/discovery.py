@@ -18,6 +18,12 @@ from server.protocol import MDNS_SERVICE_TYPE, PROTOCOL_VERSION, STREAM_PATH
 log = logging.getLogger(__name__)
 
 _INSTANCE_NAME = "Hey Claude Server"
+
+#: The host name the service is registered under. Its own, not the
+#: machine's: a device that asks for this name's address is then answered
+#: only from here, with the one address chosen below, and never by the
+#: operating system with whichever of the machine's addresses it prefers.
+_HOST_NAME = "hey-claude-server.local."
 _ANY_ADDRESS = "0.0.0.0"
 
 
@@ -82,7 +88,7 @@ class ServiceAdvertiser:
                 port=self._port,
                 parsed_addresses=addresses,
                 properties={"path": STREAM_PATH, "protocol": str(PROTOCOL_VERSION)},
-                server=f"{socket.gethostname()}.local.",
+                server=_HOST_NAME,
             )
             zeroconf = AsyncZeroconf()
             await zeroconf.async_register_service(info)

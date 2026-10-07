@@ -13,6 +13,12 @@ Each input must be a 16 kHz, mono, 16-bit WAV file; several files make
 several turns of one conversation. Recordings and replies are personal data:
 keep them outside the repository.
 
+Two options imitate the device more closely. ``--preroll-ms`` sends the
+start of each recording in one burst, as the device does with the audio it
+already holds when the request begins. ``--drop-mid-turn`` closes the
+connection once the server has stopped the capture, as a device does when
+it loses power or gives up.
+
 The device token is read from DEVICE_TOKENS in the server's configuration,
 or from the HEY_CLAUDE_DEVICE_TOKEN environment variable. It is never taken
 from the command line, where it would be kept in the shell's history.
@@ -79,16 +85,28 @@ class Reply:
     done_at: float | None = None
     sample_rate: int = 0
     audio: bytearray = field(default_factory=bytearray)
+    #: The most reply audio held at once that had not yet been due to play,
+    #: in seconds: what a device would need room for.
+    furthest_ahead: float = 0.0
     error: str | None = None
+    dropped: bool = False
 
 
 async def _send_request(
-    ws: ClientConnection, pcm: bytes, stop: asyncio.Event
+    ws: ClientConnection, pcm: bytes, stop: asyncio.Event, preroll_frames: int
 ) -> None:
-    """Send the recording, then silence, in real time, until told to stop."""
+    """Send the recording, then silence, in real time, until told to stop.
+
+    The first ``preroll_frames`` frames go at once, with no pacing.
+    """
     silence = bytes(_FRAME_BYTES)
-    started = time.monotonic()
     sent = 0
+    while sent < preroll_frames and not stop.is_set():
+        frame = pcm[sent * _FRAME_BYTES : (sent + 1) * _FRAME_BYTES] or silence
+        await ws.send(frame.ljust(_FRAME_BYTES, b"\x00"))
+        sent += 1
+    # The burst is audio from before now: the clock starts that far back.
+    started = time.monotonic() - sent * _FRAME_SECONDS
     while not stop.is_set():
         frame = pcm[sent * _FRAME_BYTES : (sent + 1) * _FRAME_BYTES] or silence
         # The last frame of the recording may be short; pad it.
@@ -99,7 +117,9 @@ async def _send_request(
         await asyncio.sleep(max(0.0, started + sent * _FRAME_SECONDS - time.monotonic()))
 
 
-async def request(ws: ClientConnection, pcm: bytes) -> Reply:
+async def request(
+    ws: ClientConnection, pcm: bytes, *, preroll_ms: int = 0, drop: bool = False
+) -> Reply:
     """Make one request and collect its reply."""
     result = Reply(
         speech_seconds=len(pcm) / SAMPLE_WIDTH_BYTES / CAPTURE_SAMPLE_RATE
@@ -107,7 +127,9 @@ async def request(ws: ClientConnection, pcm: bytes) -> Reply:
     stop = asyncio.Event()
     await ws.send(json.dumps({"type": "utterance_start"}))
     started = time.monotonic()
-    sender = asyncio.create_task(_send_request(ws, pcm, stop))
+    sender = asyncio.create_task(
+        _send_request(ws, pcm, stop, preroll_ms // CAPTURE_FRAME_MS)
+    )
     try:
         while True:
             async with asyncio.timeout(_RECEIVE_TIMEOUT):
@@ -117,12 +139,22 @@ async def request(ws: ClientConnection, pcm: bytes) -> Reply:
                 if result.first_audio_at is None:
                     result.first_audio_at = at
                 result.audio += message
+                # A device starts playing at the first chunk, so by now it
+                # has played this long; the rest is still in its buffer.
+                held = len(result.audio) / SAMPLE_WIDTH_BYTES / result.sample_rate
+                played = at - result.first_audio_at
+                result.furthest_ahead = max(result.furthest_ahead, held - played)
                 continue
             event = json.loads(message)
             kind = event["type"]
             if kind == "stop_capture":
                 result.stop_capture_at = at
                 stop.set()
+                if drop:
+                    result.dropped = True
+                    result.done_at = at
+                    await ws.close()
+                    return result
             elif kind == "reply_start":
                 result.sample_rate = event["sample_rate"]
             elif kind == "reply_end":
@@ -151,6 +183,9 @@ def report(name: str, result: Reply) -> None:
     if result.stop_capture_at is not None:
         wait = result.stop_capture_at - result.speech_seconds
         print(f"  end of speech detected  {wait:6.2f} s after the speaker stopped")
+    if result.dropped:
+        print("  connection dropped here, on purpose")
+        return
     if result.first_audio_at is None:
         print("  no reply audio (nothing was heard)")
         return
@@ -160,6 +195,7 @@ def report(name: str, result: Reply) -> None:
     )
     seconds = len(result.audio) / SAMPLE_WIDTH_BYTES / result.sample_rate
     print(f"  reply length            {seconds:6.2f} s at {result.sample_rate} Hz")
+    print(f"  most audio held at once {result.furthest_ahead:6.2f} s ahead of playback")
     print(
         f"  reply fully received    "
         f"{result.done_at - result.speech_seconds:6.2f} s after the speaker stopped"
@@ -240,8 +276,12 @@ async def main_async(args: argparse.Namespace) -> int:
                 raise SystemExit(f"expected ready, got {ready.get('type')!r}")
             print(f"connected, protocol {ready.get('protocol')}")
             for path, pcm in requests:
-                result = await request(ws, pcm)
+                result = await request(
+                    ws, pcm, preroll_ms=args.preroll_ms, drop=args.drop_mid_turn
+                )
                 report(path.name, result)
+                if result.dropped:
+                    break
                 failed = failed or result.error is not None
                 if args.out_dir and result.audio:
                     out = args.out_dir / f"{path.stem}.reply.wav"
@@ -264,6 +304,17 @@ def main() -> None:
         "--discover", action="store_true", help="find the server by mDNS"
     )
     parser.add_argument("--device-id", default="desktop-client")
+    parser.add_argument(
+        "--preroll-ms",
+        type=int,
+        default=0,
+        help="send this much of each recording at once, before pacing begins",
+    )
+    parser.add_argument(
+        "--drop-mid-turn",
+        action="store_true",
+        help="close the connection when the server stops the capture",
+    )
     sys.exit(asyncio.run(main_async(parser.parse_args())))
 
 

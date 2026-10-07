@@ -77,7 +77,10 @@ suspect, not the code. Baseline current and the peak under load are recorded
 before and during stage 2, per [docs/BRINGUP.md](docs/BRINGUP.md). The
 baseline is 0.10-0.14 A with the rail at 4.93 V or above. Measured in stage 2
 with a full-scale tone and WiFi connected: 0.556 A average at 4.831 V, with no
-reset, on a PC USB 3.0 port.
+reset, on a PC USB 3.0 port. Seen in stage 6, on 2026-10-07, on the
+breadboard and USB-powered: a spoken reply of 16.4 s played at the full
+level while the device stayed connected, with no reset. No current or
+voltage was read during it.
 
 A breadboard compounds this. Contact resistance and shared rails not intended
 for 1 A transients can themselves cause the voltage drop, making the bench the
@@ -319,13 +322,35 @@ playback, each sentence would be requested as the previous one finishes
 playing, leaving a silence between sentences as long as the synthesiser
 takes to answer.
 
-*Mitigation:* not built yet. Decided on 2026-10-06: the server will send
-at most a short, set time ahead of playback, so that the device needs one
-small fixed buffer whatever the length of the reply. That needs synthesis
-to run ahead of sending, with a bounded queue between the two. It is built
-in stage 6, with the device's playback. The alternative, a device that
+*Mitigation:* built in stage 6. The server sends at most 2 s of audio ahead
+of playback, and the device has room for 4 s (384 KB of PSRAM set aside,
+enough at any rate the amplifier accepts). Synthesis runs ahead of sending,
+so that pacing leaves no gap between sentences. Measured on 2026-10-06 with
+the desktop client and synthetic speech: a 62 s reply was delivered over
+about 60 s, never more than 2.05 s ahead. The alternative, a device that
 holds the whole reply, was rejected: it needs megabytes of PSRAM and a hard
 cap on reply length.
+
+What remains of the risk: the server has no report of what the device has
+played. It assumes playback starts with the first chunk and never pauses.
+A device that starts late or stalls falls behind that assumption by as
+much, which is what the device's second 2 s is for. If that is not enough
+the device closes the connection.
+
+On the device, 2026-10-06, on the breadboard: a reply of 33 s held at
+most 2.08 s of the buffer's 4 s at once and never ran dry. The device logs
+these figures for every reply, which is the evidence the 2 s and 4 s rest
+on. A pause inside a reply was first counted by the server as playback,
+which would have let the audio after it arrive further ahead than the
+buffer holds; found in review and corrected before it was seen on the
+device.
+
+A network stall longer than what the device holds is not recovered from
+within a reply: the device plays silence while the server's count runs on,
+and the gap stays for the rest of the reply, each further stall adding to
+it against the same 2 s of margin. Beyond that margin the device abandons
+the turn. A report of playback from the device would close this; it is
+left for a later protocol version, if the logged figures call for it.
 
 ### R18 — A pause between sentences ends the request
 
@@ -354,10 +379,95 @@ About half is Claude's time to its first text, with thinking on at low
 effort; the rest is the wait for the first sentence to be complete and
 then synthesised. The device's own delays come on top.
 
-*Mitigation:* stage 7. The server logs both figures for every turn. Known
-levers: synthesising the first clause instead of the first whole sentence,
+On the device, 2026-10-06, on the breadboard, five short questions in a
+synthetic voice, timed by the device's own log:
+
+| Turn | Wake word to first sound | `stop_capture` to first sound | Of which the server (its own figure) |
+| --- | --- | --- | --- |
+| 1 | 6.53 s | 3.09 s | 3.03 s |
+| 2 | 5.94 s | 2.34 s | 2.27 s |
+| 3 | 6.73 s | 2.99 s | 2.91 s |
+| 4 | 6.67 s | 3.26 s | 3.17 s |
+| 5 | 5.52 s | 2.24 s | 2.17 s |
+
+The first column includes the time taken to speak the question, about
+3.5 s each. The second is what the person waits through: 2.2 to 3.3 s,
+2.8 s on average. The device adds about 0.07 s to the server's own figure,
+most of it the 80 ms it gathers before starting to play; the rest of the
+wait is the server's. Within the server, Claude's first text took 1.4 to
+2.3 s and the first sentence's synthesis 0.7 to 1.3 s.
+
+Three requests spoken by a person the same day gave 2.50, 2.91 and 2.94 s
+by the server's figure, in the same range, and eight more in one run gave
+2.4 to 3.2 s by the device's log, 2.7 s on average.
+
+In that run the first request after the server started failed: the
+server's first connection to the synthesiser timed out after its 5 s
+limit, and the turn ended with `tts_failed`. A connection opened ahead of
+need, when the server starts or a request begins, would remove that
+failure and shorten the first reply's wait as well; it is one of the
+levers below. A second try at connecting would also have saved the turn.
+
+The synthetic figures flatter the system in one respect. A synthetic recording
+ends in silence that is part of the recording, so `stop_capture` arrived
+as the playback of the question ended. After a person stops speaking, the
+server first waits out the 400 ms of silence that marks the end, which
+comes on top.
+
+*Mitigation:* stage 7. The server logs its figures for every turn, and the
+device logs each change of phase with its time, as `phase [state]`: `chime`
+is the wake word, `capturing` the start of the request, `awaiting` its
+end and `playing` the reply's first sound. Known levers: synthesising the first clause instead of the first whole sentence,
 keeping a connection to the synthesiser warm, and requesting the next
-sentence while the current one is being sent.
+sentence while the current one is being sent. One more, not looked into:
+the device announces a request only when its chime is over, 220 ms after
+the wake word, and the server opens its speech-to-text connection on that
+announcement. Announcing at the wake word and sending audio from the end
+of the chime would let that connection open while the chime plays. It
+would move the server's capture limits by the same 220 ms and change the
+wording of `utterance_start` in [docs/PROTOCOL.md](docs/PROTOCOL.md).
+
+### R20 — Chip temperature
+
+The ESP32-S3 runs warm in this firmware: its processor never idles, since
+wake-word detection runs all the time, and from stage 6 its radio never
+sleeps either, WiFi power saving being off. The chip was noticed to be hot
+to the touch on 2026-10-06, though a finger could be kept on it for ten
+seconds.
+
+The chip has a temperature sensor of its own, read with the `temp` console
+command. It measures the silicon, which is hotter than the chip's surface.
+The chip is rated for surrounding air up to 85 °C; the sensor is accurate
+to a few degrees.
+
+**Every test on the device records the chip's temperature**, with what the
+device was doing, how long it had been on, and the room if it is unusual.
+The record:
+
+| Date | Conditions | Inside the chip |
+| --- | --- | --- |
+| 2026-10-06 | Breadboard, USB-powered, open air. Idle: WiFi joined with power saving off, wake-word detection running, looking for a server that was not running. Read 15, 45, 75 and 105 s after power-on, the board already warm from earlier use | 51.5, 53.5, 54.5, 54.5 °C |
+| 2026-10-06 | Same bench. Connected to the server and idle, about 20 min after the row above, during the connection tests (server stopped and restarted, device replaced, token refused) | 54.5 to 56.5 °C |
+| 2026-10-06 | Same bench. While playing a reply of about 55 s at the fixed 40 % level, read three times 12 s apart, and once more just after it ended | 57.5 °C each time |
+| 2026-10-06 | Same bench, after reflashing. Idle and connected, about a minute after power-on; during a reply of 33 s; just after it; and a minute later, idle | 55.5, 57.5, 57.5, 56.5 °C |
+| 2026-10-06 | Same bench, after reflashing again. Half a minute after power-on, looking for a server that was not running | 54.5 °C |
+| 2026-10-06 | Same bench, playback level 60 %. Idle and connected, before five short turns in a row; and just after them | 56.5, 57.5 °C |
+| 2026-10-06 | Same bench, playback level 100 %. Before and after three spoken turns, the longest reply 15.6 s | 57.5, 57.5 °C |
+| 2026-10-06 | Same bench, playback level 100 %, late evening, after hours switched off. Just after power-on; and after nine spoken turns in four and a half minutes | 46.5, 52.5 °C |
+| 2026-10-07 | Same bench, playback level 100 %, with the chime. Connected and idle, 40 s after power-on and 90 s later; after three spoken turns; and during a reply of 16.4 s, the fifth turn | 49.5, 51.5, 52.5, 53.5 °C |
+| 2026-10-07 | Same bench, after reflashing. Connected and idle: half a minute and two minutes after power-on with no server running, then twelve minutes after power-on, just before one spoken turn | 52.5, 54.5, 55.5 °C |
+
+The readings during replies were taken at playback levels of 40 % and
+60 %, but for the last, of 2026-10-07, at the present 100 %.
+
+Not yet measured: after hours of running; inside an enclosure, which will
+be warmer than open air; and with WiFi power saving on, for comparison.
+
+*Mitigation:* none needed at these figures. If later readings approach
+70 °C, the first things to try are WiFi power saving back on, with the
+send limit that stage 6 raised left as it is, and a lower processor speed
+outside conversations. An enclosure is to be designed with the reading in
+hand.
 
 ## Resolved
 
@@ -433,17 +543,76 @@ sentence while the current one is being sent.
 - **`audio loop` playback includes audible hiss.** The test boosts quiet
   recordings by up to 36 dB so that speech can be heard, which raises the
   microphone's own noise with it. The recorded audio itself is not boosted.
-- **Wake-word detections show only from `IDLE`.** Until the server
-  connection exists the device does not reach `IDLE` by itself, so it is
-  set with `state set idle` before testing. The stand-in that reacts to
-  detections is replaced in stage 6. It reads the state and then changes
-  it, so a `state set` typed at the same instant can be overwritten, and it
-  changes the state from inside the event loop that announces the change.
-  Both are harmless for a test aid and are not to be copied into the state
-  machine.
-- **The `state` console commands set the state directly.** They stand in for
-  the state machine built in stage 6 and would conflict with it; stage 6
-  replaces them.
+- **The wake word works only with a server.** From stage 6 the device
+  acts on it only in `IDLE`, which it reaches only while connected. The
+  wake-word counters of the `wake` command count detections in any state.
+- **No state can be set from the console.** The `state` command only reads,
+  since the state machine is the state's one writer. To look at a state's
+  screen, `display preview <state>` draws it for a few seconds and leaves
+  the state alone. It has been run but the panel was not looked at while
+  it ran.
+- **The console's audio tests and a reply share the amplifier.** `audio
+  tone` or `audio loop` typed while a reply is playing would disturb both.
+- **Speak after the chime.** The device plays two notes when it
+  hears the wake word and starts listening when they end, 220 ms after
+  the wake word as measured. Words spoken before that are not sent. The
+  sound's level, 30 % of full scale, and its length were set by ear in one
+  sitting and have no control.
+- **A reply can pause briefly between sentences.** Seen on 2026-10-07: a
+  reply of 16.4 s ran out of audio three times, for 0.4 s in all, while
+  the next sentence was on its way. Replies of 9.6 s and less the same day
+  did not, nor did one of 33 s the day before. Not looked into; it
+  belongs with the latency work of stage 7 (R19).
+- **Playback has no volume control.** Reply audio is played at the level
+  the server sends it, until stage 8. At 40 % and at 60 % of that level a
+  reply was too quiet at arm's length; at 100 % it is a little quiet, as
+  the next item says.
+- **Replies are a little quiet.** Heard on 2026-10-06 at arm's length on
+  the breadboard, with playback at its full level. The voice in use,
+  `aura-2-luna-en`, was chosen by ear for its "s": the voice first used
+  had a harsh one, in the synthesised audio itself, the same in a headset
+  as on the device. The chosen voice peaks about 6 dB lower than that one
+  (-8.8 dBFS against -1.9 dBFS on the same sentence). Ways to make it
+  louder, none of them done yet:
+  - *The amplifier's gain pin, in hardware.* The MAX98357A's `GAIN` pin is
+    unconnected, which sets 9 dB. Tied straight to ground it sets 12 dB,
+    and to ground through a 100 kΩ resistor, 15 dB: 3 or 6 dB more with no
+    change to the firmware. It raises the amplifier's peak current with
+    it, so `audio tone 100` is to be repeated afterwards as the supply
+    check (R2).
+  - *A boost in the firmware.* Multiply the reply's samples before playing
+    them. This voice leaves almost 9 dB unused below full scale, so about
+    6 dB can be added with little or no clipping; more than that needs a
+    limiter, which turns loud peaks down instead of letting them distort.
+    No hardware change; noise in the audio rises with it.
+  - *Levelling on the server.* Scale each reply so that its loudest
+    sample sits just below full scale, whatever the voice. It gives every
+    voice the same loudness and keeps the firmware as it is, but the
+    sentences of one reply are synthesised separately and would each need
+    the same factor.
+  - *Another voice.* `aura-2-andromeda-en` was also found clear, peaks
+    about 3 dB higher than the chosen one, and speaks faster.
+  Real volume control is stage 8; whichever of these is used sets the
+  loudest level that control can reach.
+- **English only.** Speech-to-text is set to English and the synthesiser's
+  voice is English. A request in another language is not recognised: the
+  device listens, the server finds no words, and the device returns to
+  idle with no reply. Observed on 2026-10-06 with a request in Russian.
+- **The `temp` and `mem` commands are diagnostic aids in files of their
+  own**, `firmware/main/temp_cmd.c` and `mem_cmd.c`, each of which says
+  what to delete to remove it.
+- **A send to the server can block for several seconds on a stalled
+  network.** The WebSocket client applies its send timeout more than once
+  within one send. The upload then falls behind the microphone, and beyond
+  2 s loses audio; it logs how much at the end of the request.
+- **Nothing in the firmware can be stopped once started.** A refused
+  device parks its connection task until reboot, and neither the server link nor
+  the player has a stop. An over-the-air update, if adopted in stage 8,
+  will want the turn machinery stopped with WiFi kept.
+- **A device that cannot hear from the very first second may show `IDLE`.**
+  The wake-word component announces a dead microphone about a second after
+  it starts; the state machine starts listening for that announcement a
+  moment later in the boot sequence, and would miss one made in between.
 - **The screen is dark for about two seconds after reset.** The panel's
   start-up sequence has required pauses of about a second, and the
   backlight is lit only once the first frame is on the panel.

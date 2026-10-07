@@ -24,13 +24,17 @@ made during the feasibility review and are binding unless explicitly revisited.
 
 | Component | Responsibility |
 | --- | --- |
-| `main` | Startup order, boot banner, serial console and its commands (settings, audio, state, display and wake-word tests), and until stage 6 a stand-in reaction to the wake word |
+| `main` | Startup order, boot banner, serial console and its commands: settings, audio, display and wake-word tests, and read-outs of the state, the server connection, memory and chip temperature |
 | `app_config` | Settings stored in NVS: loading the running configuration, validating and storing edits. No user interface of its own |
 | `net` | WiFi station: joining, reconnecting with backoff, readable failure reasons |
 | `audio` | Microphone capture and amplifier playback over I2S: plain 16-bit samples in and out, no buffering or tasks of its own |
 | `audio_ring` | The microphone's only reader: a capture task filling a ring buffer of the last 2 s, from which every listener reads at its own position |
 | `wakeword` | On-device wake-word detection with a microWakeWord model; announces detections and decides nothing else |
 | `app_state` | The device state and its detail text: stored, and announced on change. Decides no transitions |
+| `state_machine` | The state machine: the one place that decides what the device does next, and the only writer of the state. Also runs the request upload |
+| `server_link` | The WebSocket connection to the server: finds it by mDNS, connects, authenticates, reconnects with backoff, and turns the server's messages into reports |
+| `player` | Reply playback: a buffer for 4 s of reply audio and the task that plays it |
+| `protocol` | The protocol's numbers as the firmware uses them, in one header. A test on the server side holds it to the server's own |
 | `display` | The NV3007 panel, its backlight, and what is drawn for each state, from a single task that is the only user of LVGL |
 | `board` | The verified pin map and panel geometry, the single source of both |
 
@@ -47,20 +51,48 @@ subscribe to the standard `IP_EVENT_STA_GOT_IP` and
 default event loop, and the display follows them without being called.
 `wakeword` announces each detection as `WAKEWORD_DETECTED`, carrying the
 position in the audio stream where the phrase ended.
-`app_state` has exactly one writer: the state machine built in stage 6.
-Components that detect something (the wake word, a server message, a lost
-connection) report it to the state machine and never set states themselves;
-otherwise two tasks setting states at once would leave the screen on
-whichever came last. Until stage 6, the boot sequence, the console's
-`state` command and a stand-in that shows `CAPTURING` for 3 s after a
-detection in `IDLE` take its place.
+`app_state` has exactly one writer: the state machine, `state_machine`. The boot
+sequence sets the first states and then hands over. Components that detect
+something (the wake word, a server message, a lost connection) report it
+and never set states themselves; otherwise two tasks setting states at once
+would leave the screen on whichever came last. The console can read the
+state but not set it. To look at a state's screen without bringing the
+state about, the console's `display preview` draws any state for a few
+seconds; it changes what is drawn and leaves the state alone.
 
-The state machine must also learn when the device can no longer hear: the
-wake-word model failing, the microphone stalling, or detection failing to
-start. Today these are logged and shown by the `wake` command only. Stage 6
-adds a "listening failed" event from `wakeword`, which the state machine
-turns into `ERROR` with a reason, so the screen never shows `IDLE` on a
-device that cannot hear.
+`server_link` and `player` report to the state machine by calling a function
+given to them at start, and `server_link` hands reply audio on the same way. They
+do not use the event loop for this: each report has one receiver, and a
+call cannot be lost on the way or arrive out of order. Neither component
+knows of `state_machine`; the boot sequence joins the three. Wake-word detection
+keeps its events, which the `wake` console command also relies on.
+
+Reply audio passes through `state_machine` on its way to `player`, and is let
+through only while a turn is under way. Audio arriving at any other time,
+such as the tail of a turn the device has already given up, never reaches
+the speaker.
+
+`state_machine` handles everything in one task, from one queue, one report at a
+time, so no two decisions overlap and its variables need no lock. It never
+waits on the network: everything the device sends during a turn is sent by
+the upload task. Time limits use the same queue: the task waits for the
+next report only until the current deadline, and a wait that runs out is
+the deadline passing.
+
+The eight device states are chosen for what a person needs to see. The
+state machine needs finer steps, so it keeps its own, the phase, and shows
+each phase as one of the states: waiting for a reply and holding its first
+audio both show `THINKING`; playing and playing out both show `SPEAKING`;
+a failure shown for a few seconds and a fault that stays both show
+`ERROR`. The wording for every reason is in one table in `state_machine`, sized to
+the panel's detail line.
+
+The state machine also learns when the device can no longer hear.
+`wakeword` announces `WAKEWORD_LISTENING` when the microphone's audio stops
+or resumes, or the model fails, and the boot sequence reports whether
+listening and playback started at all. A device that cannot hear or speak
+shows `ERROR` with the reason and stays there, so the screen never shows
+`IDLE` on a device that cannot hear.
 
 Every boot logs the firmware version, flash size, free internal RAM and PSRAM,
 and the reset reason. Brownout and power-glitch resets are logged as errors,
@@ -90,10 +122,10 @@ flash layout. Flash runs in QIO mode at 80 MHz; PSRAM is octal at 80 MHz.
 | `SETUP` | WiFi settings missing or rejected at boot | Setup needed, with the reason |
 | `CONNECTING` | Boot complete | Connecting indicator |
 | `IDLE` | Server session ready | Waiting for wake word |
-| `CAPTURING` | Wake word detected | Listening |
+| `CAPTURING` | Wake word detected while `IDLE` | Listening |
 | `THINKING` | Server sends `stop_capture` | Waiting for response |
-| `SPEAKING` | First reply audio chunk arrives | Playing |
-| `ERROR` | Transport or server error | Error indicator |
+| `SPEAKING` | The first sound of the reply reaches the speaker | Playing |
+| `ERROR` | A failed turn, a lost connection, or a device that cannot hear or speak | Error indicator |
 
 What follows `ERROR` depends on its cause. After an `error` message from
 the server, which ends one turn and leaves the connection open, the device
@@ -102,14 +134,46 @@ returns to `CONNECTING` after a backoff. `SETUP` does not retry:
 retrying cannot fix missing or wrong settings, so it stays until settings
 are entered and the device is rebooted. Every other transition is driven
 either by local audio events or by server messages. `SETUP` and `ERROR`
-carry a short detail text naming the cause; no other state does.
+carry a short detail text naming the cause, and `CONNECTING` carries one
+saying why the last attempt failed; no other state has one. The
+wording is the device's own, chosen by cause and sized for the panel; the
+sentence in the server's `error` message goes to the log.
+
+`SETUP` is also where a device goes whose identifier and token the server
+refuses: retrying cannot fix that either.
+
+The device gives up on a turn by itself in four cases: 15 s of capture
+with no `stop_capture`, 40 s of `THINKING` with no reply, 40 s of a reply
+under way with no audio arriving, and a message that does not fit the
+state it is in. In each it closes the connection, which is how the server
+learns of it (docs/PROTOCOL.md, rule 6), shows `ERROR` for 4 s, and
+reconnects. Each of the three times is longer than the server's own limit
+for the same wait, so that the server's `error` arrives first; the figures
+are in [docs/PROTOCOL.md](docs/PROTOCOL.md). After a reply, wake-word
+detections are ignored for 0.7 s, so that the reply's last echoes cannot
+start a request.
+
+`CAPTURING` opens with a chime: two short rising notes that say
+the wake word was heard. The screen changes with the sound, and the
+request starts when the sound is over, so the device is not yet listening
+while it plays. That order is deliberate. The person has a signal to wait
+for before speaking, and the microphone's copy of the sound never reaches
+speech recognition. The cost is that words spoken during the sound are
+not sent. Measured on the breadboard on 2026-10-07, over five spoken
+turns: the request began 220 ms after the end of the wake word each time.
+If the sound cannot be played, the request starts all the same.
+
+Losing a working connection is shown as `ERROR` with the reason for a few
+seconds. While there is no server, the screen rests on `CONNECTING`, with
+the reason the last attempt failed under it; a failed attempt changes that
+line and nothing else.
 
 ### Task and core allocation
 
 | Core | Tasks | Rationale |
 | --- | --- | --- |
-| 0 | WiFi and lwIP, WebSocket client, display and LVGL | Network stack jitter is tolerable for rendering |
-| 1 | Audio capture, wake-word inference, audio playback | Hard real-time work isolated from WiFi interrupt load |
+| 0 | WiFi and lwIP, WebSocket client, connection upkeep, state machine, request upload, display and LVGL | Network stack jitter is tolerable for rendering |
+| 1 | Audio capture, wake-word inference, reply playback | Hard real-time work isolated from WiFi interrupt load |
 
 Isolating the audio chain from the WiFi stack is deliberate: I2S DMA underruns
 produce audible artefacts, and WiFi driver interrupt latency is the most likely
@@ -126,7 +190,12 @@ refer here instead of quoting each other's numbers.
 | Default event loop | 20 | 0 | ESP-IDF's; delivers WiFi, state and wake-word events |
 | Capture | 12 | 1 | Reads the microphone into the ring; must never fall 75 ms behind |
 | Audio test tasks | 10 | 1 | Console `audio` commands, short-lived |
+| Player | 10 | 1 | Writes reply audio to the amplifier, which paces it; above the wake word so that a model run cannot delay the speaker |
 | Wake word | 8 | 1 | Features and model every 30 ms; sleeps between |
+| WebSocket client | 7 | 0 | The component's own task, one per connection; receives reply audio and hands it to the player |
+| Upload | 6 | 0 | Reads the ring and sends request frames while capturing; sleeps otherwise |
+| State machine | 5 | 0 | Acts on one event at a time, each in well under a millisecond |
+| Link | 5 | 0 | Looks the server up, connects, and waits for the connection to end |
 | Display | 4 | 0 | LVGL drawing and animation; sleeps between frames |
 | Console | 2 | either | ESP-IDF's REPL; typing must not stall animation or audio |
 | `main` | 1 | 0 | Runs the start-up sequence, then ends |
@@ -142,7 +211,19 @@ priority, so that the I2S interrupts are placed on core 1.
 | LVGL frame buffer (~121 KB) | PSRAM | Too large for internal SRAM. DMA sends it to the panel directly from PSRAM, at no measurable cost (see Display) |
 | Wake-word tensor arena (~28 KB allocated, 25.5 KB used) | Internal SRAM | Inference runs continuously; PSRAM latency would cost frames |
 | Wake-word model copy (~60 KB) | PSRAM | Read-only weights, read through the cache; copied from flash at boot for alignment |
+| Reply buffer (384 KB) | PSRAM | 4 s of reply audio at the highest rate the amplifier accepts; a reply at 24 kHz uses half |
+| Chime samples (6.7 KB) | PSRAM | Computed once at boot and copied into the reply buffer when played; never handed to DMA |
+| WebSocket client buffers (2 x 4 KB) | Internal SRAM | Allocated by the component for each connection |
 | Network TX/RX queues | Internal SRAM | Touched from interrupt context |
+
+Measured on 2026-10-06 with the `mem` console command, on the breadboard,
+connected to the server, after two replies and a lost and restored
+connection: 100 KB of internal RAM free, 56 KB at the lowest since boot,
+and 7.7 MB of PSRAM free. Every task had at least 1.5 KB of its stack
+never used; the tightest were the link task (1580 bytes left of 4096), the
+state machine (1924 of 4096) and the player (1968 of 4096). Not measured:
+the upload task at the moment a send fails, when the WebSocket client's
+error handling runs on its stack, which is why that stack is larger.
 
 ### Audio path
 
@@ -180,12 +261,53 @@ reader is the capture task in `audio_ring`, on core 1, which copies every
 15 ms chunk into a 2 s ring buffer in PSRAM. Every listener reads from the
 ring at its own position: wake-word detection, the `audio loop` test, and
 from stage 6 the upload. A listener more than 2 s behind skips forward and
-is told how many samples it missed. A listener can also start at an earlier
-position, which is how the upload will begin exactly where the wake word
-ended. A mutex guards the ring; copies are short, so the capture task waits
+is told how many samples it missed. A listener can also start at a
+position noted earlier, which is how the upload begins exactly where the
+chime ended. A mutex guards the ring; copies are short, so the capture task waits
 about a millisecond at most, against the 75 ms the microphone driver
-allows. Stage 6 adds an immediate stop for playback, for error and cancel
-paths that cannot wait for queued audio to finish.
+allows.
+
+**Request upload.** When a request starts, the upload task begins reading
+the ring at the position where the chime ended, which is
+slightly in the past by the time the task has woken. Those first frames go
+out at once; after that it sends one 20 ms frame as each is captured,
+until the server's `stop_capture`.
+
+**Chime.** Two notes of 70 ms, 660 Hz and then 880 Hz, each
+faded in and out over 8 ms so that it does not click, at 30 % of full
+scale. `player` computes them at start, so the repository holds no audio
+file, and plays them through the same path as a reply: the amplifier has
+one user at a time, and that user is the player. What the chime sounds
+like is in one file of its own, `chime.c`. A reply that begins meanwhile
+replaces the sound. The player reports when the sound has left the
+speaker, and the state machine starts the request on that report, or
+after 1 s if none comes.
+
+The 220 ms between the wake word and the request is 140 ms of notes and
+about 80 ms around them. Of the 80 ms, about 20 ms is the amplifier
+waking before the first note, and most of the rest is the silence written
+after the last one, to push it out of the driver's buffers before the
+amplifier is switched off; these two parts are from the code's own
+figures, not measured apart. The silence after the last note is also what
+keeps the note's tail out of the request, so shortening it to save time
+changes what speech recognition hears.
+
+**Reply playback.** `player` holds reply audio between the network, which
+delivers it in bursts, and the amplifier, which takes it at a fixed speed.
+Its buffer has room for 4 s. The server sends at most 2 s ahead of
+playback (see Reply pipeline); the rest is margin for a stall on the
+network. A chunk that does not fit ends the reply and the connection: the
+device does not play a reply with a hole in it. Playback starts once
+80 ms is waiting, so that the first chunks arriving unevenly cause no gap
+in the first word, and can be stopped within about 100 ms for error
+paths. Reply audio is played at the level the server sends it, with no
+reduction: 40 % and then 60 % were tried and found too quiet. Volume
+control arrives in stage 8.
+
+**WiFi power saving is off.** By default the radio sleeps between the
+router's beacons and can hold data back for up to 100 ms each way, which
+is heard as gaps and can stall a send long enough to lose the connection.
+The device is mains-powered, so the saving is not needed.
 
 ### Wake word
 
@@ -421,9 +543,25 @@ sentence in its place. A declined request is not added to the conversation.
 
 The response stream is split into sentences as it arrives. Each completed
 sentence is synthesised and forwarded immediately, so playback begins while the
-reply is still being generated. Sentences are synthesised one after another,
-and the audio is sent as fast as it is produced, in chunks of 40 ms; nothing
-paces it to the speed of playback (KNOWN-ISSUES R17).
+reply is still being generated.
+
+Three things run at once for a reply, each feeding the next: the model
+writes sentences, the synthesiser turns them into audio, and the
+connection sends the audio in chunks of 40 ms. Sending is paced: the
+server never sends more than 2 s ahead of where playback has reached, so
+that the device needs only a small fixed buffer however long the reply.
+The server has no report of playback. It takes playback to begin with the
+first chunk and to continue for as long as the device has audio; when the
+reply itself pauses and the device runs dry, the count starts again from
+the next chunk. Because sending is slower than synthesis, synthesis runs
+ahead: the next sentence is requested while the current one is being sent,
+unless 5 s of audio is already waiting.
+
+Measured on 2026-10-06: with the desktop client and synthetic speech, a
+62 s reply was delivered over about 60 s and never ran more than 2.05 s
+ahead of playback. On the device, which logs these figures for every
+reply, a reply of 33 s held at most 2.08 s of its 4 s at once and never
+ran dry (KNOWN-ISSUES R17).
 
 ## Latency budget
 
@@ -450,6 +588,12 @@ onward add up to 1.0-1.8 s, so the server is over budget before the device
 is involved. The recordings end in silence, which hides the wait for
 end-of-speech detection. Bringing this down is stage 7 (KNOWN-ISSUES R19).
 
+Measured the same day on the device, on the breadboard, over five short
+questions in a synthetic voice: 2.2 to 3.3 s from the server's
+`stop_capture` to the first sound from the speaker, 2.8 s on average. The
+device's own share of that is about 0.07 s, so the budget's 100 ms for
+network and playback start holds, and the whole overrun is the server's.
+
 ## Deployment
 
 The server runs on the local network during development. Transport is plain
@@ -468,6 +612,10 @@ deferred.
 | Two I2S controllers | Shared bus | No contention, and different sample rates per direction |
 | Settings entered through the serial console | Credentials compiled in, or flashed from a local file | Nothing sensitive is ever written to disk on the development machine |
 | mDNS server discovery | Fixed server address | The server machine's LAN address changes; a fixed address would need re-entering each time |
+| Server paces the reply, device holds 4 s | Device holds the whole reply | A minute of audio is 3 MB; a fixed small buffer works for a reply of any length |
+| Reconnecting done by `server_link`, not by the WebSocket client | The client's own automatic reconnect | The server may have moved, so every attempt starts again from the lookup; and the rest of the firmware must hear of every loss |
+| The device closes the connection to abandon a turn | A "cancel" message | One mechanism covers every case of doubt, and the server already cancels a turn whose connection closes |
+| WiFi power saving off | The default, modem sleep | Mains-powered; the radio's sleep delays streamed audio in both directions |
 | OTA-ready partition layout | Single application slot | Costs nothing in 16 MB, and keeps OTA open without a later layout change |
 | Streaming transport | Request and response | Fourfold latency difference; cannot be retrofitted cheaply |
 | Ring buffer shared by position | One queue per listener | Listeners never take audio from each other, and a past position (the wake word's end) can be replayed |

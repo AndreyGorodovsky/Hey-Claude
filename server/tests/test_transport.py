@@ -230,3 +230,73 @@ def test_a_second_connection_replaces_the_first_mid_turn(tmp_path):
                 types, _ = read_turn(second)
 
     assert types == WHOLE_TURN
+
+
+def test_a_long_reply_is_never_sent_more_than_the_lead_ahead(tmp_path):
+    # Two sentences of 1.5 s each: three seconds of audio, a two-second lead.
+    tts = FakeTts(bytes_per_character=7200)
+    llm = FakeLlm(pieces=("Aaaaaaaaa. ", "Bbbbbbbbb."))
+    with client_for(make_deps(tmp_path, llm=llm, tts=tts)) as client:
+        with client.websocket_connect(STREAM_PATH, headers=HEADERS) as ws:
+            ws.receive_json()
+            ask(ws)
+            assert ws.receive_json() == {"type": "stop_capture"}
+            assert ws.receive_json()["type"] == "reply_start"
+            started = time.monotonic()
+            received = 0
+            furthest_ahead = 0.0
+            while True:
+                message = ws.receive()
+                if message.get("bytes") is None:
+                    break
+                received += len(message["bytes"])
+                ahead = received / 48000 - (time.monotonic() - started)
+                furthest_ahead = max(furthest_ahead, ahead)
+            took = time.monotonic() - started
+
+    assert received == 20 * 7200
+    # All three seconds arrive, the last of them about a second in.
+    assert 0.9 < took < 2.0
+    assert furthest_ahead < 2.15
+
+
+def test_a_short_reply_is_not_slowed(tmp_path):
+    with client_for(make_deps(tmp_path)) as client:
+        with client.websocket_connect(STREAM_PATH, headers=HEADERS) as ws:
+            ws.receive_json()
+            started = time.monotonic()
+            ask(ws)
+            assert read_turn(ws)[0] == WHOLE_TURN
+
+    assert time.monotonic() - started < 0.5
+
+
+def test_a_pause_in_the_reply_is_not_counted_as_playback(tmp_path):
+    # A quarter-second sentence, a pause of 1.2 s, then 3.5 s of audio. The
+    # device has played out the first sentence and is silent when the second
+    # arrives, so only 2 s of it may come at once. Counting the pause as
+    # playback would let 3 s through.
+    tts = FakeTts(bytes_per_character=1200, delay=1.2)
+    llm = FakeLlm(pieces=("Aaaaaaaaa. ", "B" * 139 + "."))
+    with client_for(make_deps(tmp_path, llm=llm, tts=tts)) as client:
+        with client.websocket_connect(STREAM_PATH, headers=HEADERS) as ws:
+            ws.receive_json()
+            ask(ws)
+            assert ws.receive_json() == {"type": "stop_capture"}
+            assert ws.receive_json()["type"] == "reply_start"
+            first = 10 * 1200
+            received, resumed, burst = 0, None, 0
+            while True:
+                message = ws.receive()
+                if message.get("bytes") is None:
+                    break
+                received += len(message["bytes"])
+                if received > first:
+                    resumed = resumed or time.monotonic()
+                    if time.monotonic() - resumed < 0.3:
+                        burst = received - first
+
+    assert received == 150 * 1200
+    # What arrived in the first moments after the pause: about 2 s, 96000
+    # bytes, and well short of the 3.5 s that was ready.
+    assert 80_000 < burst < 115_000
