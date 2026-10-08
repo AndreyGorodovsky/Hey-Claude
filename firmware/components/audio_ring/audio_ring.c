@@ -42,6 +42,7 @@
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/semphr.h"
@@ -108,7 +109,25 @@ static void capture_task(void *arg)
 {
     bool failing = false;   /* logs each run of failures once, not every 100 ms */
 
+    /* The task watchdog is a timer in ESP-IDF that restarts the chip when a
+     * task it watches has not checked in for the limit set in
+     * sdkconfig.defaults, 5 s. This task asks to be watched, and checks in
+     * on every pass of its loop. A pass takes 15 ms when the microphone
+     * delivers and about a second when it does not, which the assertion
+     * below holds well inside the limit; so only a task that is truly
+     * stuck, on the lock or inside the driver, stays silent that long. A
+     * restart is the remedy: a device whose capture has stopped cannot
+     * hear the wake word. ESP_ERROR_CHECK: the request fails only if
+     * memory has run out at boot, and a task that went on to check in
+     * without being watched would have ESP-IDF log an error on every
+     * pass, every 15 ms. */
+    _Static_assert((IO_TIMEOUT_MS + RETRY_DELAY_MS) * 2
+                   <= CONFIG_ESP_TASK_WDT_TIMEOUT_S * 1000,
+                   "the task must check in well within the watchdog's limit");
+    ESP_ERROR_CHECK(esp_task_wdt_add(NULL));    /* NULL = this task */
+
     for (;;) {
+        esp_task_wdt_reset();   /* checks in with the watchdog */
         /* Read into s_chunk first, without the lock: the read blocks for
          * about 15 ms, and readers must not wait that long */
         esp_err_t err = audio_capture_read(s_chunk, CHUNK, IO_TIMEOUT_MS);

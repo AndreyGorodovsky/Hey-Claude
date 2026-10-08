@@ -1,10 +1,12 @@
 # Status
 
-**Current stage:** Stage 6, integration, is done: a person speaks to the
-device and it answers aloud, through the server. Stage 7, latency and
-robustness, is next and has not been started.
+**Current stage:** Stage 7, latency and robustness. Its parts A, latency,
+and B, robustness, are built, reviewed and corrected, with two tests left
+for later: WiFi lost and restored, and a run of several hours. Part C, a
+trial of reaching Claude through a Claude Code subscription, has not been
+started. The steps are under Stage 7 plan below.
 
-**Last updated:** 2026-10-07
+**Last updated:** 2026-10-08
 
 ## Where the project stands
 
@@ -86,7 +88,7 @@ by another. The protocol is written down in
 [docs/PROTOCOL.md](docs/PROTOCOL.md), which is what the stage 6 firmware
 is built against.
 
-The server is tested at two levels. Its own tests, 95 of them as of stage 6, run the
+The server is tested at two levels. Its own tests, 100 of them as of stage 7, run the
 whole path with stand-ins for the three services and need no keys or
 network. A desktop client, `server/tools/desktop_client.py`, plays recorded
 requests to a running server as the device will. Measured with it on
@@ -98,6 +100,75 @@ request, and the first reply audio came 2.4-3.5 s after the end of speech,
 above the budget (KNOWN-ISSUES R19). The review agents reviewed the stage
 before it was committed; what they found and what was deferred is in
 [KNOWN-ISSUES.md](KNOWN-ISSUES.md) (R17 to R19, and the caveats).
+
+## Stage 7 plan
+
+Planned and approved on 2026-10-08. The wait for a reply, about 3 s from
+the end of speech against a budget of 1.3 to 2.3 s, was judged acceptable
+in use, so the stage takes only the inexpensive ways of shortening it and
+does not have to reach the budget. Parts A and B were reviewed together
+by both review agents on 2026-10-08 and corrected; part C is reviewed and
+committed by itself.
+
+**What the review changed.** Neither agent found a critical or major
+fault. Corrected from the first: a request whose opening audio was lost
+before sending was not caught by the new check; the synthesiser's two
+tries could take 10 s where 5 s was claimed, which is now one limit over
+both; a watched task that had failed to register with the watchdog would
+have logged an error on every pass. From the second: the "Restarted"
+wording moved from the boot sequence into the state machine's one table,
+so that the state has one writer again; whether the device can hear is
+now asked of the wake-word component and no longer kept in three places;
+the brownout guard moved into a file of its own; each watched task
+asserts at build time that its waits fit the watchdog's limit; the state
+machine tells a deadline from a watchdog wake-up by the clock, not by a
+flag; a turn that fails logs its timings as far as it got. Left as it is:
+the player still times a pause in two ways, which is untidy and exact
+enough. The corrected firmware was built, flashed and seen to reach
+`IDLE`; the corrected server answered two requests from the desktop
+client. One request spoken by a person to the corrected firmware was
+answered as before; the wait for its reply was 6.9 s, of which Claude's
+first text took 5.3 s.
+
+**Part A, latency, on the server.**
+
+| Step | State |
+| --- | --- |
+| A1. Finer timing log: when speech-to-text was reached, and the model's first whole sentence, beside the first text and first audio already logged | Done. Baseline measured on 2026-10-08 with the desktop client on the server's machine, five short questions in a synthetic voice, a home internet connection: speech-to-text was reached 0.84 to 0.88 s after each request began; from the end of speech, Claude's first text came after 0.9 to 3.5 s, its first whole sentence 0 to 0.9 s after that, and the first audio 0.3 to 0.75 s after the sentence, 1.2 to 5.1 s in all. In the first turn the end of speech was detected 5 s late, once |
+| A2. Connections to the synthesiser and to Claude opened ahead of need, at server start and when a request begins; a second try at reaching the synthesiser (R19) | Done in part, by design. The second try is built, by the HTTP library: each try is cut short at half the 5 s allowed for reaching a service, and one limit of 5 s runs over both, so no limit in the protocol moves. A connection that takes more than 2.5 s in one of its steps now fails where it used to succeed. Opening connections ahead of need was built, measured and taken out again. Measured on 2026-10-08 on the server's machine, three times each: the synthesiser's first audio came 0.58 to 0.62 s after the request on a new connection, 0.58 s on one just used, and 0.50 to 0.52 s on one opened 8 s earlier; and the same five questions as the baseline were answered no sooner with it. The wait is the synthesiser's own |
+| A3. The end-of-speech silence tuned against requests spoken by a person, with and without a pause in mid-sentence (R18) | Done: the silence stays at 400 ms. A setting of 1 s was tried on the device on 2026-10-08, by a person, over six spoken turns, and made the end of a request erratic: one request in three ended on the service's silence signal, 1 to 1.5 s after the speaker stopped, and the others only on its slower signal from word timings, 2 to 4 s after. With synthetic speech and faint noise sent to the service directly, the same setting ended every request 1.7 to 2.1 s after the recording, so the effect needs the microphone's own audio. Measuring the silence on the server from the service's word timings would give a longer silence dependably; it was considered and not taken up |
+| A4. The wait measured again, with the desktop client and on the device | Done, 2026-10-08. Nothing built in part A shortens the wait, so these figures stand beside those of stage 6 and do not replace an estimate. Desktop client, a second run of the same five questions as A1's baseline: 3.2 to 5.6 s from the end of speech to the first audio, of which Claude's first text was 1.9 to 4.5 s. On the device, by its own log, four turns spoken by a person at the 400 ms silence: 1.8, 2.8, 2.8 and 5.0 s from the end of the request to the first sound. One reply the same day, during the trial of a longer silence, waited 12 s, of which Claude's first text was 10.7 s. Claude's time to its first text is the whole of the spread |
+
+Set aside: synthesising the first clause instead of the first sentence,
+work on Claude's time to its first text, and starting Claude on an early
+transcript. They stay listed in KNOWN-ISSUES R19.
+
+**Part B, robustness, mostly firmware.**
+
+| Step | State |
+| --- | --- |
+| B1. WiFi lost and restored in each of `IDLE`, `CAPTURING`, `THINKING` and `SPEAKING`, on the bench; what is found is corrected | Put off on 2026-10-08: the WiFi could not be switched off for the test. Listed under Before release. The server-drop tests of B2 exercise the same recovery from the moment the connection is lost, but not the loss of WiFi itself or the wait for it to return |
+| B2. The server stopped in each phase of a turn | Done on the bench on 2026-10-08, a person speaking, the server's process killed by a script watching its log: 2.1 s into a request, 0.4 s and 7.4 s after a request ended with the device waiting for the reply, and 3.5 s into a spoken reply. Each time the device showed the loss within about 30 ms, held `ERROR` for 4 s, rested on `CONNECTING`, and was back in `IDLE` by itself 12.7 to 21 s after the loss, within 2 to 3 s of the server being up again. The reply that was cut stopped within about 100 ms, and cleanly as heard. A request spoken after the first loss was answered. Nothing needed correcting |
+| B3. Watchdogs: a hung task resets the device; the capture, player and state-machine tasks are watched; the reason for the reset is shown after it | Done. A watched task that is silent for 5 s restarts the chip, with a core dump; after a restart nobody asked for, the line under `CONNECTING` names the cause until the first attempt to reach the server has ended. Seen on the bench on 2026-10-08, twice, with a test build that could hang the state-machine task on command, not kept: the watchdog named the task and restarted the chip 5 to 8 s after the hang, the core dump was saved, the boot log gave "task watchdog" as the reset reason, the state read "connecting, Restarted: watchdog", and the device was back in `IDLE` 5 and 10 s after the restart. Over about 70 minutes of ordinary use before that, with thirteen turns and four lost connections, the watchdog did not fire. The capture and player tasks were not hung on purpose |
+| B4. Brownout guard: the cause shown at boot, and repeated brownouts ending in `ERROR` with the amplifier off instead of a loop of resets | Done, and seen on the bench on 2026-10-08 with a test build that counted its next three boots as brownouts, not kept: the first two started normally with the state reading "connecting, Restarted: supply dipped"; the third stopped at "error, Power supply too weak" with no attempt to connect; a restart from the console cleared it and the device returned to `IDLE`. No real brownout was caused, so what the chip's memory keeps through one is taken from its documentation, not seen. At the third brownout in a row, each within 60 s of the boot before it, the device does not join WiFi or play anything and shows `ERROR`, "Power supply too weak", until it is powered off and on or restarted from the console. The count is kept in memory that survives a restart but not a loss of power; nothing is written to flash |
+| B5. Small known defects: a pause counted twice in a reply's summary line, a dead microphone missed in the first second after boot, a send that blocks for seconds on a stalled network | Done. Seen on the device on 2026-10-08: a reply that paused twice was counted as two. The other two have not been brought about on the bench. A dry spell is counted once; the state machine asks the wake-word component whether the device can hear instead of keeping its own copy; and a request that loses audio to a stalled send, at its start or further in, is given up with "Could not send the request" instead of being answered with a hole in it. The send itself still blocks: its timeout is inside the WebSocket component |
+| B6. A run of several hours with turns at intervals: memory, stack headroom, pauses, reconnections and chip temperature | Not yet made; to be done after the review. The longest run so far on the stage 7 firmware is about 70 minutes, with thirteen turns |
+
+**Part C, the assistant's model reached through a Claude Code
+subscription, as a trial.** Approved on 2026-10-08, to be built after
+parts A and B, on a git branch of its own so that it can be dropped
+whole if it does not work out. The API remains the default.
+
+| Step | State |
+| --- | --- |
+| C1. Bench trial with no change to the server: how long `claude -p` takes to its first text, with and without a web search | Not started |
+| C2. If that is tolerable, a second language-model adapter that runs `claude -p` and feeds the existing sentence pipeline, chosen by one setting | Not started |
+| C3. Locked down: web search and web fetch only, no shell or file tools, run from an empty directory, and without the API key in its environment | Not started |
+| C4. The system prompt says the assistant can search; the conversation stays in the server's own store | Not started |
+| C5. Measured on the device, reviewed, documented | Not started |
+
+Settled with the plan: the start-up buffer stays at 80 ms until B6's log
+says otherwise, and the request is not announced while the chime plays.
 
 ## Stage 6 as built
 
@@ -230,7 +301,7 @@ conditions it was taken under. The record is kept in R20 of
 | 4 | Wake word | Done, with a deviation (see below) | microWakeWord integrated with a continuous ring buffer; detection drives the state transition. Custom phrase trained and thresholds tuned against a multi-hour false-accept run. |
 | 5 | Server v1 | Done | WebSocket server, device authentication, day-scoped conversation store, and the speech-to-text, Claude and text-to-speech chain, with the reply synthesised sentence by sentence. Validated end to end by a desktop client script with no device involved. |
 | 6 | Integration | Done | Device WebSocket client and mDNS lookup, streaming upload during capture, server-driven endpointing, streaming playback, real state machine, and error, timeout and reconnect paths, all as [docs/PROTOCOL.md](docs/PROTOCOL.md) describes. First end-to-end conversation. |
-| 7 | Latency and robustness | Not started | Measured end-to-end latency against the budget, and the server brought within it; the end-of-speech silence tuned; WiFi and server-drop recovery, watchdogs, brownout guard. |
+| 7 | Latency and robustness | In progress | Measured end-to-end latency against the budget, with the inexpensive ways of shortening it taken; the end-of-speech silence tuned; WiFi and server-drop recovery, watchdogs, brownout guard. The budget itself need not be met (see Stage 7 plan). |
 | 8 | Polish | Not started | Animation refinement, volume control, provisioning experience, and over-the-air update if adopted. |
 
 Stage 0 is hardware only and produces no code. Peripherals cannot be
@@ -284,11 +355,8 @@ Deepgram, a device token and the timezone are in the untracked
 
 ## Next steps
 
-1. Plan stage 7. Beyond its exit criteria, it has these to take up or set
-   aside: internet access for the assistant (Open decisions), the pauses
-   between sentences seen in a long reply (KNOWN-ISSUES, Caveats), and
-   whether the request could be announced to the server while the chime
-   plays (R19).
+1. The run of several hours, B6.
+2. Part C, on its own branch.
 3. Work through the Before release list below once the last stage is
    done; nothing in it blocks stages 6 to 8.
 4. Obtain a multimeter for the continuity checks before the circuit is
@@ -305,6 +373,7 @@ comes up then.
 | Multi-hour false-accept run, and the cutoff tuned with it | Stage 4 | Made on the model that is released, after any further training run. KNOWN-ISSUES R1; how to make it is in [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md) |
 | Counted detection test | Stage 4 | 10 tries at each distance, in a quiet room, with scores noted; by more than one speaker if others will use the device. KNOWN-ISSUES R1 |
 | Failure paths not yet seen on the device | Stage 6 | The device's own deadlines (15 s of capture, 40 s of waiting, 40 s of a stalled reply) and a server speaking an incompatible protocol version. Written and reviewed, never triggered on the bench. To be done after stage 8 |
+| WiFi lost and restored | Stage 7 | With the device idle, and a few seconds into a spoken reply: the router or its radio switched off and on. Expected: the device shows the loss, keeps trying, and returns to `IDLE` by itself. Put off because the WiFi could not be switched off on the day |
 | A further training run, if wanted | Stage 4 | For other speakers, and for "hey cloud". The notebook's limits to deal with first are in KNOWN-ISSUES R16 |
 
 ## Open decisions
@@ -313,7 +382,7 @@ comes up then.
 | --- | --- |
 | Speech provider | Deepgram for both directions, behind adapter interfaces; built in stage 5 |
 | Day rollover | 04:00 local time, settled. Earlier days are deleted |
-| Endpointing | Server-side, settled. The silence that ends a request, 400 ms, is tuned in stage 7 (R18) |
+| Endpointing | Server-side, settled. The silence that ends a request stays at 400 ms: 1 s was tried in stage 7 and made the ending erratic (R18) |
 | Interrupting a request | Not possible, settled: a turn runs to its end |
 | After a failed turn | Settled: the device shows `ERROR` briefly and returns to `IDLE`; only a lost connection leads to `CONNECTING` |
 | Reply audio pacing | Settled and built: the server sends at most 2 s ahead of playback and the device holds 4 s, whatever the length of the reply (R17) |
@@ -327,7 +396,7 @@ comes up then.
 | Seeing a screen state on demand | Settled and built: `display preview <state>` draws a state's screen for a few seconds without changing the state |
 | A reason on the `CONNECTING` screen | Settled and built: `CONNECTING` shows why the last attempt to reach the server failed |
 | Component names | Settled: the connection is `server_link` and the state machine `state_machine`, renamed before the first commit of stage 6 |
-| Internet access for the assistant | Open, and optional: nothing is committed. The assistant has no tools and is told it has no internet access, so it declines questions such as the weather. If it is taken up, it belongs to stage 7. The ways considered: tools the server runs itself on free data (the date and time from its clock, weather from a free service), at a few hundred tokens a use; Anthropic's web search tool, at $10 per 1,000 searches plus the results as input tokens, estimated at about 4 cents a searched question on `claude-opus-5` and not measured; or both, with the search capped at one a question. Running Claude Code under a subscription login in place of the API was considered and set aside: its documentation directs anything built on it to API keys |
+| Internet access for the assistant | Open, and optional: nothing is committed. The assistant has no tools and is told it has no internet access, so it declines questions such as the weather. If it is taken up, it belongs to stage 7. The ways considered: tools the server runs itself on free data (the date and time from its clock, weather from a free service), at a few hundred tokens a use; Anthropic's web search tool, at $10 per 1,000 searches plus the results as input tokens, estimated at about 4 cents a searched question on `claude-opus-5` and not measured; or both, with the search capped at one a question. Running Claude Code under a subscription login in place of the API was first set aside, because its documentation directs products built on it to API keys, and taken up again on 2026-10-08 as a trial, part C of stage 7: the device has one user, who is the account's owner. The API stays the default, and the trial is built on a branch of its own |
 | Deployment | LAN only for now; off-LAN deployment deferred and would require TLS |
 | Over-the-air updates | Undecided, revisited at stage 8; the flash layout already allows it |
 | Server discovery | mDNS on the LAN, with `server_url` as an override; the server's side is built, the device's is stage 6 |

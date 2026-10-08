@@ -85,6 +85,15 @@ tone for 10 s read about 0.582 A at 4.822 V, and a spoken reply of 66.7 s
 at the full level about 0.2 A at 4.918 V, both with no reset. Speech
 draws about a third of what the tone does.
 
+From stage 7 the firmware has a guard for a supply that cannot carry the
+device at all: at the third brownout in a row, each within 60 s of the
+boot before it, it stops before joining WiFi, plays nothing, and rests on
+`ERROR`, "Power supply too weak". After a single brownout the screen says
+"Restarted: supply dipped" for the first seconds. The guard was tested
+with simulated brownouts only, and it cannot help a supply too weak for
+the display and microphone, which start before it is asked
+([ARCHITECTURE.md](ARCHITECTURE.md), Recovering by itself).
+
 A breadboard compounds this. Contact resistance and shared rails not intended
 for 1 A transients can themselves cause the voltage drop, making the bench the
 fault rather than the supply. Peak figures taken on a breadboard should be
@@ -116,7 +125,9 @@ ends the turn with its own error code, and each wait has a limit (5 s to
 connect to any of them, 20 s of silence from Claude, 10 s from
 text-to-speech), listed in [docs/PROTOCOL.md](docs/PROTOCOL.md). These
 paths are tested with stand-ins for the services; none has been observed
-with a real outage.
+with a real outage. From stage 7 the synthesiser gets a second try at
+connecting within the same 5 s, after its first connection of a session
+was once seen to hang.
 
 ### R7 — Stale ESP-IDF environment variables
 
@@ -370,9 +381,25 @@ A related case: speech-to-text can report words and then withdraw them. The
 request then ends at once with nothing heard, and the device returns to
 idle without a reply. Observed once on 2026-10-06, with a synthetic voice.
 
-*Mitigation:* the silence length is one setting, `ENDPOINTING_MS`. It is
-tuned in stage 7 against real requests from the device, together with the
-latency it trades against.
+*Tried in stage 7, and left at 400 ms.* A setting of 1 s was tried on the
+device on 2026-10-08, by a person, over six spoken requests. One in three
+ended on the service's silence signal, 1 to 1.5 s after the speaker
+stopped. The others ended only on its second signal, from word timings,
+2 to 4 s after: the service does not send that one until it has settled
+its transcript, which it does on its own schedule. So at 1 s the silence
+signal is not dependable on the microphone's audio, which is never quite
+silent. With synthetic speech followed by faint noise, sent to the service
+directly, the same setting ended every request 1.7 to 2.1 s after the
+recording, so the effect needs the device's own audio to show.
+
+*Mitigation:* none in place; a speaker who pauses for 400 ms in
+mid-request is still cut off. The silence length is one setting,
+`ENDPOINTING_MS`, but raising it far is not a remedy, as above. What would
+be: the server measuring the silence itself, from the word timings the
+service reports several times a second, and ending the request when they
+show no new word for the wanted time. Considered on 2026-10-08 and not
+built. The server can log each of the service's events, without their
+words, when the `server.stt.deepgram` logger is set to DEBUG.
 
 ### R19 — The server alone is over the latency budget
 
@@ -420,12 +447,38 @@ as the playback of the question ended. After a person stops speaking, the
 server first waits out the 400 ms of silence that marks the end, which
 comes on top.
 
-*Mitigation:* stage 7. The server logs its figures for every turn, and the
-device logs each change of phase with its time, as `phase [state]`: `chime`
+*Stage 7: measured, and accepted as it is.* The wait was judged
+acceptable in use on 2026-10-08, so the stage took only the inexpensive
+remedies and the budget is not met. The server's log now also gives, for
+every turn, when speech-to-text was reached and when the model's first
+whole sentence was complete; a turn that failed logs as far as it got.
+With it, on 2026-10-08, over twelve turns with the desktop client: Claude's
+first text 0.9 to 4.5 s after the end of speech, its first sentence 0 to
+1.1 s later, the first audio 0.3 to 1.5 s after that. On the device, four
+spoken turns: 1.8, 2.8, 2.8 and 5.0 s from the end of the request to the
+first sound; and one more, 12 s, in which Claude's first text took 10.7 s.
+Claude's time to its first text is nearly all of the wait and all of its
+spread, and nothing on the server shortens it short of the levers below.
+
+Two of the levers were looked into and closed. Keeping a connection to
+the synthesiser warm was built, measured and taken out: its first audio
+came 0.58 to 0.62 s after the request on a new connection, 0.58 s on one
+just used and 0.50 to 0.52 s on one opened 8 s earlier, three times each,
+and the same questions were answered no sooner. Requesting the next
+sentence while the current one is being sent was already built in
+stage 6. The failed first request is covered instead by a second try at
+connecting.
+
+*Mitigation:* none further planned. The server logs its figures for every
+turn, and the device logs each change of phase with its time, as
+`phase [state]`: `chime`
 is the wake word, `capturing` the start of the request, `awaiting` its
-end and `playing` the reply's first sound. Known levers: synthesising the first clause instead of the first whole sentence,
-keeping a connection to the synthesiser warm, and requesting the next
-sentence while the current one is being sent. One more, not looked into:
+end and `playing` the reply's first sound. Levers left, if the wait
+becomes a nuisance: starting Claude on an early transcript before the
+silence has run out, and synthesising the first clause instead of the
+first whole sentence. One more, set aside in stage 7 as unlikely to gain
+anything, since request audio already waits in a queue while the
+speech-to-text connection opens (0.6 to 0.9 s, measured):
 the device announces a request only when its chime is over, 220 ms after
 the wake word, and the server opens its speech-to-text connection on that
 announcement. Announcing at the wake word and sending audio from the end
@@ -466,6 +519,11 @@ The record:
 | 2026-10-07 | Same bench. Before and after a minute of 440 Hz tone at 35 % of full scale, with no server running, two minutes after a restart | 49.5, 50.5 °C |
 | 2026-10-07 | Same bench, for the supply check. Ten seconds after a restart and just after 10 s of tone at 100 %; then connected and idle a minute later, before a spoken reply of 66.7 s | 46.5, 48.5, 49.5 °C |
 | 2026-10-07 | Same bench. After the screens of all eight states had been shown in turn, 80 s after a restart, the board warm from the supply check, with no server running | 56.5 °C |
+| 2026-10-08 | Same bench, on the stage 7 firmware with the task watchdog. 25 s after flashing, looking for a server that was not running; and 21 min after a restart, connected and idle, three minutes after two spoken turns | 43.5, 54.5 °C |
+| 2026-10-08 | Same bench, same firmware, on for 26 to 50 min. Looking for a server just after three spoken turns; connected and idle half a minute later; and two minutes after three more spoken turns, the longest reply 8.8 s | 55.5, 55.5, 56.5 °C |
+| 2026-10-08 | Same bench, same firmware, on for 58 to 70 min, while the server was stopped in the middle of four turns in succession. Just after a reply of 15 s; and connected and idle about a minute after each of the last three losses | 57.5, 56.5, 56.5, 56.5 °C |
+| 2026-10-08 | Same bench, during the watchdog and brownout-guard tests: after seven restarts in three minutes, idle and connected; and 15 s after reflashing, idle and connected | 53.5, 51.5 °C |
+| 2026-10-08 | Same bench, on the firmware as corrected after review, 15 s after flashing, idle and connected; and about 25 min later, idle, a few minutes after one spoken turn | 52.5, 56.5 °C |
 
 The readings during replies were taken at playback levels of 40 % and
 60 %, but for the last, of 2026-10-07, at the present 100 %.
@@ -501,6 +559,14 @@ hand.
   review in stage 5, before any commit: the start-up error for a token
   that was too short quoted the whole setting. Configuration errors no
   longer quote any value.
+- **A device that could not hear from its first second could show `IDLE`.**
+  The wake-word component announced a dead microphone about a second
+  after it started, a moment before the state machine began listening for
+  the announcement. From stage 7 the state machine asks the wake-word
+  component whether the device can hear, each time it chooses what to
+  show, and keeps no copy of the answer.
+- **A reply's summary line could count one pause as two.** Corrected in
+  stage 7; see Caveats, "A reply can pause briefly".
 - **R14 — LVGL's version not locked.** From stage 4,
   `firmware/dependencies.lock` is committed, fixing the exact version of
   every component fetched from the registry: LVGL 9.6.0, and the wake-word
@@ -605,9 +671,20 @@ hand.
   lumps. The console's `temp` and `mem` commands, typed during another
   of those replies, caused none. One sample is not proof.
 
-  The reply's summary line can count one pause as two: its count goes up
-  again if the buffer is still empty when the player next looks. The
-  line logged for each pause is the one to go by. Not corrected yet.
+  Until 2026-10-08 the reply's summary line could count one pause as
+  two: its count went up again if the buffer was still empty when the
+  player next looked. Corrected in stage 7; counts in earlier logs are
+  to be read with that in mind.
+
+  Second sample, on 2026-10-08: of ten replies heard that day, one
+  paused, twice, for 240 ms and 10 ms, 0.72 s and 0.76 s into a reply of
+  8.8 s. Again in the first second. The double count is corrected: that
+  reply's summary line said two, as its two lines did.
+
+  When a reply is stopped part-way, as by a lost connection, its summary
+  line reports "most held at once 0 ms" whatever it held. Seen on
+  2026-10-08; the figure is read after the stop has already cleared it.
+  Not corrected.
 
   A larger start-up buffer, 80 ms raised to about 300 ms, would cover a
   lump up to 0.3 s late at the start, at the cost of about 0.2 s more
@@ -663,16 +740,25 @@ hand.
   what to delete to remove it.
 - **A send to the server can block for several seconds on a stalled
   network.** The WebSocket client applies its send timeout more than once
-  within one send. The upload then falls behind the microphone, and beyond
-  2 s loses audio; it logs how much at the end of the request.
+  within one send. The upload then falls behind the microphone. From
+  stage 7, a request that loses audio that way, at its start or further
+  in, is given up with "Could not send the request" instead of being
+  answered with a hole in it. The send itself still blocks: seen on
+  2026-10-08, 1.5 s, in the upload's last send after the server had been
+  stopped. Nothing waits on it but the upload.
 - **Nothing in the firmware can be stopped once started.** A refused
   device parks its connection task until reboot, and neither the server link nor
   the player has a stop. An over-the-air update, if adopted in stage 8,
   will want the turn machinery stopped with WiFi kept.
-- **A device that cannot hear from the very first second may show `IDLE`.**
-  The wake-word component announces a dead microphone about a second after
-  it starts; the state machine starts listening for that announcement a
-  moment later in the boot sequence, and would miss one made in between.
+- **The watchdog and the brownout guard were tested with a test build.**
+  On 2026-10-08 a build with one extra console command hung the
+  state-machine task, and counted ordinary restarts as brownouts; it was
+  not kept. Not tested: the capture and player tasks hung, a real
+  brownout, and, after the review's corrections moved the wording into
+  the state machine, the "Restarted" line itself, which was seen only in
+  its earlier form.
+- **A watchdog restart loses the turn in progress**, like any restart. The
+  server learns of it when the connection closes.
 - **The screen is dark for about two seconds after reset.** The panel's
   start-up sequence has required pauses of about a second, and the
   backlight is lit only once the first frame is on the panel.

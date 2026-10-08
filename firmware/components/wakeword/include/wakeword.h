@@ -44,7 +44,8 @@ enum {
                                data: a bool. false when the microphone's audio
                                stops arriving, or the model fails; true when
                                audio arrives again. Not posted at start: the
-                               result of wakeword_start() says how it began. */
+                               result of wakeword_start() says how it began,
+                               and wakeword_listening() how it stands now. */
 };
 
 typedef struct {
@@ -80,6 +81,12 @@ typedef struct {
  * exists. Detections start about a second later, once the model has heard
  * enough audio. */
 esp_err_t wakeword_start(void);
+
+/* Whether the device can hear at this moment: false before
+ * wakeword_start() has succeeded, and afterwards what the last
+ * WAKEWORD_LISTENING announced. This is the answer to go by; the event
+ * says only that it has changed, and when. */
+bool wakeword_listening(void);
 
 /* The phrase the built-in model listens for, as written in its manifest,
  * such as "Hey Claude" */

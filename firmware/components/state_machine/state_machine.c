@@ -16,9 +16,11 @@
  * handler registered here copies them into the queue.
  *
  * Time limits use the queue too. The task waits for the next message only
- * until the current deadline, if there is one; a wait that runs out is the
- * deadline passing. So a deadline needs no timer and cannot fire in the
- * middle of another decision.
+ * until the current deadline, if there is one, and when a wait runs out it
+ * looks at the clock to see whether the deadline has passed. So a deadline
+ * needs no timer and cannot fire in the middle of another decision. (A
+ * wait also runs out once a second with no deadline due, so that the task
+ * can check in with the task watchdog; see state_machine_task.)
  *
  * Phases. The device state that the screen shows (app_state.h) has eight
  * values, chosen for what a person needs to see. The state machine needs
@@ -70,6 +72,8 @@
 #include "esp_check.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -96,6 +100,14 @@ static const char *TAG = "state_machine";
  * of a second; after this long the request starts without waiting further.
  * A guard against a missing report, like the one above. */
 #define CHIME_LIMIT_MS        1000
+
+/* Longest the task waits for a report before it checks in with the task
+ * watchdog (see state_machine_task). The assertion holds it well inside the
+ * watchdog's limit, which is set in sdkconfig.defaults, so that a change to
+ * either is caught when the firmware is built. */
+#define WATCHDOG_FEED_MS    1000
+_Static_assert(WATCHDOG_FEED_MS * 2 <= CONFIG_ESP_TASK_WDT_TIMEOUT_S * 1000,
+               "the task must check in well within the watchdog's limit");
 
 /* For enter(): no deadline, or leave the current one as it is */
 #define NO_DEADLINE         0
@@ -149,6 +161,10 @@ typedef enum {
     /* the device itself */
     WHY_MICROPHONE,
     WHY_SPEAKER,
+    /* the last restart, when nobody asked for it */
+    WHY_RESTART_SUPPLY,
+    WHY_RESTART_WATCHDOG,
+    WHY_RESTART_CRASH,
     WHY_COUNT
 } why_t;
 
@@ -176,12 +192,16 @@ static const char WHY_TEXT[WHY_COUNT][DETAIL_FITS] = {
     [WHY_INTERNAL]      = "Internal fault",
     [WHY_MICROPHONE]    = "Microphone not working",
     [WHY_SPEAKER]       = "Speaker not working",
+    [WHY_RESTART_SUPPLY]   = "Restarted: supply dipped",
+    [WHY_RESTART_WATCHDOG] = "Restarted: watchdog",
+    [WHY_RESTART_CRASH]    = "Restarted: crash",
 };
 
 /* Everything that can happen */
 typedef enum {
     EV_WAKE,            /* value: ring position where the phrase ended */
-    EV_LISTENING,       /* value: 1 if the device can hear, 0 if not */
+    EV_LISTENING,       /* whether the device can hear has changed; what it
+                           is now is asked of wakeword_listening() */
     EV_LINK,            /* what: a server_link_report_t; value: as server_link.h says */
     EV_PLAYER,          /* what: a player_report_t; value: as player.h says */
     EV_UPLOAD_FAILED,   /* value: an upload_failure_t */
@@ -210,10 +230,13 @@ static phase_t s_phase = PH_CONNECTING;
  * what the device is doing, these are what rest() chooses from. */
 static bool s_link_up;          /* the server connection is ready */
 static bool s_refused;          /* the server refused this device */
-static bool s_listening;        /* the microphone and wake word work */
 static bool s_speaker_ok;       /* the amplifier and player work */
 /* Why the last attempt to connect failed, shown under CONNECTING while
- * the device keeps trying. WHY_NONE before the first failure. */
+ * the device keeps trying. Before the first attempt has ended it is
+ * WHY_NONE, or, after a restart nobody asked for, the reason for that
+ * restart (see restart_why). The first attempt's outcome then replaces it,
+ * so it shows for a few seconds on a working network, and for as long as
+ * there is no WiFi otherwise. */
 static why_t s_attempt_why = WHY_NONE;
 /* The current deadline, as a tick count (FreeRTOS's clock, in ticks since
  * boot), and whether there is one */
@@ -309,6 +332,28 @@ static void stop_turn_activity(void)
     player_abort();
 }
 
+/* What to say under CONNECTING after the chip's last restart: nothing after
+ * an ordinary one (power-on, the reset button, the console's `reboot`), and
+ * the cause after one nobody asked for. Without it such a restart looks
+ * like any other power-on, and a device that restarts by itself now and
+ * then would give no sign of why to someone not watching the serial log.
+ * A brownout is the supply voltage dipping below what the chip needs
+ * (KNOWN-ISSUES R2); the watchdogs restart a chip whose code has stuck; a
+ * panic is a crash, whose state is kept in the core dump. */
+static why_t restart_why(esp_reset_reason_t reason)
+{
+    switch (reason) {
+    case ESP_RST_BROWNOUT:
+    case ESP_RST_PWR_GLITCH:    return WHY_RESTART_SUPPLY;
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:           return WHY_RESTART_WATCHDOG;
+    case ESP_RST_PANIC:
+    case ESP_RST_CPU_LOCKUP:    return WHY_RESTART_CRASH;
+    default:                    return WHY_NONE;
+    }
+}
+
 /* Goes to the phase the device belongs in when no turn is running and no
  * failure is being shown. The one place that order of precedence is
  * written down. */
@@ -316,9 +361,11 @@ static void rest(void)
 {
     if (s_refused) {
         enter(PH_REFUSED, WHY_REFUSED, NO_DEADLINE);
-    } else if (!s_listening) {
+    } else if (!wakeword_listening()) {
         /* Not IDLE: the screen must not say "waiting for the wake word"
-         * on a device that cannot hear one */
+         * on a device that cannot hear one. Asked of the wake-word
+         * component each time, not kept here: it is the one that knows,
+         * and a copy could be left wrong by a lost announcement. */
         enter(PH_FAULT, WHY_MICROPHONE, NO_DEADLINE);
     } else if (!s_speaker_ok) {
         enter(PH_FAULT, WHY_SPEAKER, NO_DEADLINE);
@@ -571,7 +618,6 @@ static void handle(const ev_t *ev)
         on_wake(ev->value);
         break;
     case EV_LISTENING:
-        s_listening = ev->value != 0;
         /* Shown at once if nothing else is going on; otherwise rest()
          * shows it when the turn or the failure on the screen is over */
         if (s_phase == PH_IDLE || s_phase == PH_CONNECTING || s_phase == PH_FAULT) {
@@ -625,16 +671,38 @@ static void on_deadline(void)
 
 static void state_machine_task(void *arg)
 {
+    /* The task watchdog is a timer in ESP-IDF that restarts the chip when a
+     * task it watches has not checked in for the limit set in
+     * sdkconfig.defaults, 5 s. This task asks to be watched, and checks in
+     * on every pass of its loop. Every decision of the device is made
+     * here, so if this task ever stuck the device would sit in whatever
+     * state it last showed, deaf to everything; a restart is the remedy.
+     * ESP_ERROR_CHECK: the request fails only if memory has run out at
+     * boot, and a task that went on to check in without being watched
+     * would have ESP-IDF log an error on every pass. */
+    ESP_ERROR_CHECK(esp_task_wdt_add(NULL));    /* NULL = this task */
+
     for (;;) {
-        TickType_t wait = portMAX_DELAY;
+        esp_task_wdt_reset();   /* checks in with the watchdog */
+        /* Waits for the next report until the current deadline, but never
+         * longer than WATCHDOG_FEED_MS, so that the loop comes round to
+         * check in even when nothing happens for hours. */
+        TickType_t wait = pdMS_TO_TICKS(WATCHDOG_FEED_MS);
         if (s_deadline_set) {
+            /* Signed, so that a deadline already past gives a negative
+             * number, and so that the subtraction stays right when the
+             * tick count wraps round */
             int32_t left = (int32_t)(s_deadline - xTaskGetTickCount());
-            wait = left > 0 ? (TickType_t)left : 0;
+            if (left < (int32_t)wait) {
+                wait = left > 0 ? (TickType_t)left : 0;
+            }
         }
         ev_t ev;
         if (xQueueReceive(s_events, &ev, wait) == pdTRUE) {
             handle(&ev);
-        } else {
+        } else if (s_deadline_set && (int32_t)(s_deadline - xTaskGetTickCount()) <= 0) {
+            /* The wait ran out, and the clock says it was the deadline
+             * that passed and not only the watchdog's interval */
             on_deadline();
         }
         if (atomic_exchange(&s_event_lost, false)) {
@@ -679,7 +747,7 @@ static void on_wakeword_event(void *arg, esp_event_base_t base, int32_t id, void
     if (id == WAKEWORD_DETECTED) {
         enqueue(EV_WAKE, 0, ((const wakeword_event_t *)data)->end_pos);
     } else if (id == WAKEWORD_LISTENING) {
-        enqueue(EV_LISTENING, 0, *(const bool *)data ? 1 : 0);
+        enqueue(EV_LISTENING, 0, 0);
     }
 }
 
@@ -703,7 +771,7 @@ esp_err_t state_machine_start(const state_machine_config_t *cfg)
 {
     ESP_RETURN_ON_FALSE(s_events == NULL, ESP_ERR_INVALID_STATE, TAG, "already started");
     s_speaker_ok = cfg->speaker_ok;
-    s_listening = cfg->listening_ok;
+    s_attempt_why = restart_why(esp_reset_reason());
 
     s_events = xQueueCreate(QUEUE_LENGTH, sizeof(ev_t));
     ESP_RETURN_ON_FALSE(s_events != NULL, ESP_ERR_NO_MEM, TAG, "no memory");
@@ -711,11 +779,15 @@ esp_err_t state_machine_start(const state_machine_config_t *cfg)
     ESP_RETURN_ON_ERROR(esp_event_handler_register(WAKEWORD_EVENT, ESP_EVENT_ANY_ID,
                                                    on_wakeword_event, NULL), TAG, "wake");
 
-    /* A device that cannot hear or speak shows so from the start. Done
-     * here, before the task exists, so nothing else is touching the state. */
-    if (!s_listening || !s_speaker_ok) {
-        rest();
-    }
+    /* Shows where the device stands from the start: CONNECTING, with the
+     * reason for the restart if nobody asked for it, or the fault if it
+     * cannot hear or speak. Done here, before the task exists, so nothing
+     * else is touching the state. Whether it can hear is asked of the
+     * wake-word component inside rest(), after the handler above was
+     * registered: detection started earlier in the boot sequence and may
+     * have found the microphone silent before the handler existed, and an
+     * announcement made from now on waits in the queue for the task. */
+    rest();
     BaseType_t made = xTaskCreatePinnedToCore(state_machine_task, "state_machine", TASK_STACK, NULL,
                                               TASK_PRIO, NULL, TASK_CORE);
     return made == pdPASS ? ESP_OK : ESP_ERR_NO_MEM;

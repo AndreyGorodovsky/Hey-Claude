@@ -173,6 +173,9 @@ static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static uint8_t s_cutoff;            /* 0-255 */
 static bool s_log;
 static bool s_stopped;              /* the model failed and detection ended */
+static bool s_listening;            /* audio is arriving and the model runs; what
+                                       the last WAKEWORD_LISTENING said, kept so
+                                       that it can also be asked for */
 
 /* The counters behind wakeword_stats_t, cleared by wakeword_reset_stats().
  * Settings and fixed facts are not kept here; wakeword_get_stats() adds
@@ -441,6 +444,11 @@ static bool handle_slice(detector_t *d, const FrontendOutput *f, uint32_t end_po
  * word" on a device that cannot hear one. Runs in the detection task. */
 static void post_listening(bool listening)
 {
+    /* Kept before it is announced: a task that starts listening for the
+     * announcements and then asks wakeword_listening() misses nothing */
+    taskENTER_CRITICAL(&s_lock);
+    s_listening = listening;
+    taskEXIT_CRITICAL(&s_lock);
     /* No wait: if the event loop's queue is full the announcement is lost,
      * which the log line beside each call still records */
     esp_event_post(WAKEWORD_EVENT, WAKEWORD_LISTENING, &listening, sizeof(listening), 0);
@@ -522,11 +530,23 @@ extern "C" esp_err_t wakeword_start(void)
     ESP_RETURN_ON_ERROR(init_frontend(), TAG, "frontend");
     ESP_RETURN_ON_ERROR(load_model(), TAG, "model");
 
+    /* Set before the task exists: the task may find the microphone silent
+     * and clear it at once, and that must not be overwritten here */
+    s_listening = true;
     if (xTaskCreatePinnedToCore(detect_task, "wakeword", TASK_STACK, NULL, TASK_PRIORITY,
                                 &s_task, AUDIO_CORE) != pdPASS) {
+        s_listening = false;
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
+}
+
+extern "C" bool wakeword_listening(void)
+{
+    taskENTER_CRITICAL(&s_lock);
+    bool listening = s_listening;
+    taskEXIT_CRITICAL(&s_lock);
+    return listening;
 }
 
 extern "C" const char *wakeword_phrase(void)

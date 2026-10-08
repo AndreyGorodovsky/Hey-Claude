@@ -99,6 +99,17 @@ static void send_request(unsigned run, uint32_t start_pos)
     }
     audio_ring_reader_t reader;
     audio_ring_reader_init_at(&reader, start_pos);
+    if (reader.pos != start_pos) {
+        /* The ring no longer offers the audio the request starts with, and
+         * has put the reader at the oldest it does offer. That happens
+         * when announcing the request, just above, stalled for about a
+         * second or more. The request would begin part-way through its
+         * first words, so it is given up, like one with a hole further in
+         * (below). */
+        ESP_LOGE(TAG, "the start of the request was lost before it could be sent");
+        failed(run, UPLOAD_FAIL_SEND);
+        return;
+    }
     /* How far behind the microphone the upload begins: the audio already
      * captured since the request's starting position, which goes out in
      * the opening burst */
@@ -116,6 +127,17 @@ static void send_request(unsigned run, uint32_t start_pos)
             failed(run, UPLOAD_FAIL_MICROPHONE);
             break;
         }
+        if (dropped > 0) {
+            /* The ring has overwritten audio this task had not yet read,
+             * which takes falling 2 s behind the microphone, as a send
+             * stalled on a network that has stopped moving can cause. The
+             * request now has a hole in it. It is given up, like a reply
+             * with a hole (player.c): a request missing some of its words
+             * would be answered as if it were whole. */
+            ESP_LOGE(TAG, "request audio was lost before it could be sent");
+            failed(run, UPLOAD_FAIL_SEND);
+            break;
+        }
         if (server_link_send_audio(frame, FRAME_SAMPLES) == ESP_OK) {
             failures = 0;
             frames++;
@@ -125,8 +147,7 @@ static void send_request(unsigned run, uint32_t start_pos)
             break;
         }
     }
-    /* `dropped` counts samples the ring had already overwritten because
-     * this task fell more than 2 s behind, as it can when a send stalls */
+    /* `dropped` counts the samples lost in the case above */
     ESP_LOGI(TAG, "sent %lu frames (%lu ms); %lu ms of audio lost on the way",
              (unsigned long)frames, (unsigned long)(frames * PROTO_CAPTURE_FRAME_MS),
              (unsigned long)(dropped * 1000u / PROTO_CAPTURE_RATE_HZ));

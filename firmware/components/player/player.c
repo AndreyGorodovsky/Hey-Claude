@@ -32,6 +32,7 @@
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -57,6 +58,15 @@ static const char *TAG = "player";
 /* Longest wait for the amplifier to take one chunk; it normally takes a
  * chunk within the chunk's own length */
 #define WRITE_TIMEOUT_MS    500
+/* Longest the task sleeps with nothing to play before it checks in with the
+ * task watchdog (see player_task). The assertion holds it, and the longest
+ * wait for the amplifier, well inside the watchdog's limit, which is set in
+ * sdkconfig.defaults, so that a change to any of them is caught when the
+ * firmware is built. */
+#define WATCHDOG_FEED_MS    1000
+_Static_assert((WATCHDOG_FEED_MS + WRITE_TIMEOUT_MS) * 2
+               <= CONFIG_ESP_TASK_WDT_TIMEOUT_S * 1000,
+               "the task must check in well within the watchdog's limit");
 
 /* Playback level, in percent of the level the server sends. Real volume
  * control arrives in stage 8; until then this is the one value. 40 and
@@ -305,6 +315,9 @@ static void play_out(uint32_t gen, uint32_t rate, bool is_chime)
     TickType_t dry_since = 0;
 
     for (;;) {
+        /* Checks in with the task watchdog (see player_task): a pass here
+         * takes at most WRITE_TIMEOUT_MS */
+        esp_task_wdt_reset();
         size_t samples = 0;
         /* The preroll applies only until the amplifier is on */
         take_t got = take(gen, chunk, &samples, amp_on ? 0 : PREROLL_MS);
@@ -323,12 +336,13 @@ static void play_out(uint32_t gen, uint32_t rate, bool is_chime)
         if (got == TAKE_EMPTY) {
             /* Nothing to play. While the amplifier is on, its driver sends
              * silence by itself. Waits for a feed, or looks again shortly. */
-            if (amp_on && empty_ms == 0) {
-                underruns++;
-            }
             if (amp_on && !dry) {
+                /* A dry spell begins. Counted here, once per spell, and not
+                 * by `empty_ms`, which stays at zero when a wait is ended
+                 * early by a feed and so cannot tell where a spell began. */
                 dry = true;
                 dry_since = xTaskGetTickCount();
+                underruns++;
             }
             if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(IDLE_POLL_MS)) == 0) {
                 empty_ms += IDLE_POLL_MS;
@@ -419,7 +433,20 @@ static void play_out(uint32_t gen, uint32_t rate, bool is_chime)
 
 static void player_task(void *arg)
 {
+    /* The task watchdog is a timer in ESP-IDF that restarts the chip when a
+     * task it watches has not checked in for the limit set in
+     * sdkconfig.defaults, 5 s. This task asks to be watched, and checks in
+     * on every pass here and in play_out(). No wait in either is longer
+     * than about a second, so silence for the whole limit means the task
+     * is stuck, on the lock or inside the amplifier's driver; a device in
+     * that state can no longer speak, and a restart is the remedy.
+     * ESP_ERROR_CHECK: the request fails only if memory has run out at
+     * boot, and a task that went on to check in without being watched
+     * would have ESP-IDF log an error on every pass. */
+    ESP_ERROR_CHECK(esp_task_wdt_add(NULL));    /* NULL = this task */
+
     for (;;) {
+        esp_task_wdt_reset();   /* checks in with the watchdog */
         xSemaphoreTake(s_lock, portMAX_DELAY);
         bool active = s_active;
         uint32_t gen = s_gen;
@@ -433,8 +460,11 @@ static void player_task(void *arg)
              * after: a reply that began while the last one was being wound
              * up has already used up its wake-up call. One that begins
              * between the look and the sleep leaves its call pending, and
-             * the sleep returns at once. */
-            ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+             * the sleep returns at once. The sleep also ends by itself
+             * after WATCHDOG_FEED_MS, only so that the loop comes round to
+             * check in with the watchdog; it then finds nothing to play
+             * and sleeps again. */
+            ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(WATCHDOG_FEED_MS));
         }
     }
 }

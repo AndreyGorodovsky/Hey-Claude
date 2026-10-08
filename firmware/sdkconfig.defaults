@@ -39,6 +39,21 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 # That record is how supply faults are spotted (KNOWN-ISSUES R2, R9).
 CONFIG_ESP_BROWNOUT_DET=y
 
+# --- Task watchdog ---
+# A timer that expects certain tasks to check in regularly. ESP-IDF enables
+# it by default with a 5 s limit, watching each core's idle task: if a task
+# hogs a core for 5 s, the idle task cannot run and the watchdog notices.
+# The firmware adds its capture, player and state-machine tasks, which catches
+# one of them getting stuck as well. By default a timeout only prints a
+# warning. With this setting it is treated as a crash: the state is saved to
+# the core dump and the chip restarts, so a hung device recovers by itself.
+# The boot log and the screen then name the watchdog as the reason.
+CONFIG_ESP_TASK_WDT_PANIC=y
+# The limit, in seconds. It is ESP-IDF's default, stated here because the
+# firmware's own waits are checked against it when it is built: each watched
+# task asserts that its longest wait is well inside this.
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
+
 # --- Core dump ---
 # On a crash, save the state of every task to the `coredump` partition. It
 # survives the reboot and can be read with: idf.py coredump-info

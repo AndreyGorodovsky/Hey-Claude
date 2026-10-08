@@ -24,7 +24,7 @@ made during the feasibility review and are binding unless explicitly revisited.
 
 | Component | Responsibility |
 | --- | --- |
-| `main` | Startup order, boot banner, serial console and its commands: settings, audio, display and wake-word tests, and read-outs of the state, the server connection, memory and chip temperature |
+| `main` | Startup order, boot banner, the brownout guard, serial console and its commands: settings, audio, display and wake-word tests, and read-outs of the state, the server connection, memory and chip temperature |
 | `app_config` | Settings stored in NVS: loading the running configuration, validating and storing edits. No user interface of its own |
 | `net` | WiFi station: joining, reconnecting with backoff, readable failure reasons |
 | `audio` | Microphone capture and amplifier playback over I2S: plain 16-bit samples in and out, no buffering or tasks of its own |
@@ -88,17 +88,57 @@ a failure shown for a few seconds and a fault that stays both show
 the panel's detail line.
 
 The state machine also learns when the device can no longer hear.
-`wakeword` announces `WAKEWORD_LISTENING` when the microphone's audio stops
-or resumes, or the model fails, and the boot sequence reports whether
-listening and playback started at all. A device that cannot hear or speak
-shows `ERROR` with the reason and stays there, so the screen never shows
-`IDLE` on a device that cannot hear.
+Whether it can is one fact with one owner, `wakeword`, which answers
+`wakeword_listening()`. It announces `WAKEWORD_LISTENING` when the
+microphone's audio stops or resumes, or the model fails; the announcement
+says only that the answer has changed, and the state machine asks for the
+answer each time it chooses what to show, keeping no copy that a lost
+announcement could leave wrong. The boot sequence reports whether playback
+started. A device that cannot hear or speak shows `ERROR` with the reason
+and stays there, so the screen never shows `IDLE` on a device that cannot
+hear.
 
 Every boot logs the firmware version, flash size, free internal RAM and PSRAM,
 and the reset reason. Brownout and power-glitch resets are logged as errors,
 which makes a supply fault visible without instruments (R2, R9). A crash is
 written to a core-dump partition and can be read after the reboot with
 `idf.py coredump-info`.
+
+**Recovering by itself.** Three things restart the chip without anyone
+asking: a crash, a watchdog, and the brownout detector. After any of them
+the line under `CONNECTING` names the cause, "Restarted: crash",
+"Restarted: watchdog" or "Restarted: supply dipped", until the first
+attempt to reach the server has ended one way or the other: a few seconds
+on a working network, and as long as there is no WiFi otherwise. The
+wording is in the state machine's one table, with every other reason.
+
+The task watchdog is ESP-IDF's timer that expects tasks to check in. Its
+limit is 5 s and a timeout is treated as a crash: a core dump, then a
+restart. It watches each core's idle task, which catches a task that hogs a
+core, and three of the firmware's own tasks, which catches one of them
+stuck: capture, the player and the state machine. Those are the tasks
+without which the device cannot hear, speak or decide, and whose longest
+wait is the firmware's own to bound; each asserts, when the firmware is
+built, that its longest wait is well inside the limit. The tasks that wait
+on the network or run mostly library code (wake-word detection, upload, the
+link, the WebSocket client) are not watched: the state machine's deadlines
+cover what they do, and wake-word detection reports its own failure.
+Seen on the bench on 2026-10-08, twice, with a test build that hung the
+state-machine task on command: the chip restarted 5 to 8 s later with a
+core dump, and the device was back in `IDLE` 5 and 10 s after that.
+
+The brownout guard keeps a device on a supply too weak for it from
+restarting for ever. It counts brownouts that follow one another within
+60 s of each boot; at the third, the boot sequence stops before WiFi and
+the state machine, and the device rests on `ERROR`, "Power supply too
+weak", with its console working, until it is powered off and on or
+restarted from the console. The count lives in RTC memory, which survives a
+restart and not a loss of power; nothing is written to flash, and it is
+neither history nor a credential. The guard is asked after the display,
+microphone and wake word have started, so it covers a supply that fails
+when the radio or the amplifier comes on, not one too weak to reach that
+point. Seen on the bench on 2026-10-08 with a test build that counted
+ordinary restarts as brownouts; not seen with a real brownout (R2).
 
 ### Flash layout
 
@@ -120,6 +160,7 @@ flash layout. Flash runs in QIO mode at 80 MHz; PSRAM is octal at 80 MHz.
 | --- | --- | --- |
 | `BOOT` | Power on | Splash |
 | `SETUP` | WiFi settings missing or rejected at boot | Setup needed, with the reason |
+| `ERROR` | At boot, the third brownout in a row | Error indicator, "Power supply too weak" |
 | `CONNECTING` | Boot complete | Connecting indicator |
 | `IDLE` | Server session ready | Waiting for wake word |
 | `CAPTURING` | Wake word detected while `IDLE` | Listening |
@@ -145,7 +186,10 @@ refuses: retrying cannot fix that either.
 The device gives up on a turn by itself in four cases: 15 s of capture
 with no `stop_capture`, 40 s of `THINKING` with no reply, 40 s of a reply
 under way with no audio arriving, and a message that does not fit the
-state it is in. In each it closes the connection, which is how the server
+state it is in. A fifth case is a request that has lost some of its audio
+on the way out: the network stalled for longer than the microphone's ring
+buffer holds, so the request would reach the server with a hole in it. In
+each it closes the connection, which is how the server
 learns of it (docs/PROTOCOL.md, rule 6), shows `ERROR` for 4 s, and
 reconnects. Each of the three times is longer than the server's own limit
 for the same wait, so that the server's `error` arrives first; the figures
@@ -181,24 +225,28 @@ cause of them.
 
 Task priorities decide which ready task a core runs first; higher runs first.
 This table is the single place that records them, so that code comments
-refer here instead of quoting each other's numbers.
+refer here instead of quoting each other's numbers. The last column says
+which tasks the task watchdog watches (see Recovering by itself); a task
+added later is watched if the device cannot work without it and its
+longest wait is the firmware's own to bound.
 
-| Task | Priority | Core | Notes |
-| --- | --- | --- | --- |
-| WiFi driver | 23 | 0 | ESP-IDF's; must keep up with the radio |
-| `esp_timer` | 22 | 0 | ESP-IDF's; runs software timer callbacks, which must be short |
-| Default event loop | 20 | 0 | ESP-IDF's; delivers WiFi, state and wake-word events |
-| Capture | 12 | 1 | Reads the microphone into the ring; must never fall 75 ms behind |
-| Audio test tasks | 10 | 1 | Console `audio` commands, short-lived |
-| Player | 10 | 1 | Writes reply audio to the amplifier, which paces it; above the wake word so that a model run cannot delay the speaker |
-| Wake word | 8 | 1 | Features and model every 30 ms; sleeps between |
-| WebSocket client | 7 | 0 | The component's own task, one per connection; receives reply audio and hands it to the player |
-| Upload | 6 | 0 | Reads the ring and sends request frames while capturing; sleeps otherwise |
-| State machine | 5 | 0 | Acts on one event at a time, each in well under a millisecond |
-| Link | 5 | 0 | Looks the server up, connects, and waits for the connection to end |
-| Display | 4 | 0 | LVGL drawing and animation; sleeps between frames |
-| Console | 2 | either | ESP-IDF's REPL; typing must not stall animation or audio |
-| `main` | 1 | 0 | Runs the start-up sequence, then ends |
+| Task | Priority | Core | Notes | Watched |
+| --- | --- | --- | --- | --- |
+| WiFi driver | 23 | 0 | ESP-IDF's; must keep up with the radio | No |
+| `esp_timer` | 22 | 0 | ESP-IDF's; runs software timer callbacks, which must be short | No |
+| Default event loop | 20 | 0 | ESP-IDF's; delivers WiFi, state and wake-word events | No |
+| Capture | 12 | 1 | Reads the microphone into the ring; must never fall 75 ms behind | Yes |
+| Audio test tasks | 10 | 1 | Console `audio` commands, short-lived | No |
+| Player | 10 | 1 | Writes reply audio to the amplifier, which paces it; above the wake word so that a model run cannot delay the speaker | Yes |
+| Wake word | 8 | 1 | Features and model every 30 ms; sleeps between | No: it reports its own failure, and stops itself if the model fails |
+| WebSocket client | 7 | 0 | The component's own task, one per connection; receives reply audio and hands it to the player | No: it waits on the network |
+| Upload | 6 | 0 | Reads the ring and sends request frames while capturing; sleeps otherwise | No: a send can block for seconds |
+| State machine | 5 | 0 | Acts on one event at a time, each in well under a millisecond | Yes |
+| Link | 5 | 0 | Looks the server up, connects, and waits for the connection to end | No: it waits on the network |
+| Display | 4 | 0 | LVGL drawing and animation; sleeps between frames | No |
+| Console | 2 | either | ESP-IDF's REPL; typing must not stall animation or audio | No |
+| `main` | 1 | 0 | Runs the start-up sequence, then ends | No |
+| Idle, one per core | 0 | each | FreeRTOS's; runs when nothing else can | Yes: starved for 5 s means a task is hogging the core |
 
 The audio set-up in `audio_init()` runs briefly on core 1 at the caller's
 priority, so that the I2S interrupts are placed on core 1.
@@ -271,7 +319,10 @@ allows.
 the ring at the position where the chime ended, which is
 slightly in the past by the time the task has woken. Those first frames go
 out at once; after that it sends one 20 ms frame as each is captured,
-until the server's `stop_capture`.
+until the server's `stop_capture`. If the audio the request starts with,
+or any later part of it, is no longer in the ring when the task comes to
+read it, the request is given up: the device does not send a request with
+a hole in it, as it does not play a reply with one.
 
 **Chime.** Two notes of 70 ms, 660 Hz and then 880 Hz, each
 faded in and out over 8 ms so that it does not click, at 30 % of full
@@ -489,6 +540,21 @@ otherwise be required; using one service for both transcript and endpointing
 keeps the two in agreement and avoids adding a third vendor to the latency
 path.
 
+The silence that ends a request stays at 400 ms. A setting of 1 s was
+tried on the device on 2026-10-08, to allow a pause in mid-sentence, and
+made the ending erratic: over six requests spoken by a person, one in
+three ended on the silence signal, 1 to 1.5 s after the speaker stopped,
+and the rest only on the word-timing signal, 2 to 4 s after. The service's
+silence signal is not dependable at that length on the microphone's audio.
+A longer silence would have to be measured by the server itself from the
+service's word timings; that was considered and not built (KNOWN-ISSUES
+R18).
+
+The synthesiser is given a second try at connecting, by the HTTP library,
+which retries only a failure to connect, when nothing has yet been sent.
+Each try is cut short at half the time allowed for reaching a service, and
+one limit of 5 s runs over everything up to the start of the response.
+
 Documented alternatives: ElevenLabs Flash for higher voice quality;
 faster-whisper with Piper for a fully local pipeline requiring no accounts.
 
@@ -586,13 +652,31 @@ end, Claude's first text came 1.2-1.8 s after that, and the first reply
 audio 2.4-3.5 s after it. The budget's figures from end-of-speech detection
 onward add up to 1.0-1.8 s, so the server is over budget before the device
 is involved. The recordings end in silence, which hides the wait for
-end-of-speech detection. Bringing this down is stage 7 (KNOWN-ISSUES R19).
+end-of-speech detection.
 
 Measured the same day on the device, on the breadboard, over five short
 questions in a synthetic voice: 2.2 to 3.3 s from the server's
 `stop_capture` to the first sound from the speaker, 2.8 s on average. The
 device's own share of that is about 0.07 s, so the budget's 100 ms for
 network and playback start holds, and the whole overrun is the server's.
+
+**The budget is not met, and that is accepted.** Stage 7 measured where
+the wait goes and took the inexpensive remedies; the wait was judged
+acceptable in use, so the costlier ones were left (KNOWN-ISSUES R19).
+Measured on 2026-10-08, with the server's finer timing log. With the
+desktop client on the server's machine, synthetic speech and a home
+internet connection, over three runs of short questions, twelve turns:
+from the end of speech, Claude's first text came after 0.9 to 4.5 s, its
+first whole sentence 0 to 1.1 s after that, and the first audio 0.3 to
+1.5 s after the sentence, 1.2 to 5.6 s in all. On the device, on the
+breadboard, four turns spoken by a person: 1.8, 2.8, 2.8 and 5.0 s from
+the end of the request to the first sound. Nearly all of the wait, and
+all of its spread, is Claude's time to its first text; one reply that day
+waited 10.7 s for it. The synthesiser's 0.5 to 0.6 s is its own time and
+not the connection's: measured three times each, its first audio came
+0.58 to 0.62 s after the request on a new connection, 0.58 s on one just
+used, and 0.50 to 0.52 s on one opened 8 s earlier, so connections are not
+opened ahead of need.
 
 ## Deployment
 
@@ -626,3 +710,7 @@ deferred.
 | Device tokens in the server's environment | A table in the database | Keeps credentials apart from the transcripts |
 | Deepgram without its SDK | The Deepgram SDK | The interface used is small and stable; the SDK's has changed across major versions |
 | Only the current day's conversation kept | Keeping every day | Transcripts are personal data and earlier days are never read again |
+| A watchdog timeout restarts the chip | The default, a warning in the log | A device that has stopped deciding cannot report it; a restart brings it back in seconds, and the core dump keeps the evidence |
+| Brownout count in RTC memory | A count in NVS | It need only outlive a restart; nothing is written to flash, and a power cycle starts afresh |
+| End-of-speech silence left at 400 ms | 1 s, to allow a pause in mid-sentence | At 1 s the service's silence signal was not dependable on the microphone's audio, and requests ended 1 to 4 s after the speaker |
+| Connections to the services opened when needed | Opened ahead, when the server starts and a request begins | Measured: a new connection costs the synthesiser's first audio nothing that could be told from the variation |

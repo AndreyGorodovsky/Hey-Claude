@@ -27,6 +27,9 @@
  *   9. Network stack  - TCP/IP layer, needed by WiFi.
  *  10. Settings       - read from NVS into memory, once.
  *  11. Console        - serial command line for settings and tests.
+ *      Brownout guard - if the last three restarts were all caused by the
+ *                       supply dipping, the sequence stops here, with the
+ *                       reason on the screen (brownout_guard.c).
  *  12. State machine  - from here on the only code that changes the state.
  *                       Before the link, whose events it must not miss.
  *  13. Server link    - waits for WiFi, then finds and joins the server.
@@ -35,12 +38,14 @@
  *
  * Steps 12 to 14 run only if the settings they need are present. Without
  * them the state is SETUP, with the reason, and stays there until they are
- * entered at the console and the device is rebooted.
+ * entered at the console and the device is rebooted. They do not run
+ * either when the brownout guard has tripped; the state is then ERROR.
  */
 #include "app_config.h"
 #include "app_state.h"
 #include "audio.h"
 #include "audio_ring.h"
+#include "brownout_guard.h"
 #include "console.h"
 #include "state_machine.h"
 #include "display.h"
@@ -149,6 +154,9 @@ static void init_nvs(void)
 void app_main(void)
 {
     log_banner();
+    /* Asked first, so that every boot is counted, and acted on further
+     * down, once there is a screen and a console to say so on */
+    bool supply_too_weak = brownout_guard_tripped();
 
     /* Not ESP_ERROR_CHECK: without audio the device can still join WiFi and
      * take console commands, which is more useful for diagnosing the fault
@@ -173,7 +181,6 @@ void app_main(void)
     /* Listening and speaking need working audio. Failures are logged and
      * not fatal, like audio's: the console stays usable, and the state
      * machine shows on the screen that the device cannot hear or speak. */
-    bool listening_ok = false;
     bool speaker_ok = false;
     if (audio_err == ESP_OK) {
         err = audio_ring_start();
@@ -183,7 +190,8 @@ void app_main(void)
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "wake word not available: %s", esp_err_to_name(err));
         }
-        listening_ok = err == ESP_OK;
+        /* Not passed on from here: the state machine asks the wake-word
+         * component itself whether the device can hear */
 
         /* The player reports to the state machine, and takes the two times
          * that are the protocol's from the protocol's header */
@@ -205,6 +213,18 @@ void app_main(void)
     ESP_ERROR_CHECK(app_config_load());
     /* The console runs in its own task from here on, independently of app_main */
     ESP_ERROR_CHECK(console_start());
+
+    if (supply_too_weak) {
+        /* The brownout guard (brownout_guard.c). WiFi is not joined and
+         * the state machine is not started, so nothing is played either:
+         * those are what draw the most. The state stays as set here until
+         * the device is powered off and on, or restarted with `reboot`. */
+        esp_err_t shown = app_state_set(APP_STATE_ERROR, "Power supply too weak");
+        if (shown != ESP_OK) {
+            ESP_LOGE(TAG, "state not shown: %s", esp_err_to_name(shown));
+        }
+        return;
+    }
 
     const app_config_t *cfg = app_config_get();
     if (!app_config_has_wifi()) {
@@ -228,7 +248,6 @@ void app_main(void)
     app_state_set(APP_STATE_CONNECTING, NULL);
     const state_machine_config_t machine = {
         .speaker_ok = speaker_ok,
-        .listening_ok = listening_ok,
     };
     /* ESP_ERROR_CHECK: these fail only if memory has run out this early,
      * and without them the device can do nothing useful */

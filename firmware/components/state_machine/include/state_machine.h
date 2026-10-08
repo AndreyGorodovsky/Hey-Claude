@@ -30,7 +30,6 @@
 /* What the state machine is told at start about the parts it depends on */
 typedef struct {
     bool speaker_ok;    /* the amplifier and the player started */
-    bool listening_ok;  /* the microphone and wake-word detection started */
 } state_machine_config_t;
 
 /* Starts the state machine in its own task. Call once at boot, after the
