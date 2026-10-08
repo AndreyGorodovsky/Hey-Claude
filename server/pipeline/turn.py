@@ -112,8 +112,12 @@ class _Timings:
     """Moments of one turn, on the monotonic clock, for the latency log."""
 
     started: float
+    #: Speech-to-text was reached. Audio sent before this waited in the queue.
+    stt_open: float | None = None
     capture_done: float | None = None
     first_text: float | None = None
+    #: The model's first whole sentence, which is what synthesis waits for.
+    first_sentence: float | None = None
     first_audio: float | None = None
 
 
@@ -153,7 +157,9 @@ async def run_turn(
     except Exception:
         log.exception("device %s: unexpected failure in a turn", device_id)
         await _fail(io, ErrorCode.INTERNAL, "The server failed.")
-    else:
+    finally:
+        # Whatever the outcome: the turns that fail or run long are the
+        # ones whose timings are wanted most.
         _log_timings(device_id, timings)
 
 
@@ -164,19 +170,29 @@ async def _fail(io: TurnIO, code: ErrorCode, message: str) -> None:
 
 
 def _log_timings(device_id: str, timings: _Timings) -> None:
-    if (
-        timings.capture_done is None
-        or timings.first_text is None
-        or timings.first_audio is None
-    ):
+    """Log where a turn's time went, as far as the turn got.
+
+    The last three figures are each counted from the end of speech, not
+    from the one before: the last is the whole wait for the reply, and the
+    differences are the model's share, the rest of its first sentence, and
+    the synthesiser's. A mark the turn never reached is shown as "-".
+    """
+    if timings.stt_open is None or timings.capture_done is None:
+        # The turn ended before a request was heard: nothing to time.
         return
+
+    def after_speech(mark: float | None) -> str:
+        return "-" if mark is None else f"{mark - timings.capture_done:.2f} s"
+
     log.info(
-        "device %s: capture %.2f s; from end of speech, first text %.2f s,"
-        " first audio %.2f s",
+        "device %s: speech-to-text reached in %.2f s, capture %.2f s; from end"
+        " of speech, first text %s, first sentence %s, first audio %s",
         device_id,
+        timings.stt_open - timings.started,
         timings.capture_done - timings.started,
-        timings.first_text - timings.capture_done,
-        timings.first_audio - timings.capture_done,
+        after_speech(timings.first_text),
+        after_speech(timings.first_sentence),
+        after_speech(timings.first_audio),
     )
 
 
@@ -205,6 +221,7 @@ async def _capture(
         - (time.monotonic() - timings.started)
     )
     stream = await deps.stt.open(CAPTURE_SAMPLE_RATE)
+    timings.stt_open = time.monotonic()
     pump = asyncio.create_task(_pump(audio, stream))
     try:
         # Reaching the limit is not a failure: what was heard is answered.
@@ -321,6 +338,8 @@ async def _reply(
             sentences.put_nowait(None)
 
     async def say(sentence: str) -> None:
+        if timings.first_sentence is None:
+            timings.first_sentence = time.monotonic()
         await audio.wait_for_room()
         async for piece in deps.tts.synthesize(sentence, rate):
             if timings.first_audio is None:

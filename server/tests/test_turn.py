@@ -44,6 +44,16 @@ async def test_a_turn_reports_its_steps_in_order_and_is_recorded(tmp_path):
     assert await deps.store.history("dev", NOON) == [Exchange(QUESTION, ANSWER)]
 
 
+async def test_a_completed_turn_logs_where_its_wait_went(tmp_path, caplog):
+    caplog.set_level("INFO", logger="server.pipeline.turn")
+    await run(make_deps(tmp_path))
+
+    lines = [r.getMessage() for r in caplog.records if "first audio" in r.getMessage()]
+    assert len(lines) == 1
+    for part in ("speech-to-text reached", "first text", "first sentence"):
+        assert part in lines[0]
+
+
 async def test_earlier_exchanges_are_sent_to_the_model(tmp_path):
     llm = FakeLlm()
     deps = make_deps(tmp_path, llm=llm)

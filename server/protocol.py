@@ -60,7 +60,10 @@ DEVICE_REPLY_BUFFER_MS = 4000
 # in firmware/components/protocol/include/protocol.h; a test compares the
 # two files and checks the ordering.
 
-#: Seconds allowed to connect to a service.
+#: Seconds allowed for reaching a service: all of it, any second try
+#: included. The synthesiser's client holds to this as one limit over its
+#: tries (tts/deepgram.py). Claude's client applies it to each of its two
+#: tries, which FIRST_AUDIO_LIMIT_SECONDS is there to cover.
 SERVICE_CONNECT_SECONDS = 5
 
 #: Seconds of silence tolerated from Claude while a reply is being generated.

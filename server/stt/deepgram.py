@@ -145,6 +145,16 @@ class DeepgramStream(SpeechToTextStream):
         if kind == "Results":
             alternatives = event.get("channel", {}).get("alternatives") or [{}]
             text = alternatives[0].get("transcript", "")
+            if log.isEnabledFor(logging.DEBUG):
+                # For working out why a request ended when it did. The
+                # words themselves are personal data and are not logged,
+                # only how many.
+                log.debug(
+                    "deepgram: results, %d words, final=%s, speech_final=%s",
+                    len(text.split()),
+                    bool(event.get("is_final")),
+                    bool(event.get("speech_final")),
+                )
             if event.get("is_final"):
                 self.tracker.add_final(text)
                 self._settled = True
@@ -154,6 +164,7 @@ class DeepgramStream(SpeechToTextStream):
             if event.get("speech_final"):
                 self.tracker.end_of_speech()
         elif kind == "UtteranceEnd":
+            log.debug("deepgram: utterance end")
             self.tracker.end_of_speech()
         elif kind == "Error":
             log.warning("Deepgram reported an error on the stream")
@@ -178,11 +189,17 @@ class DeepgramStream(SpeechToTextStream):
             # words were still only in an interim result. Ask Deepgram to
             # flush what it holds and wait for those results. After an
             # ending on a final result there is nothing left to wait for.
+            log.debug(
+                "deepgram: flushing; ended=%s, settled=%s",
+                self.tracker.ended,
+                self._settled,
+            )
             with suppress(WebSocketException):
                 await self._connection.send(json.dumps({"type": "CloseStream"}))
             with suppress(TimeoutError):
                 async with asyncio.timeout(_DRAIN_TIMEOUT):
                     await asyncio.shield(self._reader)
+            log.debug("deepgram: flushed")
         await self.aclose()
         return self.tracker.transcript
 
