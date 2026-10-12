@@ -16,6 +16,7 @@ history. Check what is tracked, not only what is staged.
 | Anthropic API key (`sk-ant-...`) | Server environment, pasted into a config file or a test script |
 | Speech provider API keys | Same |
 | Device tokens | The server's `DEVICE_TOKENS` setting, firmware configuration, test fixtures, a command line |
+| The Claude Code login, where the trial of `LLM_BACKEND=claude_code` is used | Claude Code keeps it in the user's profile, outside the repository; it leaks only if that directory, or a login token set in an environment variable, is copied into a file here |
 | WiFi SSID and passphrase | `sdkconfig`, NVS CSV files, hardcoded during bring-up |
 
 ### ESP-IDF specific traps

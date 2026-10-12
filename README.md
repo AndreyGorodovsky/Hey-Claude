@@ -249,7 +249,7 @@ have no usable default:
 
 | Setting | Meaning |
 | --- | --- |
-| `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY` | The two service keys. See [SECRETS.md](SECRETS.md) for how to create them |
+| `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY` | The two service keys. See [SECRETS.md](SECRETS.md) for how to create them. The first is not needed with the trial described below |
 | `DEVICE_TOKENS` | One JSON object giving each device's identifier and its token, for example `{"hc-a1b2c3":"<token>"}`. A token is the device's password to the server: it stops anything else on the network from spending the keys or continuing a conversation. The file shows how to generate one |
 | `TIMEZONE` | An IANA name such as `Europe/Berlin`. It decides when the day's conversation ends |
 
@@ -261,6 +261,22 @@ server/.venv/Scripts/python -m server
 
 The server listens on port 8765 and announces itself on the local network,
 so a device finds it without being told its address.
+
+**A trial: Claude with access to the web.** As built, the assistant has
+no access to the internet and says so. With `LLM_BACKEND=claude_code` in
+`server/.env`, the server instead runs the Claude Code command-line tool
+for each request, under the login of whoever is signed in to it on the
+server's machine, and the assistant can search the web and read pages:
+the weather, the news, a price. It needs Claude Code installed and signed
+in on that machine, and no Anthropic API key. An answer that uses the web
+begins with "Let me check." and follows some seconds later. Read R21 of
+[KNOWN-ISSUES.md](KNOWN-ISSUES.md) before turning it on: a web page can
+mislead the assistant, and `CLAUDE_FETCH_DOMAINS` limits what it may
+read. After the tool updates itself, check that the trial still works:
+
+```sh
+server/.venv/Scripts/python -m server.tools.claude_cli_bench
+```
 
 The server's tests need no keys and no network:
 

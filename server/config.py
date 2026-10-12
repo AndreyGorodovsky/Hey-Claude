@@ -18,9 +18,10 @@ import logging
 import re
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from server.protocol import (
@@ -58,7 +59,9 @@ class Settings(BaseSettings):
     # --- Credentials -----------------------------------------------------
     # Deliberately without defaults: absence is a startup failure.
 
-    anthropic_api_key: SecretStr
+    #: Required with the ``api`` backend, and not used by the other; see
+    #: ``llm_backend``.
+    anthropic_api_key: SecretStr | None = None
     deepgram_api_key: SecretStr
 
     #: Device identifier -> shared secret, as a JSON object. Empty by default:
@@ -78,6 +81,29 @@ class Settings(BaseSettings):
 
     timezone: str = "UTC"
     day_rollover_hour: int = Field(default=4, ge=0, le=23)
+
+    #: How Claude is reached. ``api`` calls the API with ANTHROPIC_API_KEY.
+    #: ``claude_code`` is a trial: it runs the Claude Code tool under the
+    #: login of whoever is signed in to it on this machine, with web search.
+    llm_backend: Literal["api", "claude_code"] = "api"
+
+    #: The Claude Code tool, as a name to look up or a full path. Used only
+    #: by the ``claude_code`` backend.
+    claude_cli_path: str = "claude"
+
+    #: The sites whose pages the assistant may read with the ``claude_code``
+    #: backend, as a JSON list: ``["*"]`` for any site, a list of host names
+    #: for those sites only, or an empty list for none. It can search the
+    #: whole web either way, but a search returns only short extracts, too
+    #: little for a figure that changes by the hour. A page can carry text
+    #: written to mislead a model, and an address it is told to open can
+    #: carry the day's conversation out; a list of trusted sites closes
+    #: that, at the cost of answers (KNOWN-ISSUES R21). Any site is the
+    #: default. The value is read, and refused if it is not one of the
+    #: three forms, where the backend is built, by the code that owns its
+    #: meaning (``FetchPolicy`` in llm/claude_code.py).
+    claude_fetch_domains: list[str] = Field(default_factory=lambda: ["*"])
+
     claude_model: str = "claude-opus-5"
     claude_effort: str = "low"
 
@@ -167,6 +193,19 @@ class Settings(BaseSettings):
                 f"CLAUDE_EFFORT {value!r} is not one of {sorted(allowed)}"
             )
         return value
+
+    @model_validator(mode="after")
+    def _api_backend_needs_its_key(self) -> Settings:
+        # A key left blank, as in a copy of .env.example, is no key.
+        if self.anthropic_api_key is not None and (
+            not self.anthropic_api_key.get_secret_value().strip()
+        ):
+            self.anthropic_api_key = None
+        if self.llm_backend == "api" and self.anthropic_api_key is None:
+            raise ValueError(
+                "ANTHROPIC_API_KEY is required when LLM_BACKEND is api"
+            )
+        return self
 
     @property
     def tz(self) -> ZoneInfo:

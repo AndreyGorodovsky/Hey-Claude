@@ -500,7 +500,8 @@ server/
                   framing of reply audio
   pipeline/       One turn from request to reply; sentence splitting
   stt/            Speech-to-text adapter interface and implementations
-  llm/            Claude client, system prompt, streaming
+  llm/            Claude client, system prompt, streaming; and, as a trial,
+                  a second client that runs the Claude Code tool
   tts/            Text-to-speech adapter interface and implementations
   conversation/   Day-scoped conversation store
   discovery.py    mDNS advertisement
@@ -594,16 +595,87 @@ below the model's context window.
 | Streaming | Enabled | Required to begin synthesis before the reply completes |
 | Fallbacks | Server-side, default routing | Handles refusal stop reasons without a maintained model list |
 | Output ceiling | 8000 tokens | Stops a runaway reply from being synthesised for minutes |
-| Timeout | 20 s of silence on the stream | The SDK's default tolerates ten minutes, which would hold a device in `THINKING` as long |
+| Timeout | 24 s of silence on the stream | The SDK's default tolerates ten minutes, which would hold a device in `THINKING` as long |
 
 The system prompt constrains replies to spoken form: no markdown, no lists, no
 headings, and short answers by default. Text shaped for a screen reads badly
 when synthesised. It also tells the model that its input is a transcript
 that may contain misheard words, and that it has no clock and no access to
-the internet.
+the internet. With the trial described next, that last part differs.
 
 If the model declines a request and says nothing, the server speaks a fixed
 sentence in its place. A declined request is not added to the conversation.
+
+### Claude through Claude Code
+
+A trial, built in stage 7 on a branch of its own, and off unless the
+server setting `LLM_BACKEND` is `claude_code`. In place of the API and its
+key, the server runs the Claude Code command-line tool, `claude -p`, which
+answers under the login of whoever is signed in to it on the server's
+machine, and which can search the web and read pages. The device has one
+user, who is that account's owner. Everything else is as before: the same
+interface to the pipeline, the same model and effort, replies cut into
+sentences and spoken as they come.
+
+One process is started for each turn and ends with it. It is given the
+system prompt on its command line and, on its standard input, the day's
+earlier exchanges as text followed by the new request, so transcripts are
+not in the machine's process list. It keeps no session of its own: the
+conversation stays in the server's store, in one copy that is deleted with
+the day. The tool caches the prompt itself.
+
+The tool is a general agent, here used as a voice, so it is locked down:
+
+- **Tools.** Web search and the reading of web pages, and nothing that
+  runs a command or touches a file. Which pages may be read is a setting,
+  `CLAUDE_FETCH_DOMAINS`: any site, which is the default; named sites
+  only, each a permission rule of its own with everything else refused;
+  or none.
+- **Nothing of the signed-in person's set-up.** No settings files, hooks,
+  plugins, skills or instruction files, and no MCP servers, which would
+  otherwise include the account's connectors to mail and files.
+- **Nowhere to look.** It runs in an empty temporary directory.
+- **No credentials.** Its environment is built from a short list of
+  variables to pass on, so the server's API keys and device tokens are not
+  in it.
+- **Checked on every run.** The first line the process prints lists the
+  tools and MCP servers it loaded and its permission mode. A run with
+  anything beyond what was asked for is stopped before it can answer.
+
+What the open web costs in safety is R21 of
+[KNOWN-ISSUES.md](KNOWN-ISSUES.md).
+
+Three things in the client exist because the reply is spoken:
+
+- The prompt asks for one short sentence before a search, "Let me check.",
+  and the client ends that sentence where the tool reports the end of a
+  block of text. The pipeline speaks a sentence only when something
+  follows it, and what follows here is the answer, many seconds later.
+- The search tool instructs the model to close with a list of its sources
+  as links. The prompt forbids one, and the client removes one that comes
+  all the same, so that no web address is read aloud or stored.
+- The limit on silence from Claude is counted in text that can be
+  spoken, not in lines printed, since the process prints a line for every
+  step of a search. A reply that says nothing for 24 s is given up with
+  `llm_failed`, which keeps the server's failure ahead of the 40 s a
+  device waits, as [docs/PROTOCOL.md](docs/PROTOCOL.md) requires. The
+  limit was 20 s, for both ways of reaching Claude, and was raised for
+  this one, whose replies pause to search; 24 s is as far as it can go.
+
+Measured on 2026-10-12, with Claude Code 2.1.296. On the server's machine,
+timed from the start of the process: the first text of a plain answer
+after 1.7 to 4.0 s over twenty questions, median 1.9 s, the same with ten
+earlier exchanges as with none; a reply that searched or read a page whole
+after 10 to 26 s. On the device, a person speaking, after the correction
+described in [STATUS.md](STATUS.md): the first sound 3.2 to 3.9 s after the
+end of the request, with or without a search, and the answer to a searched
+question 6.2 s after "Let me check.". The wait for a plain answer is that
+of the API, whose first sound came after 1.8 to 5.0 s on 2026-10-08.
+
+The tool updates itself, and neither its options nor the shape of what it
+prints is a published interface as the API is. After an update,
+`server/tools/claude_cli_bench.py` shows whether both still hold; a
+process that cannot start says why in the server's log.
 
 ### Reply pipeline
 
@@ -714,3 +786,8 @@ deferred.
 | Brownout count in RTC memory | A count in NVS | It need only outlive a restart; nothing is written to flash, and a power cycle starts afresh |
 | End-of-speech silence left at 400 ms | 1 s, to allow a pause in mid-sentence | At 1 s the service's silence signal was not dependable on the microphone's audio, and requests ended 1 to 4 s after the speaker |
 | Connections to the services opened when needed | Opened ahead, when the server starts and a request begins | Measured: a new connection costs the synthesiser's first audio nothing that could be told from the variation |
+| In the Claude Code trial, the day's conversation sent as text with each request | A session kept by the tool and resumed | One copy of the history, in the server's store, deleted with the day; the tool writes no transcript to the profile |
+| In the trial, one process for each turn | A process kept running between turns | A process that lives on gathers a conversation of its own; starting one costs nothing that could be told from the API's own wait |
+| In the trial, pages read from any site by default | Search only; a short list of sites | Measured: search alone did not answer the weather, and a list answered the weather but not the news. The assistant holds one day of conversation and cannot act, so the risk was accepted (R21) |
+| In the trial, silence from Claude counted in spoken text | Counted in lines the process prints | A search prints lines throughout; counted so, a reply could be silent past what a device waits |
+| Silence tolerated from Claude raised to 24 s | 20 s | A reply that searches twice can be silent for longer than 20 s; with the synthesiser's 15 s, 24 s still ends a second before a device gives up |

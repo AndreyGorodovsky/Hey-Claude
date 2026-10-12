@@ -23,7 +23,14 @@ class LanguageModel(ABC):
     def stream_reply(
         self, history: Sequence[Exchange], user_text: str
     ) -> AsyncIterator[str]:
-        """Yield the reply as pieces of text, in order, as they are produced."""
+        """Yield the reply as pieces of text, in order, as they are produced.
+
+        The reply is spoken sentence by sentence, and a sentence is taken
+        to be over only when something follows it. So when the text pauses
+        with more to come, as it does while a model uses a tool, the piece
+        before the pause must end in whitespace or a line break; otherwise
+        its last sentence waits, unspoken, until the pause is over.
+        """
 
     async def aclose(self) -> None:
         """Release any connection held open between requests."""

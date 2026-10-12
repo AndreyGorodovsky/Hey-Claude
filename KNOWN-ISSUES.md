@@ -122,7 +122,7 @@ all three are healthy and reachable over the local network's uplink.
 without touching the pipeline. Partial failures surface as an error state on
 the device rather than a hang. Built in stage 5: each service's failure
 ends the turn with its own error code, and each wait has a limit (5 s to
-connect to any of them, 20 s of silence from Claude, 10 s from
+connect to any of them, 24 s of silence from Claude, 10 s from
 text-to-speech), listed in [docs/PROTOCOL.md](docs/PROTOCOL.md). These
 paths are tested with stand-ins for the services; none has been observed
 with a real outage. From stage 7 the synthesiser gets a second try at
@@ -524,6 +524,9 @@ The record:
 | 2026-10-08 | Same bench, same firmware, on for 58 to 70 min, while the server was stopped in the middle of four turns in succession. Just after a reply of 15 s; and connected and idle about a minute after each of the last three losses | 57.5, 56.5, 56.5, 56.5 °C |
 | 2026-10-08 | Same bench, during the watchdog and brownout-guard tests: after seven restarts in three minutes, idle and connected; and 15 s after reflashing, idle and connected | 53.5, 51.5 °C |
 | 2026-10-08 | Same bench, on the firmware as corrected after review, 15 s after flashing, idle and connected; and about 25 min later, idle, a few minutes after one spoken turn | 52.5, 56.5 °C |
+| 2026-10-12 | Same bench, the stage 7 firmware, with the server reaching Claude through Claude Code (R21). 12 s after a reset, the board already warm; then once a minute through eight spoken turns in five minutes, four of them with a search | 53.5 °C; 55.5, 56.5, 55.5, 56.5, 56.5 °C |
+| 2026-10-12 | Same bench, the same session. Connected and idle, once a minute for the eighteen minutes after those turns | 55.5 °C each time but one, of 54.5 °C |
+| 2026-10-12 | Same bench, after a further reset. Connected and idle, just before four spoken turns; a minute later, between them; and during the last reply, of 18.7 s with a silence of 6.2 s in it | 55.5, 55.5, 57.5 °C |
 
 The readings during replies were taken at playback levels of 40 % and
 60 %, but for the last, of 2026-10-07, at the present 100 %.
@@ -536,6 +539,119 @@ be warmer than open air; and with WiFi power saving on, for comparison.
 send limit that stage 6 raised left as it is, and a lower processor speed
 outside conversations. An enclosure is to be designed with the reading in
 hand.
+
+### R21 — The trial of Claude through Claude Code, and the open web
+
+With the server setting `LLM_BACKEND=claude_code`, a trial built in
+stage 7, the assistant is the Claude Code tool running under the server
+owner's subscription login, and it can search the web and read pages
+([ARCHITECTURE.md](ARCHITECTURE.md), Claude through Claude Code). The API
+with no web access remains the default. The trial brings risks the API
+route does not have.
+
+**A page can mislead the assistant.** Text on a web page, or in a search
+result, can be written to be taken for instructions. The assistant cannot
+run a command, touch a file or reach the account's connectors, and holds
+no credential, so what such text can bring about is limited to three
+things: a wrong answer spoken with confidence; the day's conversation sent
+out inside an address the assistant is told to open; and a page on the
+local network being read, such as a router's status page. The conversation
+is what was said to the device that day.
+
+This was weighed on 2026-10-12 and accepted: reading any page is the
+default. It was arrived at in steps, on measurements. Search alone
+returns short extracts, and did not answer "What is the weather in London
+today?" in five tries of five. Allowed to read five named sites, a
+weather service, three news sites and an encyclopaedia, it answered the
+weather, and failed the news in the one try, every news site refusing to
+be read. Allowed any site, it answered all of weather, news, the price of
+gold and a race result in one run of each.
+
+*Mitigation:* `CLAUDE_FETCH_DOMAINS` restricts reading to named sites,
+each an exact host name, or turns it off with an empty list. With named
+sites the tool refuses every other, which closes the second and third of
+the three; the first, a wrong answer, comes with any use of the web, and
+with search alone. That a named-sites policy does refuse an unlisted site
+was not seen: asked to read one, the model declined without trying. The
+check made on every run covers the tools, the MCP servers and the
+permission mode; the tool does not report the permission rules
+themselves.
+
+**The tool is not a fixed interface.** It updates itself. The client
+relies on about fifteen of its options and on the shape of the events it
+prints, written against version 2.1.296. An update can break either; every
+turn then fails with `llm_failed`, and the server's log gives the tool's
+own complaint. The stand-in the tests use is a copy of that shape, so the
+tests cannot notice a change in the real tool.
+
+*Mitigation:* run `python -m server.tools.claude_cli_bench` after an
+update; it takes a minute and puts fixed questions through the server's
+own client. The server logs the tool's version at the first turn.
+
+**A subscription has usage limits**, shared with whatever else the
+account's owner does with Claude Code. When one is reached every turn
+fails until it resets. Not seen. There is no falling back to the API:
+that would need both credentials on the server and was left out of the
+trial.
+
+**A searched reply that stays silent for 24 s is given up.** The limit on
+silence from Claude is counted in text, as described in
+ARCHITECTURE.md, and a device hears nothing while the assistant searches.
+The silence itself was not logged on the bench, only the whole reply.
+Before the limit was counted so, most replies that used the web were
+whole in 10 to 20 s; three took 24.9, 26.5 and, on the device, 20.6 s,
+with two, four and five look-ups. The limit was 20 s when it was first
+counted in text, and was raised on 2026-10-12 to 24 s, the most the
+device's own limit leaves room for, which leaves a second of margin
+where there were five. The longest of those three replies may still end
+with `llm_failed` and the device's "error" screen in place of a late
+answer.
+The prompt now tells the model to make at most two look-ups and why.
+No reply has yet been seen to be given up for silence.
+
+**Answers from the web are only as good as what was found.** Seen on
+2026-10-12: a race result reported as unconfirmed, or given to the wrong
+driver with a warning, in two of five tries with search alone; a gold
+price hedged across a range of nearly a thousand dollars; and twice, on a
+Monday, the remark that markets are closed at the weekend, in replies
+that had the day right. The last is the model's own reasoning.
+
+**A sentence that opens a line with "Sources:" is taken for the list.**
+The client removes everything from such a line to the end of that part of
+the reply. The server's log counts what it removed in each reply
+(`sources_dropped`), so use shows whether the removal is needed at all:
+after the prompt forbade the list, none came in the replies that were
+looked at.
+
+**What was measured, and what was not.** All on 2026-10-12, `claude-opus-5`
+at low effort, Claude Code 2.1.296, a home internet connection.
+
+- On the server's machine, with the bench script, timed from the start of
+  the process. Plain questions: first text after 1.72 to 2.50 s over
+  five, median 1.91 s; with ten earlier exchanges sent along, 1.67 to
+  3.95 s over fifteen, median 1.95 s, and the whole reply in 3.2 to 5.5 s.
+  Questions needing the web, search only, with the same history: first
+  text after 1.64 to 2.28 s over twelve, the whole reply in 10.3 to
+  26.5 s. Reading any site, four questions: the whole reply in 9.8 to
+  19.4 s.
+- On the device, on the breadboard, a person speaking, by the server's
+  log from the end of the request. Before "Let me check." was spoken in
+  time: four plain answers began after 3.3 to 5.4 s, four that used the
+  web after 7.3 to 20.0 s. After: two plain answers after 3.2 and 3.3 s,
+  two that used the web after 3.3 and 3.9 s, each with 6.2 s of silence
+  before the answer.
+- Not measured: a day's real conversation as history; a usage limit; the
+  wait when the tool has not been run for hours; more than twelve turns
+  on the device.
+- The figures above are from the code before the review's corrections.
+  The corrected code was then run against the tool, once, on the
+  server's machine, with the limit at 20 s: eleven questions, all
+  answered. First text after 1.78 to 2.50 s for five plain ones and 1.61
+  to 2.27 s for six others; the whole reply in 8.1 to 18.0 s for the five
+  that searched or read a page, each opening with "Let me check.",
+  including one that read a page with no search before it; no list of
+  sources removed, none having come. It has not been run on the device
+  since the corrections, nor at all with the limit at 24 s.
 
 ## Resolved
 
@@ -591,7 +707,8 @@ hand.
   cannot refer to it.
 - **The assistant does not know the date or time**, and says so when
   asked. The system prompt is kept free of anything that varies, for
-  prompt caching.
+  prompt caching. With the trial of R21 it knows the date, which the
+  Claude Code tool tells it, and not the time of day.
 - **The server has been run only with synthetic speech.** Its end-to-end
   test used a text-to-speech voice through the desktop client. No real
   voice, microphone or device has been through it yet.
@@ -689,6 +806,15 @@ hand.
   A larger start-up buffer, 80 ms raised to about 300 ms, would cover a
   lump up to 0.3 s late at the start, at the cost of about 0.2 s more
   wait before every reply. Not tried, and not decided (R19).
+
+  The same is seen after a long silence inside a reply. With the trial
+  of R21 a reply says "Let me check.", is silent while the assistant
+  searches, and then gives the answer. Seen on 2026-10-12, twice: after a
+  silence of 6.2 s the answer ran out of audio two and four more times,
+  for 40 to 80 ms each, in its first second. The player starts again
+  from an empty buffer there as it does at the start of a reply, with
+  the same 80 ms in hand. Found during part C of stage 7 and not
+  corrected, the player being outside that part.
 - **The speaker shakes the breadboard, and that can be heard.** On
   2026-10-07, in the last two of three long replies played almost back
   to back, the voice turned robotic part-way through each. The device

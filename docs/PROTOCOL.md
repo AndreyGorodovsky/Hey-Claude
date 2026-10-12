@@ -198,7 +198,7 @@ The device, for its part:
 | Longest capture | 13 s from `utterance_start` (server setting) | Server: sends `stop_capture` and answers what was heard |
 | Longest capture, as a guard | 15 s from `utterance_start` | Device: closes the connection (rule 6) |
 | Reaching a service | 5 s | Server: `error` for that service |
-| Silence from Claude | 20 s | Server: `error` with `llm_failed` |
+| Silence from Claude | 24 s | Server: `error` with `llm_failed` |
 | Silence from text-to-speech | 10 s | Server: `error` with `tts_failed` |
 | First reply audio, from `stop_capture` | 30 s | Server: `error` with `llm_failed` or `tts_failed`, whichever it was waiting on |
 | Wait in `THINKING` | 40 s from `stop_capture` | Device: closes the connection (rule 6) |
@@ -214,9 +214,16 @@ so that the server's `error` arrives first when a service fails:
 - the server sends audio or an `error` within 30 s of `stop_capture`,
   whatever its services' own limits and retries add up to, and the device
   waits 40 s;
-- inside a reply, the longest silence the server's services allow is 35 s
-  (20 s from Claude, then 5 s to reach the synthesiser and 10 s of silence
-  from it), and the device allows 40 s.
+- inside a reply, the longest silence the server's services allow is 39 s
+  (24 s from Claude, then 5 s to reach the synthesiser and 10 s of silence
+  from it), and the device allows 40 s. The first of these was 20 s until
+  stage 7 and cannot be raised further.
+
+"Silence from Claude" is silence in the text of the reply, whatever else
+the server may be receiving meanwhile. With the trial that gives the
+assistant access to the web ([ARCHITECTURE.md](../ARCHITECTURE.md), Claude
+through Claude Code), a reply can pause for a search after its first
+words; a pause of 24 s ends the turn with `llm_failed` like any other.
 
 A device that stops reading from the connection also stops answering pings
 and is dropped. Not reading is therefore not a way to slow the server down.

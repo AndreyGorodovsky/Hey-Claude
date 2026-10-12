@@ -3,10 +3,11 @@
 **Current stage:** Stage 7, latency and robustness. Its parts A, latency,
 and B, robustness, are built, reviewed and corrected, with two tests left
 for later: WiFi lost and restored, and a run of several hours. Part C, a
-trial of reaching Claude through a Claude Code subscription, has not been
-started. The steps are under Stage 7 plan below.
+trial of reaching Claude through a Claude Code subscription, with access
+to the web, is built on a branch of its own, measured on the device,
+reviewed and corrected. The steps are under Stage 7 plan below.
 
-**Last updated:** 2026-10-08
+**Last updated:** 2026-10-12
 
 ## Where the project stands
 
@@ -88,7 +89,8 @@ by another. The protocol is written down in
 [docs/PROTOCOL.md](docs/PROTOCOL.md), which is what the stage 6 firmware
 is built against.
 
-The server is tested at two levels. Its own tests, 100 of them as of stage 7, run the
+The server is tested at two levels. Its own tests, 100 of them as of
+stage 7 and 161 with part C's, run the
 whole path with stand-ins for the three services and need no keys or
 network. A desktop client, `server/tools/desktop_client.py`, plays recorded
 requests to a running server as the device will. Measured with it on
@@ -155,17 +157,69 @@ transcript. They stay listed in KNOWN-ISSUES R19.
 | B6. A run of several hours with turns at intervals: memory, stack headroom, pauses, reconnections and chip temperature | Not yet made; to be done after the review. The longest run so far on the stage 7 firmware is about 70 minutes, with thirteen turns |
 
 **Part C, the assistant's model reached through a Claude Code
-subscription, as a trial.** Approved on 2026-10-08, to be built after
-parts A and B, on a git branch of its own so that it can be dropped
-whole if it does not work out. The API remains the default.
+subscription, as a trial.** Approved on 2026-10-08 and built on
+2026-10-12, on the git branch `stage7c-subscription-trial`, so that it can
+be dropped whole if it does not work out. The API remains the default;
+the trial is chosen with the server setting `LLM_BACKEND=claude_code`. It
+changes no firmware and nothing in the protocol. What it is and how it is
+locked down is in [ARCHITECTURE.md](ARCHITECTURE.md), under Claude through
+Claude Code; its risks and every figure are in R21 of
+[KNOWN-ISSUES.md](KNOWN-ISSUES.md).
 
 | Step | State |
 | --- | --- |
-| C1. Bench trial with no change to the server: how long `claude -p` takes to its first text, with and without a web search | Not started |
-| C2. If that is tolerable, a second language-model adapter that runs `claude -p` and feeds the existing sentence pipeline, chosen by one setting | Not started |
-| C3. Locked down: web search and web fetch only, no shell or file tools, run from an empty directory, and without the API key in its environment | Not started |
-| C4. The system prompt says the assistant can search; the conversation stays in the server's own store | Not started |
-| C5. Measured on the device, reviewed, documented | Not started |
+| C1. Bench trial with no change to the server: how long `claude -p` takes to its first text, with and without a web search | Done, with `server/tools/claude_cli_bench.py`, which puts written questions to the tool through the server's own client. Measured on 2026-10-12 on the server's machine, a home internet connection, `claude-opus-5` at low effort, Claude Code 2.1.296, timed from the start of the process: the first text of a plain answer came after 1.7 to 2.5 s over five questions, median 1.9 s, and after 1.7 to 4.0 s over fifteen with ten earlier exchanges sent along, median 1.95 s, so history costs nothing that can be told. With a search, the first text came as soon and the whole reply took 10 to 26 s |
+| C2. If that is tolerable, a second language-model adapter that runs `claude -p` and feeds the existing sentence pipeline, chosen by one setting | Done: `server/llm/claude_code.py`, one process for each turn, behind the interface the API client already had. The pipeline is unchanged |
+| C3. Locked down: web search and web fetch only, no shell or file tools, run from an empty directory, and without the API key in its environment | Done, and checked on every run from what the process says it started with. Reading pages was first left out, then allowed for a short list of sites, then for any site, each step decided on what the bench showed: search alone did not answer the weather in five tries of five; with five listed sites the weather was answered and the news was not, its sites refusing to be read; with any site, all five questions were answered. A list of sites remains a setting, `CLAUDE_FETCH_DOMAINS` |
+| C4. The system prompt says the assistant can search; the conversation stays in the server's own store | Done. The prompt also asks for a short sentence before a search, "Let me check.", so that the device is not silent while it runs, and forbids the list of sources the search tool asks the model to add, which the client removes if it comes all the same. The tool tells the model the date, so the assistant now knows the day, and not the hour |
+| C5. Measured on the device, reviewed, documented | Done on 2026-10-12, on the breadboard, a person speaking, twelve turns in two runs; the figures are below. Reviewed by both review agents and corrected |
+
+**Part C on the device, 2026-10-12.** Breadboard, USB-powered, the server
+on a computer on the same network, a person speaking. All times are from
+the end of the request to the first sound, by the server's log.
+
+- First run, eight turns. Four plain answers began after 3.3 to 5.4 s.
+  Four that used the web began after 7.3 to 20.0 s, and "Let me check."
+  was heard only with the answer: nothing ended its sentence until the
+  search was over, so it was not spoken. A one-sentence answer waited the
+  same way for the process to finish, about 1.5 s.
+- Corrected, by ending the sentence where the tool reports the end of a
+  block of text, and run again, four turns. Two plain answers began after
+  3.2 and 3.3 s. Two that used the web began after 3.3 and 3.9 s with
+  "Let me check.", were silent for 6.2 s each, and then gave the answer.
+  A person judged the sentence prompt and the silence acceptable.
+- Through both runs no request audio was lost. In the first no reply ran
+  out of audio; in the second each searched reply ran out for the 6.2 s
+  of the search, as it must, and then two to four more times for 40 to
+  80 ms in the first second of the answer (KNOWN-ISSUES, Caveats, "A reply
+  can pause briefly").
+- Chip temperature: 53.5 °C just after a reset, the board warm; 55.5 to
+  56.5 °C through the first run; 55.5 °C idle for the eighteen minutes
+  between; 57.5 °C during the last reply (R20).
+
+**What the review of part C changed.** Neither agent found a critical
+fault. Both found the same major one: the limit of 20 s on silence from
+Claude was counted between any two lines the process printed, and it
+prints a line for every step of a search, so a reply that searched again
+and again could stay silent past the 40 s a device waits, and the device
+would have given up before the server did. The limit is now counted in
+text that can be spoken, and was raised from 20 s to 24 s, which is as
+far as the device's own limit allows, so that fewer replies that search
+twice are cut. Corrected from the first agent besides: a turn
+cancelled as its process was ending could leave the process running; a
+list of sources in the middle of a reply took the answer after it; a
+blank API key passed for a key; a process that could not start left
+nothing in the log to say why. From the second: which sites may be read
+is one small type with one reader of the setting, where a list had three
+meanings and five readers; the web's part of the system prompt moved out
+of the prompt the API uses into a file of the trial's own, so that the
+trial is dropped by deleting files; what is made of the tool's events is
+apart from the starting and stopping of the process, and tested without
+one; and the rule the "Let me check." fault broke is written into the
+interface. Left as it is: a parameter of the client that exists for the
+tests. The corrected code passes its tests and answered eleven questions
+put to the tool on the server's machine; it has not been run on the
+device since (R21).
 
 Settled with the plan: the start-up buffer stays at 80 ms until B6's log
 says otherwise, and the request is not announced while the chime plays.
@@ -351,12 +405,15 @@ machine.
 The server runs on Python 3.11 in a virtual environment, `server/.venv`,
 with the packages in `server/requirements.txt`. API keys for Anthropic and
 Deepgram, a device token and the timezone are in the untracked
-`server/.env`.
+`server/.env`. For the trial of part C, Claude Code 2.1.296 is installed
+on the same machine and signed in; its login is in the user's profile,
+outside the repository.
 
 ## Next steps
 
 1. The run of several hours, B6.
-2. Part C, on its own branch.
+2. Decide what becomes of part C: merged, kept on its branch, or dropped.
+   Until then `main` does not have it.
 3. Work through the Before release list below once the last stage is
    done; nothing in it blocks stages 6 to 8.
 4. Obtain a multimeter for the continuity checks before the circuit is
@@ -396,7 +453,7 @@ comes up then.
 | Seeing a screen state on demand | Settled and built: `display preview <state>` draws a state's screen for a few seconds without changing the state |
 | A reason on the `CONNECTING` screen | Settled and built: `CONNECTING` shows why the last attempt to reach the server failed |
 | Component names | Settled: the connection is `server_link` and the state machine `state_machine`, renamed before the first commit of stage 6 |
-| Internet access for the assistant | Open, and optional: nothing is committed. The assistant has no tools and is told it has no internet access, so it declines questions such as the weather. If it is taken up, it belongs to stage 7. The ways considered: tools the server runs itself on free data (the date and time from its clock, weather from a free service), at a few hundred tokens a use; Anthropic's web search tool, at $10 per 1,000 searches plus the results as input tokens, estimated at about 4 cents a searched question on `claude-opus-5` and not measured; or both, with the search capped at one a question. Running Claude Code under a subscription login in place of the API was first set aside, because its documentation directs products built on it to API keys, and taken up again on 2026-10-08 as a trial, part C of stage 7: the device has one user, who is the account's owner. The API stays the default, and the trial is built on a branch of its own |
+| Internet access for the assistant | Open, and optional: nothing is committed. The assistant has no tools and is told it has no internet access, so it declines questions such as the weather. If it is taken up, it belongs to stage 7. The ways considered: tools the server runs itself on free data (the date and time from its clock, weather from a free service), at a few hundred tokens a use; Anthropic's web search tool, at $10 per 1,000 searches plus the results as input tokens, estimated at about 4 cents a searched question on `claude-opus-5` and not measured; or both, with the search capped at one a question. Running Claude Code under a subscription login in place of the API was first set aside, because its documentation directs products built on it to API keys, and taken up again on 2026-10-08 as a trial, part C of stage 7: the device has one user, who is the account's owner. The API stays the default, and the trial is built on a branch of its own. Built and measured on 2026-10-12: with the trial's setting the assistant searches the web and reads pages, and answered the weather, the news and a price. Whether it is kept is open |
 | Deployment | LAN only for now; off-LAN deployment deferred and would require TLS |
 | Over-the-air updates | Undecided, revisited at stage 8; the flash layout already allows it |
 | Server discovery | mDNS on the LAN, with `server_url` as an override; the server's side is built, the device's is stage 6 |

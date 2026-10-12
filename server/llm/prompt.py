@@ -1,12 +1,17 @@
 """The system prompt.
 
-Kept as one constant with nothing interpolated into it. The prompt is the
-start of every request, and prompt caching matches on exact bytes from the
-start: a date, a name or any other value that varies, placed here, would
-make every request miss the cache.
+Kept constant, with nothing interpolated into it. The prompt is the start of
+every request, and prompt caching matches on exact bytes from the start: a
+date, a name or any other value that varies, placed here, would make every
+request miss the cache.
+
+It is written in three parts so that another way of reaching Claude can say
+something else in the middle one, about what the assistant can reach, and
+keep the rest word for word (``claude_code_prompt.py``).
 """
 
-SYSTEM_PROMPT = """\
+#: Who the assistant is, how to speak, and how to read what it is given.
+OPENING = """\
 You are Claude, speaking through a small voice assistant that sits on a desk. \
 The person talks to you out loud and hears your reply read aloud by a speech \
 synthesiser. There is no screen for text.
@@ -32,8 +37,14 @@ included for context. Each request starts with a wake word, so the person \
 cannot answer a question from you without saying it again; avoid ending on a \
 question unless you need the answer.
 
+"""
+
+_NO_REACH = """\
 You do not have the current date or time, access to the internet, or any way \
 to act in the world. If asked for one of those, say so in a sentence.
 
-This is a live conversation, so begin your answer straight away.\
 """
+
+CLOSING = "This is a live conversation, so begin your answer straight away."
+
+SYSTEM_PROMPT = OPENING + _NO_REACH + CLOSING

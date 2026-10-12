@@ -13,7 +13,9 @@ from pydantic import ValidationError
 from server.config import Settings, configure_logging, get_settings
 from server.conversation import ConversationStore
 from server.discovery import ServiceAdvertiser
+from server.llm import LanguageModel, LanguageModelError
 from server.llm.claude import ClaudeLanguageModel
+from server.llm.claude_code import ClaudeCodeLanguageModel, FetchPolicy
 from server.pipeline import TurnDeps, TurnLimits
 from server.protocol import PING_INTERVAL_SECONDS, PING_TIMEOUT_SECONDS
 from server.stt.deepgram import DeepgramSpeechToText
@@ -21,6 +23,40 @@ from server.transport import create_app
 from server.tts.deepgram import DeepgramTextToSpeech
 
 log = logging.getLogger("server")
+
+
+def build_llm(settings: Settings) -> LanguageModel:
+    """Return the client for Claude that the configuration asks for."""
+    if settings.llm_backend == "claude_code":
+        try:
+            policy = FetchPolicy.parse(settings.claude_fetch_domains)
+        except ValueError as exc:
+            raise LanguageModelError(
+                f'CLAUDE_FETCH_DOMAINS must be ["*"], host names or []: {exc}'
+            ) from None
+        # A trial, and one that reaches the web: said at every start.
+        log.warning(
+            "Claude is reached through Claude Code, under this machine's"
+            " login, with web search (LLM_BACKEND=claude_code, a trial)."
+            " It may read pages from: %s",
+            policy.describe(),
+        )
+        return ClaudeCodeLanguageModel(
+            model=settings.claude_model,
+            effort=settings.claude_effort,
+            max_tokens=settings.claude_max_tokens,
+            executable=settings.claude_cli_path,
+            policy=policy,
+        )
+    if settings.anthropic_api_key is None:
+        # The settings refuse to load with this backend and no key.
+        raise LanguageModelError("ANTHROPIC_API_KEY is not set")
+    return ClaudeLanguageModel(
+        settings.anthropic_api_key,
+        model=settings.claude_model,
+        effort=settings.claude_effort,
+        max_tokens=settings.claude_max_tokens,
+    )
 
 
 def build_deps(settings: Settings) -> TurnDeps:
@@ -32,12 +68,7 @@ def build_deps(settings: Settings) -> TurnDeps:
             language=settings.stt_language,
             endpointing_ms=settings.endpointing_ms,
         ),
-        llm=ClaudeLanguageModel(
-            settings.anthropic_api_key,
-            model=settings.claude_model,
-            effort=settings.claude_effort,
-            max_tokens=settings.claude_max_tokens,
-        ),
+        llm=build_llm(settings),
         tts=DeepgramTextToSpeech(settings.deepgram_api_key, model=settings.tts_model),
         store=ConversationStore(
             settings.db_file, settings.tz, settings.day_rollover_hour
@@ -66,7 +97,12 @@ def main() -> None:
     if not settings.device_tokens:
         log.warning("DEVICE_TOKENS is empty: no device will be able to connect")
 
-    deps = build_deps(settings)
+    try:
+        deps = build_deps(settings)
+    except LanguageModelError as exc:
+        # The Claude Code tool is missing or its settings are unusable:
+        # nothing could answer.
+        sys.exit(f"The server cannot start: {exc}")
     advertiser = ServiceAdvertiser(settings.bind_host, settings.bind_port)
 
     @asynccontextmanager

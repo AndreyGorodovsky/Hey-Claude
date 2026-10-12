@@ -67,7 +67,10 @@ DEVICE_REPLY_BUFFER_MS = 4000
 SERVICE_CONNECT_SECONDS = 5
 
 #: Seconds of silence tolerated from Claude while a reply is being generated.
-LLM_SILENCE_SECONDS = 20
+#: Raised from 20 in stage 7, for replies that pause to search the web
+#: (llm/claude_code.py). With the two synthesiser limits it comes to 39 s,
+#: a second under what a device waits through, and can go no higher.
+LLM_SILENCE_SECONDS = 24
 
 #: Seconds of silence tolerated from text-to-speech during one sentence.
 TTS_SILENCE_SECONDS = 10
