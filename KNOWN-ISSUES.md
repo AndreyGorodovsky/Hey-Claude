@@ -527,6 +527,7 @@ The record:
 | 2026-10-12 | Same bench, the stage 7 firmware, with the server reaching Claude through Claude Code (R21). 12 s after a reset, the board already warm; then once a minute through eight spoken turns in five minutes, four of them with a search | 53.5 °C; 55.5, 56.5, 55.5, 56.5, 56.5 °C |
 | 2026-10-12 | Same bench, the same session. Connected and idle, once a minute for the eighteen minutes after those turns | 55.5 °C each time but one, of 54.5 °C |
 | 2026-10-12 | Same bench, after a further reset. Connected and idle, just before four spoken turns; a minute later, between them; and during the last reply, of 18.7 s with a silence of 6.2 s in it | 55.5, 55.5, 57.5 °C |
+| 2026-10-12 | Same bench, the same firmware and server, with no reset: once a minute for 3 h 5 min, from 91 min to 4 h 36 min after the last reset. Connected throughout, idle but for twelve spoken turns in five groups, the replies 5 to 19 s long | 185 readings: 55.5 °C at 103 of them, 56.5 °C at 80, and 57.5 °C twice, a minute apart, during five turns spoken in two and a half minutes. No rise over the run |
 
 The readings during replies were taken at playback levels of 40 % and
 60 %, but for the last, of 2026-10-07, at the present 100 %.
@@ -641,8 +642,8 @@ at low effort, Claude Code 2.1.296, a home internet connection.
   two that used the web after 3.3 and 3.9 s, each with 6.2 s of silence
   before the answer.
 - Not measured: a day's real conversation as history; a usage limit; the
-  wait when the tool has not been run for hours; more than twelve turns
-  on the device.
+  wait when the tool has not been run for more than an hour; more than
+  twenty-four turns on the device.
 - The figures above are from the code before the review's corrections.
   The corrected code was then run against the tool, once, on the
   server's machine, with the limit at 20 s: eleven questions, all
@@ -650,8 +651,23 @@ at low effort, Claude Code 2.1.296, a home internet connection.
   to 2.27 s for six others; the whole reply in 8.1 to 18.0 s for the five
   that searched or read a page, each opening with "Let me check.",
   including one that read a page with no search before it; no list of
-  sources removed, none having come. It has not been run on the device
-  since the corrections, nor at all with the limit at 24 s.
+  sources removed, none having come.
+- The corrected code was then run on the device, with the limit at 24 s,
+  for the three hours of step B6 (STATUS.md): twelve spoken turns in five
+  groups, with 17, 56, 51 and 44 min idle between groups; all answered.
+  First text 1.5 to 2.8 s after the end of speech, 2.1 s at the middle,
+  and no later after the idle spells than within a group. Seven plain
+  replies: first sound after 3.8 to 5.0 s, 3.95 s at the middle; the
+  tool done in 3.9 to 4.9 s. Five replies with one search each: first
+  sound after 2.6 to 6.3 s, then silent for 1.5 to 11.6 s, the tool done
+  in 9.5 to 17.0 s. The longest silence was under half the limit. No
+  list of sources came.
+- In three turns of that run, spoken within ninety seconds of one
+  another, the first sound came 1.5 to 3.2 s after the first sentence
+  was ready, where 0.5 to 0.7 s is usual: the synthesiser was slow, and
+  the server logged no failure or second try. In the two of them that
+  searched, the first sound came after 5.7 and 6.3 s. The cause was not
+  looked for; it is outside the trial.
 
 ## Resolved
 
@@ -814,7 +830,11 @@ at low effort, Claude Code 2.1.296, a home internet connection.
   for 40 to 80 ms each, in its first second. The player starts again
   from an empty buffer there as it does at the start of a reply, with
   the same 80 ms in hand. Found during part C of stage 7 and not
-  corrected, the player being outside that part.
+  corrected, the player being outside that part. Seen again in all five
+  searched replies of the three-hour run of the same day: after silences
+  of 1.5 to 11.6 s, one to four more dropouts of up to 110 ms, all
+  within the next second. None of that run's seven replies without a
+  search ran out of audio at all.
 - **The speaker shakes the breadboard, and that can be heard.** On
   2026-10-07, in the last two of three long replies played almost back
   to back, the voice turned robotic part-way through each. The device

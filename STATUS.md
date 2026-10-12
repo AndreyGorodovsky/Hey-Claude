@@ -1,11 +1,13 @@
 # Status
 
 **Current stage:** Stage 7, latency and robustness. Its parts A, latency,
-and B, robustness, are built, reviewed and corrected, with two tests left
-for later: WiFi lost and restored, and a run of several hours. Part C, a
-trial of reaching Claude through a Claude Code subscription, with access
-to the web, is built on a branch of its own, measured on the device,
-reviewed and corrected. The steps are under Stage 7 plan below.
+and B, robustness, are built, reviewed and corrected, with one test left
+for later: WiFi lost and restored. The run of several hours was made on
+2026-10-12 and found nothing to correct. Part C, a trial of reaching
+Claude through a Claude Code subscription, with access to the web, is
+built on a branch of its own, measured on the device, reviewed and
+corrected, and was the server's way to Claude throughout that run. The
+steps are under Stage 7 plan below.
 
 **Last updated:** 2026-10-12
 
@@ -154,7 +156,7 @@ transcript. They stay listed in KNOWN-ISSUES R19.
 | B3. Watchdogs: a hung task resets the device; the capture, player and state-machine tasks are watched; the reason for the reset is shown after it | Done. A watched task that is silent for 5 s restarts the chip, with a core dump; after a restart nobody asked for, the line under `CONNECTING` names the cause until the first attempt to reach the server has ended. Seen on the bench on 2026-10-08, twice, with a test build that could hang the state-machine task on command, not kept: the watchdog named the task and restarted the chip 5 to 8 s after the hang, the core dump was saved, the boot log gave "task watchdog" as the reset reason, the state read "connecting, Restarted: watchdog", and the device was back in `IDLE` 5 and 10 s after the restart. Over about 70 minutes of ordinary use before that, with thirteen turns and four lost connections, the watchdog did not fire. The capture and player tasks were not hung on purpose |
 | B4. Brownout guard: the cause shown at boot, and repeated brownouts ending in `ERROR` with the amplifier off instead of a loop of resets | Done, and seen on the bench on 2026-10-08 with a test build that counted its next three boots as brownouts, not kept: the first two started normally with the state reading "connecting, Restarted: supply dipped"; the third stopped at "error, Power supply too weak" with no attempt to connect; a restart from the console cleared it and the device returned to `IDLE`. No real brownout was caused, so what the chip's memory keeps through one is taken from its documentation, not seen. At the third brownout in a row, each within 60 s of the boot before it, the device does not join WiFi or play anything and shows `ERROR`, "Power supply too weak", until it is powered off and on or restarted from the console. The count is kept in memory that survives a restart but not a loss of power; nothing is written to flash |
 | B5. Small known defects: a pause counted twice in a reply's summary line, a dead microphone missed in the first second after boot, a send that blocks for seconds on a stalled network | Done. Seen on the device on 2026-10-08: a reply that paused twice was counted as two. The other two have not been brought about on the bench. A dry spell is counted once; the state machine asks the wake-word component whether the device can hear instead of keeping its own copy; and a request that loses audio to a stalled send, at its start or further in, is given up with "Could not send the request" instead of being answered with a hole in it. The send itself still blocks: its timeout is inside the WebSocket component |
-| B6. A run of several hours with turns at intervals: memory, stack headroom, pauses, reconnections and chip temperature | Not yet made; to be done after the review. The longest run so far on the stage 7 firmware is about 70 minutes, with thirteen turns |
+| B6. A run of several hours with turns at intervals: memory, stack headroom, pauses, reconnections and chip temperature | Done on the bench on 2026-10-12, measured: the console logged for 3 h 5 min, from 91 min to 4 h 36 min after the device's last reset, with the server reaching Claude through Claude Code (part C). Twelve spoken turns in five groups, with up to 56 min idle between groups; seven answered from what the model knows and five with one search each; all twelve answered. No reset, no lost connection, no watchdog, and no audio lost from any request. **Memory:** internal RAM free between 99,999 and 100,199 bytes at each of 19 readings ten minutes apart, with no trend; its lowest since boot went from 56,036 to 55,564 bytes, in three steps, the last before the final six turns; the largest free block 31,744 bytes and PSRAM free 7,741,284 bytes at every reading. **Stack never used**, the same at every reading but one: 1,368 bytes for the link task, 1,672 for the state machine, 1,744 for the player, 2,160 for capture, 3,020 for the display, 3,168 for the wake word, 3,844 for upload; the WebSocket task's fell once, from 4,368 to 4,256, in the first ten minutes. **Pauses:** none in the seven plain replies; in each of the five that searched, the silence of the search, 1.5 to 11.6 s, and then one to four dropouts of up to 110 ms within the next second (KNOWN-ISSUES, latency). **Temperature:** 55.5 to 57.5 °C over 185 readings a minute apart, 55.5 °C at most of them (R20). The turns were few for three hours, twelve, and a run under heavier use has not been made |
 
 **Part C, the assistant's model reached through a Claude Code
 subscription, as a trial.** Approved on 2026-10-08 and built on
@@ -218,11 +220,16 @@ apart from the starting and stopping of the process, and tested without
 one; and the rule the "Let me check." fault broke is written into the
 interface. Left as it is: a parameter of the client that exists for the
 tests. The corrected code passes its tests and answered eleven questions
-put to the tool on the server's machine; it has not been run on the
-device since (R21).
+put to the tool on the server's machine. It was then run on the device
+for the three hours of B6, with the limit at 24 s: twelve turns, all
+answered, the longest silence 11.6 s (R21).
 
 Settled with the plan: the start-up buffer stays at 80 ms until B6's log
 says otherwise, and the request is not announced while the chime plays.
+B6's log does not say otherwise for the start of a reply: none of its
+seven plain replies ran out of audio. The dropouts it shows all follow a
+silence in the middle of a reply, which only the trial of part C
+produces.
 
 ## Stage 6 as built
 
@@ -411,12 +418,11 @@ outside the repository.
 
 ## Next steps
 
-1. The run of several hours, B6.
-2. Decide what becomes of part C: merged, kept on its branch, or dropped.
+1. Decide what becomes of part C: merged, kept on its branch, or dropped.
    Until then `main` does not have it.
-3. Work through the Before release list below once the last stage is
+2. Work through the Before release list below once the last stage is
    done; nothing in it blocks stages 6 to 8.
-4. Obtain a multimeter for the continuity checks before the circuit is
+3. Obtain a multimeter for the continuity checks before the circuit is
    soldered (R9).
 
 ## Before release
