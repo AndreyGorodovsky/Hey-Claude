@@ -1,4 +1,4 @@
-"""Claude reached through the Claude Code command-line tool. A trial.
+"""Claude reached through the Claude Code command-line tool.
 
 Where ``claude.py`` calls the API with a key, this runs ``claude -p``, which
 answers under the login of whoever is signed in to Claude Code on the

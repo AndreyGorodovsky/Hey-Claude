@@ -500,8 +500,8 @@ server/
                   framing of reply audio
   pipeline/       One turn from request to reply; sentence splitting
   stt/            Speech-to-text adapter interface and implementations
-  llm/            Claude client, system prompt, streaming; and, as a trial,
-                  a second client that runs the Claude Code tool
+  llm/            Two Claude clients behind one interface: one runs the
+                  Claude Code tool, the default; one calls the API
   tts/            Text-to-speech adapter interface and implementations
   conversation/   Day-scoped conversation store
   discovery.py    mDNS advertisement
@@ -601,16 +601,20 @@ The system prompt constrains replies to spoken form: no markdown, no lists, no
 headings, and short answers by default. Text shaped for a screen reads badly
 when synthesised. It also tells the model that its input is a transcript
 that may contain misheard words, and that it has no clock and no access to
-the internet. With the trial described next, that last part differs.
+the internet. That is the prompt for the API; with Claude Code, described
+next and the default, the last part differs.
 
 If the model declines a request and says nothing, the server speaks a fixed
 sentence in its place. A declined request is not added to the conversation.
 
 ### Claude through Claude Code
 
-A trial, built in stage 7 on a branch of its own, and off unless the
-server setting `LLM_BACKEND` is `claude_code`. In place of the API and its
-key, the server runs the Claude Code command-line tool, `claude -p`, which
+The default way to Claude since 2026-10-12. It was built in stage 7 as a
+trial on a branch of its own, and made the default after a run of three
+hours on the device; the API, described above, is chosen instead with the
+server setting `LLM_BACKEND=api`, and has no access to the web. In place
+of the API and its key, the server runs the Claude Code command-line
+tool, `claude -p`, which
 answers under the login of whoever is signed in to it on the server's
 machine, and which can search the web and read pages. The device has one
 user, who is that account's owner. Everything else is as before: the same
@@ -786,6 +790,7 @@ deferred.
 | Brownout count in RTC memory | A count in NVS | It need only outlive a restart; nothing is written to flash, and a power cycle starts afresh |
 | End-of-speech silence left at 400 ms | 1 s, to allow a pause in mid-sentence | At 1 s the service's silence signal was not dependable on the microphone's audio, and requests ended 1 to 4 s after the speaker |
 | Connections to the services opened when needed | Opened ahead, when the server starts and a request begins | Measured: a new connection costs the synthesiser's first audio nothing that could be told from the variation |
+| Claude reached through Claude Code by default | The API as the default, Claude Code as an option | Decided on 2026-10-12, after the trial: it answers questions about the present, which the API route cannot, and the wait for a plain answer was acceptable as heard. The API remains, one setting away, for a server with no Claude Code login |
 | In the Claude Code trial, the day's conversation sent as text with each request | A session kept by the tool and resumed | One copy of the history, in the server's store, deleted with the day; the tool writes no transcript to the profile |
 | In the trial, one process for each turn | A process kept running between turns | A process that lives on gathers a conversation of its own; starting one costs nothing that could be told from the API's own wait |
 | In the trial, pages read from any site by default | Search only; a short list of sites | Measured: search alone did not answer the weather, and a list answered the weather but not the news. The assistant holds one day of conversation and cannot act, so the risk was accepted (R21) |

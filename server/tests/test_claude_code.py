@@ -579,15 +579,20 @@ def settings(**values: object) -> Settings:
     return Settings(_env_file=None, deepgram_api_key="k" * 30, **values)
 
 
-def test_the_api_backend_is_the_default_and_needs_its_key(monkeypatch):
+def test_the_api_backend_needs_its_key(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("LLM_BACKEND", raising=False)
     with pytest.raises(ValidationError, match="ANTHROPIC_API_KEY"):
-        settings()
+        settings(llm_backend="api")
     # A key left blank, as in a copy of the example file, is no key.
     with pytest.raises(ValidationError, match="ANTHROPIC_API_KEY"):
-        settings(anthropic_api_key="  ")
-    assert settings(anthropic_api_key="k" * 30).llm_backend == "api"
+        settings(llm_backend="api", anthropic_api_key="  ")
+    assert settings(llm_backend="api", anthropic_api_key="k" * 30)
+
+
+def test_claude_code_is_the_default_backend(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_BACKEND", raising=False)
+    assert settings().llm_backend == "claude_code"
 
 
 def test_the_claude_code_backend_needs_no_key(monkeypatch):

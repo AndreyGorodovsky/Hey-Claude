@@ -1,10 +1,10 @@
-"""The system prompt for Claude reached through Claude Code. Part of the trial.
+"""The system prompt for Claude reached through Claude Code.
 
 The same prompt as the API's (``prompt.py``) but for its middle part: here
 the assistant can search the web and, if the configuration allows, read
 pages. Everything in this file is about that tool's own behaviour, found by
-running it; the trial is dropped by deleting this file with
-``claude_code.py``.
+running it; this way of reaching Claude is dropped by deleting this file
+with ``claude_code.py``.
 
 The prompt varies with the configuration and with nothing else, so it is the
 same on every request of a running server.

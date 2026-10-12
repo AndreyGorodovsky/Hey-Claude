@@ -3,11 +3,12 @@
 **Current stage:** Stage 7, latency and robustness. Its parts A, latency,
 and B, robustness, are built, reviewed and corrected, with one test left
 for later: WiFi lost and restored. The run of several hours was made on
-2026-10-12 and found nothing to correct. Part C, a trial of reaching
-Claude through a Claude Code subscription, with access to the web, is
-built on a branch of its own, measured on the device, reviewed and
-corrected, and was the server's way to Claude throughout that run. The
-steps are under Stage 7 plan below.
+2026-10-12 and found nothing to correct. Part C, reaching Claude through
+a Claude Code subscription, with access to the web, began as a trial on
+a branch of its own, was measured on the device, reviewed and corrected,
+and was the server's way to Claude throughout that run. After it, on
+2026-10-12, it was merged and made the default; the API remains as a
+setting. The steps are under Stage 7 plan below.
 
 **Last updated:** 2026-10-12
 
@@ -161,8 +162,10 @@ transcript. They stay listed in KNOWN-ISSUES R19.
 **Part C, the assistant's model reached through a Claude Code
 subscription, as a trial.** Approved on 2026-10-08 and built on
 2026-10-12, on the git branch `stage7c-subscription-trial`, so that it can
-be dropped whole if it does not work out. The API remains the default;
-the trial is chosen with the server setting `LLM_BACKEND=claude_code`. It
+be dropped whole if it does not work out. While it was a trial the API
+remained the default. On 2026-10-12, after the run of B6, the branch was
+merged and `LLM_BACKEND=claude_code` made the default; `LLM_BACKEND=api`
+chooses the API, with no web access. It
 changes no firmware and nothing in the protocol. What it is and how it is
 locked down is in [ARCHITECTURE.md](ARCHITECTURE.md), under Claude through
 Claude Code; its risks and every figure are in R21 of
@@ -412,17 +415,16 @@ machine.
 The server runs on Python 3.11 in a virtual environment, `server/.venv`,
 with the packages in `server/requirements.txt`. API keys for Anthropic and
 Deepgram, a device token and the timezone are in the untracked
-`server/.env`. For the trial of part C, Claude Code 2.1.296 is installed
-on the same machine and signed in; its login is in the user's profile,
-outside the repository.
+`server/.env`. Stage 6 reached Claude through the API. Since part C of
+stage 7 the default is Claude Code, 2.1.296 as tested, installed on the
+same machine and signed in; its login is in the user's profile, outside
+the repository.
 
 ## Next steps
 
-1. Decide what becomes of part C: merged, kept on its branch, or dropped.
-   Until then `main` does not have it.
-2. Work through the Before release list below once the last stage is
+1. Work through the Before release list below once the last stage is
    done; nothing in it blocks stages 6 to 8.
-3. Obtain a multimeter for the continuity checks before the circuit is
+2. Obtain a multimeter for the continuity checks before the circuit is
    soldered (R9).
 
 ## Before release
@@ -459,7 +461,7 @@ comes up then.
 | Seeing a screen state on demand | Settled and built: `display preview <state>` draws a state's screen for a few seconds without changing the state |
 | A reason on the `CONNECTING` screen | Settled and built: `CONNECTING` shows why the last attempt to reach the server failed |
 | Component names | Settled: the connection is `server_link` and the state machine `state_machine`, renamed before the first commit of stage 6 |
-| Internet access for the assistant | Open, and optional: nothing is committed. The assistant has no tools and is told it has no internet access, so it declines questions such as the weather. If it is taken up, it belongs to stage 7. The ways considered: tools the server runs itself on free data (the date and time from its clock, weather from a free service), at a few hundred tokens a use; Anthropic's web search tool, at $10 per 1,000 searches plus the results as input tokens, estimated at about 4 cents a searched question on `claude-opus-5` and not measured; or both, with the search capped at one a question. Running Claude Code under a subscription login in place of the API was first set aside, because its documentation directs products built on it to API keys, and taken up again on 2026-10-08 as a trial, part C of stage 7: the device has one user, who is the account's owner. The API stays the default, and the trial is built on a branch of its own. Built and measured on 2026-10-12: with the trial's setting the assistant searches the web and reads pages, and answered the weather, the news and a price. Whether it is kept is open |
+| Internet access for the assistant | Settled on 2026-10-12: the assistant searches the web and reads pages, through Claude Code, the default (part C of stage 7). With the API it has no tools and is told it has no internet access, so it declines questions such as the weather. The ways considered: tools the server runs itself on free data (the date and time from its clock, weather from a free service), at a few hundred tokens a use; Anthropic's web search tool, at $10 per 1,000 searches plus the results as input tokens, estimated at about 4 cents a searched question on `claude-opus-5` and not measured; or both, with the search capped at one a question. Running Claude Code under a subscription login in place of the API was first set aside, because its documentation directs products built on it to API keys, and taken up again on 2026-10-08 as a trial, part C of stage 7: the device has one user, who is the account's owner. Built and measured on 2026-10-12 on a branch of its own: the assistant searches the web and reads pages, and answered the weather, the news and a price. Kept: merged on the same day and made the default, with the API one setting away |
 | Deployment | LAN only for now; off-LAN deployment deferred and would require TLS |
 | Over-the-air updates | Undecided, revisited at stage 8; the flash layout already allows it |
 | Server discovery | mDNS on the LAN, with `server_url` as an override; the server's side is built, the device's is stage 6 |

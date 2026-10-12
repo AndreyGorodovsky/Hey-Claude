@@ -34,10 +34,10 @@ def build_llm(settings: Settings) -> LanguageModel:
             raise LanguageModelError(
                 f'CLAUDE_FETCH_DOMAINS must be ["*"], host names or []: {exc}'
             ) from None
-        # A trial, and one that reaches the web: said at every start.
+        # It reaches the web, and under a person's login: said at every start.
         log.warning(
             "Claude is reached through Claude Code, under this machine's"
-            " login, with web search (LLM_BACKEND=claude_code, a trial)."
+            " login, with web search (LLM_BACKEND=claude_code)."
             " It may read pages from: %s",
             policy.describe(),
         )

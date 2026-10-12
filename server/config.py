@@ -82,10 +82,11 @@ class Settings(BaseSettings):
     timezone: str = "UTC"
     day_rollover_hour: int = Field(default=4, ge=0, le=23)
 
-    #: How Claude is reached. ``api`` calls the API with ANTHROPIC_API_KEY.
-    #: ``claude_code`` is a trial: it runs the Claude Code tool under the
-    #: login of whoever is signed in to it on this machine, with web search.
-    llm_backend: Literal["api", "claude_code"] = "api"
+    #: How Claude is reached. ``claude_code``, the default since its trial
+    #: in stage 7, runs the Claude Code tool under the login of whoever is
+    #: signed in to it on this machine, with web search. ``api`` calls the
+    #: API with ANTHROPIC_API_KEY, and has no access to the web.
+    llm_backend: Literal["api", "claude_code"] = "claude_code"
 
     #: The Claude Code tool, as a name to look up or a full path. Used only
     #: by the ``claude_code`` backend.

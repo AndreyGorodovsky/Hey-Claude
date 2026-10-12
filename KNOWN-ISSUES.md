@@ -541,14 +541,16 @@ send limit that stage 6 raised left as it is, and a lower processor speed
 outside conversations. An enclosure is to be designed with the reading in
 hand.
 
-### R21 — The trial of Claude through Claude Code, and the open web
+### R21 — Claude through Claude Code, and the open web
 
-With the server setting `LLM_BACKEND=claude_code`, a trial built in
-stage 7, the assistant is the Claude Code tool running under the server
-owner's subscription login, and it can search the web and read pages
-([ARCHITECTURE.md](ARCHITECTURE.md), Claude through Claude Code). The API
-with no web access remains the default. The trial brings risks the API
-route does not have.
+With the server setting `LLM_BACKEND=claude_code`, built in stage 7 as a
+trial and the default since 2026-10-12, the assistant is the Claude Code
+tool running under the server owner's subscription login, and it can
+search the web and read pages ([ARCHITECTURE.md](ARCHITECTURE.md), Claude
+through Claude Code). The API with no web access is chosen with
+`LLM_BACKEND=api`. Below, "the trial" means this way of reaching Claude.
+It brings risks the API route does not have, and they are now those of
+a server as installed.
 
 **A page can mislead the assistant.** Text on a web page, or in a search
 result, can be written to be taken for instructions. The assistant cannot
