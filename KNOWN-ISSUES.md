@@ -539,6 +539,7 @@ The record:
 | 2026-10-12 | Same bench, the same firmware and server, with no reset: once a minute for 3 h 5 min, from 91 min to 4 h 36 min after the last reset. Connected throughout, idle but for twelve spoken turns in five groups, the replies 5 to 19 s long | 185 readings: 55.5 °C at 103 of them, 56.5 °C at 80, and 57.5 °C twice, a minute apart, during five turns spoken in two and a half minutes. No rise over the run |
 | 2026-10-15 | Same bench, the stage 8 part A firmware (volume control). Measured: once a minute from 35 s after flashing, through the first test of the volume, eleven spoken turns in four minutes, at levels from 1 to 9 | 43.5, 46.5, 49.5, 50.5, 51.5, 52.5, 51.5 °C |
 | 2026-10-15 | Same bench, the same session, 20 to 26 min after flashing: idle, then four spoken turns at volume 10 (+6 dB), one reply of 10 s | 54.5, 54.5, 54.5, 55.5 °C |
+| 2026-10-15 | Same bench and firmware, no reset, 48 to 57 min after flashing: once a minute idle, then through eleven spoken turns in two minutes, at levels from 3 to 10 | 55.5 °C at eight readings, 56.5 °C at one, during the turns |
 
 The readings during replies were taken at playback levels of 40 % and
 60 %, but for the last, of 2026-10-07, at the present 100 %.

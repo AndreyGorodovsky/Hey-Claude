@@ -180,6 +180,22 @@ too; the finding about speech-to-text moved out of R19 into an entry of
 its own under Resolved; the tests were regrouped so that each says what
 it covers. The server's 245 tests pass.
 
+**Third round on the device, after that review, 2026-10-15.** The same
+bench and firmware, the reviewed server, a person speaking eleven turns
+with the cases not heard before. All volume requests were understood as
+said, and each reply began 0.5 to 0.7 s after the end of speech, one
+3.2 s: "volume three"; "louder, louder" (two steps); "louder, quieter",
+which left the level where it was; "volume ten, volume ten"; "set the
+sound to four"; "turn the sound all the way up"; "louder" at level 10,
+answered "That's as loud as I go."; and "volume ten". "Volume two, no,
+volume four" went to Claude, as it should, and Claude said such requests
+are handled by the device and suggested saying "volume four" alone,
+without claiming any change. One request was heard as "Now there." and
+went to Claude, which asked for it to be repeated. At level 10 the
+limiter acted on the short confirmations, on up to 16 samples, by at most
+2.6 dB, not heard. Chip temperature 55.5 to 56.5 °C (R20). Part A is
+done.
+
 **What the review changed.** Neither agent found a critical or major
 fault. Corrected from the first: `volume` on the console printed 0 on a
 device not yet set up; a `volume` that was not a whole number made the
