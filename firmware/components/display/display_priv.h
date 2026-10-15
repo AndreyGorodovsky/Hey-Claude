@@ -40,6 +40,10 @@ void ui_init(void);
 /* Shows `st` on the state view, replacing whatever animation was running */
 void ui_show_state(const app_state_event_t *st);
 
+/* Gives the SETUP view its hotspot details, which it shows from the next
+ * ui_show_state() on */
+void ui_set_setup(const display_setup_t *setup);
+
 /* Backlight brightness for a state, in percent */
 int ui_brightness(app_state_t state);
 

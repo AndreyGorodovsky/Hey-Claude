@@ -42,6 +42,13 @@
 #define BOARD_LCD_RST       GPIO_NUM_8
 #define BOARD_LCD_BL        GPIO_NUM_14
 
+/* The board's own BOOT button, which connects GPIO 0 to ground when pressed.
+ * GPIO 0 is a strapping pin: held low at power-on or reset, it makes the
+ * chip wait to be flashed. The firmware only reads it once running, which
+ * cannot affect that (setup component, button.c). Nothing else may drive
+ * this pin. */
+#define BOARD_BOOT_BUTTON   GPIO_NUM_0
+
 /* Panel geometry, in the controller's native portrait orientation: 142
  * visible columns by 428 rows. The controller's memory is 168 columns wide,
  * so the visible columns start part-way across it, with 12 unused columns

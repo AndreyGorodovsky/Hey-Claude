@@ -25,8 +25,9 @@ made during the feasibility review and are binding unless explicitly revisited.
 | Component | Responsibility |
 | --- | --- |
 | `main` | Startup order, boot banner, the brownout guard, serial console and its commands: settings, audio, display and wake-word tests, and read-outs of the state, the server connection, memory and chip temperature |
-| `app_config` | Settings stored in NVS: loading the running configuration, validating and storing edits. No user interface of its own |
-| `net` | WiFi station: joining, reconnecting with backoff, readable failure reasons |
+| `app_config` | Settings stored in NVS: loading the running configuration, validating and storing edits, all of a set or none. No user interface of its own |
+| `net` | WiFi station: joining, reconnecting with backoff, readable failure reasons, and giving up on settings that have never worked |
+| `setup` | Setup mode: a hotspot of the device's own with a settings page and a captive-portal DNS, entered by restarting into it; the BOOT button that opens it |
 | `audio` | Microphone capture and amplifier playback over I2S: plain 16-bit samples in and out, no buffering or tasks of its own |
 | `audio_ring` | The microphone's only reader: a capture task filling a ring buffer of the last 2 s, from which every listener reads at its own position |
 | `wakeword` | On-device wake-word detection with a microWakeWord model; announces detections and decides nothing else |
@@ -40,8 +41,9 @@ made during the feasibility review and are binding unless explicitly revisited.
 
 Settings are loaded once at boot into a read-only structure. Edits change only
 what is stored and apply after a reboot, so no running code has to cope with a
-setting changing underneath it. `app_config` knows nothing about the console,
-so later provisioning methods reuse the same validation.
+setting changing underneath it. `app_config` knows nothing about the console
+or the setup page, which both store through `app_config_store()`: every value
+is checked first, and nothing is written unless all pass.
 
 `net` keeps no connection state for other components to query. Consumers
 subscribe to the standard `IP_EVENT_STA_GOT_IP` and
@@ -51,8 +53,10 @@ subscribe to the standard `IP_EVENT_STA_GOT_IP` and
 default event loop, and the display follows them without being called.
 `wakeword` announces each detection as `WAKEWORD_DETECTED`, carrying the
 position in the audio stream where the phrase ended.
-`app_state` has exactly one writer: the state machine, `state_machine`. The boot
-sequence sets the first states and then hands over. Components that detect
+`app_state` has exactly one writer on each kind of boot. In normal
+operation it is the state machine, `state_machine`: the boot sequence sets
+the first states and then hands over. On a boot that runs setup mode the
+state machine is never started, and setup mode's loop is the writer. Components that detect
 something (the wake word, a server message, a lost connection) report it
 and never set states themselves; otherwise two tasks setting states at once
 would leave the screen on whichever came last. The console can read the
@@ -144,7 +148,7 @@ ordinary restarts as brownouts; not seen with a real brownout (R2).
 
 | Partition | Offset | Size | Purpose |
 | --- | --- | --- | --- |
-| `nvs` | 0x9000 | 24 KB | Settings |
+| `nvs` | 0x9000 | 24 KB | Settings (namespace `config`), the volume (`volume`), and which WiFi settings have worked (`net`) |
 | `otadata`, `phy_init` | 0xF000 | 12 KB | OTA slot selection, RF calibration |
 | `ota_0`, `ota_1` | 0x20000 | 4 MB each | Two application slots |
 | `coredump` | 0x820000 | 64 KB | Last crash |
@@ -159,7 +163,7 @@ needs no change to the flash layout. Flash runs in QIO mode at 80 MHz; PSRAM is 
 | State | Trigger to enter | Display animation |
 | --- | --- | --- |
 | `BOOT` | Power on | Splash |
-| `SETUP` | WiFi settings missing or rejected at boot | Setup needed, with the reason |
+| `SETUP` | Setup mode, on a boot of its own (see Setup mode) | Setup needed, the reason, and how to reach the settings page |
 | `ERROR` | At boot, the third brownout in a row | Error indicator, "Power supply too weak" |
 | `CONNECTING` | Boot complete | Connecting indicator |
 | `IDLE` | Server session ready | Waiting for wake word |
@@ -171,17 +175,72 @@ needs no change to the flash layout. Flash runs in QIO mode at 80 MHz; PSRAM is 
 What follows `ERROR` depends on its cause. After an `error` message from
 the server, which ends one turn and leaves the connection open, the device
 shows `ERROR` briefly and returns to `IDLE`. After a lost connection it
-returns to `CONNECTING` after a backoff. `SETUP` does not retry:
-retrying cannot fix missing or wrong settings, so it stays until settings
-are entered and the device is rebooted. Every other transition is driven
+returns to `CONNECTING` after a backoff. `SETUP` belongs to setup mode,
+which the state machine never runs alongside (see Setup mode). Every other
+transition is driven
 either by local audio events or by server messages. `SETUP` and `ERROR`
 carry a short detail text naming the cause, and `CONNECTING` carries one
 saying why the last attempt failed; no other state has one. The
 wording is the device's own, chosen by cause and sized for the panel; the
 sentence in the server's `error` message goes to the log.
 
-`SETUP` is also where a device goes whose identifier and token the server
-refuses: retrying cannot fix that either.
+A device whose identifier and token the server refuses restarts into setup
+mode: retrying cannot fix that.
+
+### Setup mode
+
+Setup mode lets the settings be entered from a phone, without a USB cable.
+It is a way of starting up, not something switched on while the device
+runs: whatever wants it notes a reason in RTC memory, which survives a
+restart, and restarts the chip. The boot sequence then starts setup mode
+instead of the state machine, the server link and WiFi, and setup mode
+ends in a restart too. Nothing running ever has to be stopped, and every
+way out leaves the chip as a fresh start does.
+
+| Way in | Shown as | Deadline |
+| --- | --- | --- |
+| No WiFi network or no device token stored | "WiFi not set up", "Device token not set up" | None |
+| The `setup` console command | "Asked for at the console" | 5 min |
+| BOOT button held 3 s | "BOOT button held" | 5 min |
+| WiFi settings that have never connected: 5 refusals of the password in a row | "WiFi password refused" | None |
+| The same, with no connection in 10 min | "WiFi network not found" | None |
+| The server refuses the device's identifier and token | "Server refused this device" | None |
+
+Setup entered on purpose closes by itself after 5 minutes with nothing
+saved, and the screen counts the minutes down. Setup entered because the
+settings are missing or failed has no deadline: going back to them would
+only fail again, and come back here with a new hotspot password. Holding
+BOOT again leaves setup mode at any time.
+
+The device becomes a WiFi access point named "Hey-Claude-" and four
+characters of its MAC address, protected by WPA2 with a random 8-character
+password made for each entry. The name, the password and the page's
+address are on the screen; the password is never stored in flash. A
+captive-portal DNS answers every name with the device's own address, so
+that a phone, checking whether the network reaches the internet, is sent
+to the settings page and opens it by itself. Before the hotspot starts,
+the device scans for the networks in range, which the page offers to tap.
+The scan has to come first: the access point cannot change channel under
+a phone that has joined it.
+
+The page asks for the WiFi network, its password, the device token and,
+optionally, the server's address, and shows the device identifier the
+server must know. The stored password and token are never sent back: their
+fields are empty, and empty keeps what is stored; a box marks an open
+network. A save is checked by the same rules as the console and stored all
+or nothing, and the device restarts. The WiFi password is not tried before
+it is kept: trying it would move the access point to the network's
+channel, away from the phone. Settings that never work bring the device
+back to setup instead.
+
+Whether WiFi settings have ever worked is known to `net`, which keeps a
+checksum of the network name and password that last connected in an NVS
+namespace of its own, `net`. Settings that have connected before are never
+given up: their network is only away, a router restarting or switched off,
+and is waited for.
+
+The hotspot and its DNS were first built for the author's earlier project,
+and ported.
 
 The device gives up on a turn by itself in four cases: 15 s of capture
 with no `stop_capture`, 40 s of `THINKING` with no reply, 40 s of a reply
@@ -233,8 +292,8 @@ longest wait is the firmware's own to bound.
 | Task | Priority | Core | Notes | Watched |
 | --- | --- | --- | --- | --- |
 | WiFi driver | 23 | 0 | ESP-IDF's; must keep up with the radio | No |
-| `esp_timer` | 22 | 0 | ESP-IDF's; runs software timer callbacks, which must be short | No |
-| Default event loop | 20 | 0 | ESP-IDF's; delivers WiFi, state and wake-word events | No |
+| `esp_timer` | 22 | 0 | ESP-IDF's; runs software timer callbacks, which must be short: the WiFi retry and give-up timers and the BOOT button's watch, which may restart the chip | No |
+| Default event loop | 20 | 0 | ESP-IDF's; delivers WiFi, state and wake-word events, and runs `net`'s handlers, which may write to NVS or restart the chip. Its stack is raised to 3584 bytes from 2304, which had 308 never used after an ordinary start (measured 2026-10-15) | No |
 | Capture | 12 | 1 | Reads the microphone into the ring; must never fall 75 ms behind | Yes |
 | Audio test tasks | 10 | 1 | Console `audio` commands, short-lived | No |
 | Player | 10 | 1 | Writes reply audio to the amplifier, which paces it; above the wake word so that a model run cannot delay the speaker | Yes |
@@ -244,8 +303,10 @@ longest wait is the firmware's own to bound.
 | State machine | 5 | 0 | Acts on one event at a time, each in well under a millisecond, except storing a changed volume, which writes to flash and is done only in `IDLE` | Yes |
 | Link | 5 | 0 | Looks the server up, connects, and waits for the connection to end | No: it waits on the network |
 | Display | 4 | 0 | LVGL drawing and animation; sleeps between frames | No |
+| Web server | 5 | either | Setup mode only: ESP-IDF's HTTP server, serving the settings page one request at a time | No: it waits on the network |
+| Captive DNS | 4 | either | Setup mode only: answers every name with the device's address | No: it waits on the network |
 | Console | 2 | either | ESP-IDF's REPL; typing must not stall animation or audio | No |
-| `main` | 1 | 0 | Runs the start-up sequence, then ends | No |
+| `main` | 1 | 0 | Runs the start-up sequence, then ends; in setup mode it runs setup mode's loop until the restart | No |
 | Idle, one per core | 0 | each | FreeRTOS's; runs when nothing else can | Yes: starved for 5 s means a task is hogging the core |
 
 The audio set-up in `audio_init()` runs briefly on core 1 at the caller's
@@ -819,6 +880,9 @@ deferred.
 | Server-side history | Device-side history | Survives reboots and WiFi loss, and enables prompt caching |
 | Two I2S controllers | Shared bus | No contention, and different sample rates per direction |
 | Settings entered through the serial console | Credentials compiled in, or flashed from a local file | Nothing sensitive is ever written to disk on the development machine |
+| Settings also entered from a phone, on a hotspot of the device's own | Espressif's provisioning over Bluetooth, with its app | No app to install, and no Bluetooth stack in RAM; the same page as the author's earlier project |
+| Setup mode entered by restarting into it | Switching the running device over to a hotspot | Nothing running has to be stopped, and no half-switched radio is possible |
+| WiFi password saved without being tried | Joining the network before saving | Trying it would move the hotspot to the network's channel, away from the phone; settings that never work bring setup back instead |
 | mDNS server discovery | Fixed server address | The server machine's LAN address changes; a fixed address would need re-entering each time |
 | Server paces the reply, device holds 4 s | Device holds the whole reply | A minute of audio is 3 MB; a fixed small buffer works for a reply of any length |
 | Reconnecting done by `server_link`, not by the WebSocket client | The client's own automatic reconnect | The server may have moved, so every attempt starts again from the lookup; and the rest of the firmware must hear of every loss |

@@ -2,8 +2,9 @@
 
 **Current stage:** Stage 8, polish. Planned and approved on 2026-10-15:
 volume by voice, provisioning through a hotspot web page, and refined
-animations. Part A, volume by voice, is built, reviewed, corrected and
-tested on the device. The steps are under Stage 8 plan
+animations. Part A, volume by voice, and part B, settings entered from a
+phone through a hotspot of the device's own, are built, reviewed,
+corrected and tested on the device. Part C, the animations, is next. The steps are under Stage 8 plan
 below.
 
 Stage 7, latency and robustness, closed on 2026-10-15. Its one remaining
@@ -107,7 +108,11 @@ before it was committed; what they found and what was deferred is in
 
 Since stage 8 the playback volume is changed by voice: a request that is
 only about the volume is answered by the server without Claude, and the
-device keeps the level through restarts (ARCHITECTURE.md, Volume).
+device keeps the level through restarts (ARCHITECTURE.md, Volume). Its
+settings can also be entered from a phone: in setup mode the device makes
+a WiFi network of its own and serves a settings page. It starts in setup
+mode when its settings are missing or fail, and on request from the
+console or its BOOT button (ARCHITECTURE.md, Setup mode).
 
 ## Stage 8 plan
 
@@ -218,14 +223,73 @@ confirmation by the order of the messages and not by the synthesiser's
 delay; the confirmation is held to the same limit on the first audio as
 a reply from Claude.
 
-**Part B, provisioning through a hotspot.**
+**Part B, provisioning through a hotspot.** Steps refined and approved on
+2026-10-15, after part A. Setup is a way of starting up: the device
+restarts into it, runs the hotspot, and restarts out of it, so that nothing
+running has to be stopped. Built after the setup mode of the author's
+earlier project, ported to this chip and to `app_config`. Decided with the
+steps: holding the board's BOOT button for 3 s opens setup; a token the
+server refuses opens it by itself.
 
 | Step | State |
 | --- | --- |
-| B1. A settings page served by the device, using the same validation as the console: WiFi name, with the networks in range offered, WiFi password, device token, and an optional server address | Not started |
-| B2. The hotspot is protected by a random password shown on the panel, so that the token never crosses an open network; a captive-portal DNS makes a phone open the page by itself; the device restarts after a save | Not started |
-| B3. Entered in `SETUP`, after WiFi has failed for a long time, and from the console | Not started |
-| B4. Measured on the device with a phone, with the chip's temperature (R20); reviewed, documented | Not started |
+| B1. One check for all settings: `app_config` checks several settings together and stores them only if every one passes, for the console and the page alike | Done: `app_config_store()`. The token is now checked for the server's lengths, held to the server by its test through `protocol.h`, and the server's address for its shape |
+| B2. Setup as a start-up mode: a flag that survives a restart makes the boot sequence start the hotspot in place of the state machine, the server link and WiFi. Entered when WiFi or the token is missing, from a `setup` console command, and by holding BOOT for 3 s | Done: the new `setup` component (ARCHITECTURE.md, Setup mode) |
+| B3. The hotspot and the form: a hotspot named after the device, with a random password shown on the panel; a captive-portal DNS that makes a phone open the page; WiFi name with the networks in range offered, WiFi password, device token and server address, the secrets never sent back and left as they are when blank; the device identifier shown. A save restarts the device; with working settings stored, the hotspot closes after 5 min | Done, ported from the author's earlier project. Changed by the review: the 5-minute deadline applies only when setup was entered on purpose, by the console or the button |
+| B4. A setup screen: the hotspot's name and password, the page's address and the minutes left | Done: four lines under the title, built from the SETUP entry of the view table, the minutes counted by the screen itself |
+| B5. Back to setup by itself: after 5 rejected WiFi passwords in a row or 10 min without finding the network, only for settings that have never connected; and when the server refuses the token | Done. Which settings have worked is kept by `net`, as a checksum in an NVS namespace of its own |
+| B6. Tested on the device with a phone, with the chip's temperature (R20): first setup, a change, a wrong WiFi password, a wrong token, the timeout | Done on 2026-10-15; the figures are below |
+| B7. Reviewed by both agents, corrected, documented, committed | Done on 2026-10-15 |
+
+**Part B on the device, 2026-10-15.** Breadboard, USB-powered, a phone
+joining the device's hotspot, seven tests, before the review:
+
+- Entry by BOOT held 3 s: setup mode about 2 s later, 9 to 11 networks in
+  range offered.
+- The page: the phone joined, and the captive DNS answered its questions,
+  51 within about ten seconds of joining, so the page was served through
+  the portal. Whether the phone opened it by itself was not recorded.
+- Saved with nothing changed: Ready 7 s after the save.
+- A wrong WiFi password: 5 refusals in 24 s, then back to setup by itself,
+  "WiFi password refused". The right password: Ready 7 s after the save.
+- A wrong token: the server refused it and the device was back in setup
+  within about a second, "Server refused this device". The right token was
+  then restored through the console without being shown.
+- BOOT held in setup mode: left it, Ready 5 s later.
+- Setup left alone: restarted after exactly 5 minutes, Ready 6 s later.
+- Chip temperature 53.5 to 57.5 °C (R20).
+
+After the review's corrections, flashed and tested again: entry by BOOT
+showed the countdown line, which the person judged correct; a wrong token
+entered through the console took the device straight into setup with no
+deadline; the real token was restored the same way. The default event
+loop's stack was measured with the `mem` command, which now lists it:
+308 bytes never used out of 2304 after an ordinary start, raised to 3584,
+after which 1596 were never used.
+
+**What the review changed.** Neither agent found a critical or major
+fault; the first found no way to strand the device and no unsafe handling
+of what the phone sends. Corrected from the first: the setup screen's
+details could be handed to a display task that had ended, if the panel had
+failed to start; the Saved page promised a return to setup that a network
+not found or a wrong server address does not give; the new check on the
+server's address refused the form `host:port`, which the device accepts;
+the 5-minute timeout could restart the chip in the middle of a save; the
+press that opens setup could also close it, if held long enough; the
+setup lines were lost if a display test ran when they arrived; the default
+event loop's stack, measured, was too tight; a refused WiFi password on the
+page used the console's wording. From the second: setup entered because
+the settings failed timed out after 5 minutes, went back to them, failed
+and came back, with a new hotspot password each time, and now has no
+deadline; the state machine's phase for a refused device, which nothing
+could reach any more, was removed, so that `SETUP` belongs to setup mode
+alone; the setup screen was fed through two channels and rebuilt once a
+minute for its countdown, and is now set once, with its lines built from
+the view table that part C works from; whether the settings are complete
+is asked in one place; the page takes its length limits and labels from
+`app_config`, and the token's lengths are the server's, held by its test;
+callbacks that every caller must give are required. The two agents'
+findings that touched documentation are in ARCHITECTURE.md and README.md.
 
 **Part C, the state animations.**
 
@@ -595,7 +659,7 @@ comes up then.
 | Over-the-air updates | Not adopted for now, decided on 2026-10-15; the device is flashed over USB. The flash layout keeps two application slots, so adopting them later needs no change to it |
 | Encrypting the stored settings | Not done, decided on 2026-10-15: on this chip it burns eFuses, which cannot be undone, and the board is to stay reusable (KNOWN-ISSUES R10) |
 | Server discovery | mDNS on the LAN, with `server_url` as an override; the server's side is built, the device's is stage 6 |
-| Device settings entry | Serial console; from stage 8 also a web page served from a hotspot of the device's own, which reuses the same validation |
+| Device settings entry | Settled and built in stage 8: the serial console, and a page served from a hotspot of the device's own, both through the same checks (ARCHITECTURE.md, Setup mode) |
 | Locking dependency versions | Settled: `firmware/dependencies.lock` is committed, and the wake-word libraries are pinned exactly (R14) |
 | Wake phrase | A two-syllable phrase first; a longer one if it cannot meet the R1 targets |
 | `SETUP` and `ERROR` detail text | Settled: the device shows its own short wording, chosen by reason code and sized for the panel, for server errors and for those the server never sees. The sentence in the server's `error` is for logs. Built in stage 6 |

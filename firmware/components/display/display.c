@@ -39,8 +39,8 @@
  * the fraction of time spent on (the duty) sets the brightness. LEDC can
  * also change the duty gradually by itself (a fade).
  *
- * Context. display_init(), display_test_start() and display_preview() run
- * in the caller's task.
+ * Context. display_init(), display_test_start(), display_preview() and
+ * display_show_setup() run in the caller's task.
  * Everything else runs in the display task, pinned to core 0 with the WiFi
  * work (ARCHITECTURE.md, task and core allocation), except on_color_done(),
  * which runs in the SPI interrupt, and on_state_event(), which runs in the
@@ -109,6 +109,7 @@ static const char *TAG = "display";
 #define WAKE_STATE          (1 << 0)    /* the device state changed */
 #define WAKE_TEST           (1 << 1)    /* a test pattern was requested */
 #define WAKE_PREVIEW        (1 << 2)    /* a preview of a state was requested */
+#define WAKE_SETUP          (1 << 3)    /* the setup screen's text arrived */
 
 static TaskHandle_t s_task;
 static esp_lcd_panel_io_handle_t s_io;
@@ -356,15 +357,37 @@ static void on_state_event(void *arg, esp_event_base_t base, int32_t id, void *d
     xTaskNotify(s_task, WAKE_STATE, eSetBits);
 }
 
-/* A requested preview, handed from the requesting task to the display task
- * under a spinlock (a lock for very short sections; a task on the other
- * core waits by spinning) */
-static portMUX_TYPE s_preview_lock = portMUX_INITIALIZER_UNLOCKED;
+/* What other tasks hand to the display task, a preview or the setup
+ * screen's text, is copied in and out under one spinlock (a lock for very
+ * short sections; a task on the other core waits by spinning) */
+static portMUX_TYPE s_handover_lock = portMUX_INITIALIZER_UNLOCKED;
+/* A requested preview */
 static app_state_event_t s_preview_req;
 static uint32_t s_preview_req_seconds;
 /* The running preview; display task only */
 static bool s_previewing;
 static uint32_t s_preview_end_ms;
+
+/* The setup screen's details, handed over like a preview. `s_setup_new` is
+ * set when they arrive and cleared when the display task takes them. */
+static display_setup_t s_setup;
+static bool s_setup_new;
+
+/* Takes the setup screen's details, if new ones have arrived, and says
+ * whether they had. Display task. */
+static bool take_setup(void)
+{
+    display_setup_t copy;
+    taskENTER_CRITICAL(&s_handover_lock);
+    bool fresh = s_setup_new;
+    s_setup_new = false;
+    copy = s_setup;
+    taskEXIT_CRITICAL(&s_handover_lock);
+    if (fresh) {
+        ui_set_setup(&copy);
+    }
+    return fresh;
+}
 
 /* Milliseconds since boot. Wraps after 49 days; the signed difference used
  * with it stays right across the wrap. */
@@ -375,6 +398,9 @@ static uint32_t now_ms(void)
 
 static void show_current_state(void)
 {
+    /* Details that arrived while something else was on the screen, such as
+     * a display test, are taken here, so that none is ever left behind */
+    take_setup();
     app_state_event_t st;
     app_state_get(&st);
     ui_show_state(&st);
@@ -393,16 +419,25 @@ static void display_task(void *arg)
     }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "display not available: %s", esp_err_to_name(err));
+        /* Nobody may wake a task that no longer exists. The functions that
+         * wake it from other tasks also check s_ready, which is never set. */
+        s_task = NULL;
         vTaskDelete(NULL);  /* NULL: this task; does not return */
     }
 
     ui_init();
+    take_setup();           /* details that arrived while the panel started */
     app_state_event_t st;
     app_state_get(&st);
     ui_show_state(&st);
     lv_refr_now(s_disp);    /* draw and send the first frame... */
     backlight_fade(ui_brightness(st.state));    /* ...and only then light it */
     s_ready = true;
+    /* Details that arrived after the first take and before s_ready, whose
+     * sender found nobody to wake */
+    if (take_setup()) {
+        show_current_state();
+    }
     ESP_LOGI(TAG, "ready, %dx%d", SCREEN_W, SCREEN_H);
 
     uint32_t wait_ms = 0;
@@ -427,14 +462,17 @@ static void display_task(void *arg)
         } else {
             if (reasons & WAKE_PREVIEW) {
                 app_state_event_t st;
-                taskENTER_CRITICAL(&s_preview_lock);
+                taskENTER_CRITICAL(&s_handover_lock);
                 st = s_preview_req;
                 uint32_t seconds = s_preview_req_seconds;
-                taskEXIT_CRITICAL(&s_preview_lock);
+                taskEXIT_CRITICAL(&s_handover_lock);
                 ui_show_state(&st);
                 backlight_fade(ui_brightness(st.state));
                 s_previewing = true;
                 s_preview_end_ms = now_ms() + seconds * 1000;
+            }
+            if (reasons & WAKE_SETUP) {
+                reasons |= WAKE_STATE;  /* show_current_state() takes them */
             }
             if (s_previewing && (int32_t)(now_ms() - s_preview_end_ms) >= 0) {
                 s_previewing = false;
@@ -492,10 +530,24 @@ esp_err_t display_preview(app_state_t state, const char *detail, uint32_t second
     }
     app_state_event_t st = { .state = state };
     strlcpy(st.detail, detail ? detail : "", sizeof(st.detail));
-    taskENTER_CRITICAL(&s_preview_lock);
+    taskENTER_CRITICAL(&s_handover_lock);
     s_preview_req = st;
     s_preview_req_seconds = seconds;
-    taskEXIT_CRITICAL(&s_preview_lock);
+    taskEXIT_CRITICAL(&s_handover_lock);
     xTaskNotify(s_task, WAKE_PREVIEW, eSetBits);
     return ESP_OK;
+}
+
+void display_show_setup(const display_setup_t *setup)
+{
+    taskENTER_CRITICAL(&s_handover_lock);
+    s_setup = *setup;
+    s_setup_new = true;
+    taskEXIT_CRITICAL(&s_handover_lock);
+    /* Until the display is ready there is nobody to wake: the display task
+     * takes the details itself when it gets there (display_task). If the
+     * display never became ready, it never will. */
+    if (s_ready) {
+        xTaskNotify(s_task, WAKE_SETUP, eSetBits);
+    }
 }

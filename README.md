@@ -125,7 +125,10 @@ pins. It is polarised: the side marked with a stripe is negative and goes to
 | `BL` | GPIO 14 | Backlight, dimmed by PWM from the LEDC peripheral |
 
 GPIO 26–37 are reserved by the flash and PSRAM and must not be used. GPIO 0, 3,
-45 and 46 are strapping pins; GPIO 19 and 20 carry native USB.
+45 and 46 are strapping pins; GPIO 19 and 20 carry native USB. The board's own
+BOOT button, on GPIO 0, is read by the firmware once it is running, to open
+setup mode; held while the board is reset or powered on, it still makes the
+chip wait to be flashed.
 
 ## Software prerequisites
 
@@ -151,8 +154,23 @@ The board has two USB-C ports. Use the one marked **UART**: the settings
 console reads commands only there. The native USB port shows the log but does
 not accept input.
 
-Settings are entered once through the console and kept on the device across
-reboots and reflashing:
+Settings are kept on the device across reboots and reflashing, and can be
+entered in two ways.
+
+**From a phone.** A device without its settings starts in setup mode by
+itself. Setup mode is also opened by holding the board's BOOT button for 3
+seconds, or with the console command `setup`. The device then makes a WiFi
+network of its own, and its screen shows the network's name, its password
+and the page to open. Join it from a phone; the settings page usually opens
+by itself, and otherwise is at the address on the screen. Saving restarts
+the device with the new settings. The stored WiFi password and token are
+never shown on the page: their fields are empty, and left empty they stay
+as they are. Settings that are refused, a wrong WiFi password or a token the
+server does not accept, bring the device back to setup mode by itself.
+Opened with the button or the console, setup mode closes after 5 minutes if
+nothing is saved; holding BOOT again closes it at once.
+
+**From the console:**
 
 ```
 config set wifi_ssid "Network name"
@@ -165,7 +183,7 @@ reboot
 | --- | --- |
 | `wifi_ssid` | Network to join. 2.4 GHz only; the ESP32-S3 has no 5 GHz radio. |
 | `wifi_pass` | 8-63 characters, or 64 hexadecimal digits. Unset for an open network. |
-| `server_url` | Optional. Empty means the server is discovered on the local network. |
+| `server_url` | Optional. Empty means the server is discovered on the local network. Otherwise its address and port, as `192.168.1.20:8765` or `ws://192.168.1.20:8765`. |
 | `device_id` | Optional. Defaults to `hc-` plus the last six hex digits of the MAC address. Letters, digits and `-`. |
 | `device_token` | Credential for the server, used from stage 6: 24 to 64 characters, the same value as this device's entry in the server's `DEVICE_TOKENS`. |
 
@@ -314,7 +332,8 @@ Directories are created as the corresponding stage begins.
 ```
 firmware/          ESP-IDF application for the ESP32-S3
   main/            Startup and the serial console
-  components/      app_config (settings), net (WiFi), audio (microphone and
+  components/      app_config (settings), net (WiFi), setup (setup mode:
+                   hotspot, settings page, BOOT button), audio (microphone and
                    amplifier), audio_ring (shared microphone audio),
                    wakeword (detection and its model), app_state (device
                    state), display (panel, backlight, animations), board

@@ -8,6 +8,7 @@ idf_component_register(SRCS "main.c" "brownout_guard.c" "console.c" "audio_cmd.c
                        INCLUDE_DIRS "."
                        PRIV_REQUIRES app_config net audio audio_ring app_state display
                                      wakeword server_link player state_machine protocol
+                                     setup            # setup mode, the hotspot and page
                                      console          # serial command line
                                      nvs_flash        # settings storage
                                      esp_event        # default event loop

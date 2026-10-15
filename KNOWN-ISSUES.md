@@ -207,7 +207,7 @@ services, but could not read the server's keys.
 flash encryption on the ESP32-S3 both burn eFuses, one-time fuses inside the
 chip that cannot be reset, and the board is to stay reusable for other work.
 If the token leaks, it is replaced on both sides: in `server/.env`, and on
-the device through the console or, from stage 8, the hotspot page.
+the device through the console or, from stage 8, the setup page.
 
 ### R12 — Speech arrives quietly from the microphone
 
@@ -540,6 +540,7 @@ The record:
 | 2026-10-15 | Same bench, the stage 8 part A firmware (volume control). Measured: once a minute from 35 s after flashing, through the first test of the volume, eleven spoken turns in four minutes, at levels from 1 to 9 | 43.5, 46.5, 49.5, 50.5, 51.5, 52.5, 51.5 °C |
 | 2026-10-15 | Same bench, the same session, 20 to 26 min after flashing: idle, then four spoken turns at volume 10 (+6 dB), one reply of 10 s | 54.5, 54.5, 54.5, 55.5 °C |
 | 2026-10-15 | Same bench and firmware, no reset, 48 to 57 min after flashing: once a minute idle, then through eleven spoken turns in two minutes, at levels from 3 to 10 | 55.5 °C at eight readings, 56.5 °C at one, during the turns |
+| 2026-10-15 | Same bench, the stage 8 part B firmware (setup mode), a phone joining the device's hotspot. Once a minute for 48 min through the setup-mode tests: about 25 min connected and idle, then six entries into setup mode, each running its hotspot for 1 to 5 min, with eleven restarts between | 53.5 °C 30 s after flashing; 55.5 to 56.5 °C while idle; 54.5 to 57.5 °C in setup mode, 57.5 °C with the hotspot up for 2 min |
 
 The readings during replies were taken at playback levels of 40 % and
 60 %, but for the last, of 2026-10-07, at the present 100 %.
@@ -739,6 +740,16 @@ at low effort, Claude Code 2.1.296, a home internet connection.
 
 ## Caveats
 
+- **The board's RGB LED can light up by itself.** The development board
+  carries a colour LED marked "RGB", a WS2812, which keeps the last colour
+  it was sent until it loses power. The firmware never drives its pin
+  (most likely GPIO 48 on boards of this kind, not yet confirmed). Seen on
+  2026-10-15 during the stage 8 setup-mode tests, after several restarts in
+  a row: the LED came on white and stayed on. The likeliest cause is the
+  pin being left undriven during a restart, which the LED can read as a
+  command. Unplugging the board for a moment clears it. The firmware could
+  send it "off" at every start, which needs the pin confirmed; that is not
+  part of stage 8's approved steps and is left to be decided.
 - **A comment in `protocol.h` gives the old figures for a stalled reply.**
   Above `PROTO_DEVICE_STALL_LIMIT_MS` it still says the server's services
   allow 35 s, with 20 s of silence from Claude; since stage 7 they are 39 s
@@ -930,12 +941,27 @@ at low effort, Claude Code 2.1.296, a home internet connection.
   answered with a hole in it. The send itself still blocks: seen on
   2026-10-08, 1.5 s, in the upload's last send after the server had been
   stopped. Nothing waits on it but the upload.
-- **Nothing in the firmware can be stopped once started.** A refused
-  device parks its connection task until reboot, and neither the server link nor
-  the player has a stop. Over-the-air updates, which would want the turn
-  machinery stopped with WiFi kept, were not adopted in stage 8. The
-  hotspot of stage 8 is to be entered by a restart into a mode of its own,
-  so that nothing running has to be stopped.
+- **Nothing in the firmware can be stopped once started.** Neither the
+  server link nor the player has a stop. Over-the-air updates, which would
+  want the turn machinery stopped with WiFi kept, were not adopted in stage
+  8. Setup mode, built in stage 8, is entered by restarting into it, so that
+  nothing running has to be stopped; a device the server refuses restarts
+  into it too, where it used to park its connection task.
+- **The setup page travels unencrypted over the device's own hotspot.** The
+  page is plain HTTP, so the WiFi password and token typed into it cross
+  the air protected only by the hotspot's WPA2, whose password is on the
+  device's screen. Anyone who can read the screen, and is within range
+  during the minutes setup mode is open, could join the hotspot and watch.
+  Accepted, like R8 for the connection to the server: HTTPS would need a
+  certificate the phone trusts, which a device on its own network cannot
+  have.
+- **Setup mode for a network that is away can wait a long time.** WiFi
+  settings that have never connected are given up after 10 minutes without
+  their network, and the device then waits in setup mode until the page is
+  used or BOOT is held, with no deadline. A device set up while its router
+  is off therefore stays in setup mode once the router is back, until
+  someone saves or holds BOOT. Settings that have connected once are never
+  given up.
 - **The watchdog and the brownout guard were tested with a test build.**
   On 2026-10-08 a build with one extra console command hung the
   state-machine task, and counted ordinary restarts as brownouts; it was

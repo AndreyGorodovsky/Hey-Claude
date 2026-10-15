@@ -30,16 +30,17 @@
  *      Brownout guard - if the last three restarts were all caused by the
  *                       supply dipping, the sequence stops here, with the
  *                       reason on the screen (brownout_guard.c).
- *  12. State machine  - from here on the only code that changes the state.
+ *      Setup mode     - if the settings needed are missing, or the restart
+ *                       that started this boot asked for it, the device
+ *                       runs setup mode from here instead: a hotspot of its
+ *                       own with a settings page (setup.h). It ends in a
+ *                       restart, and the steps below do not run.
+ *  12. BOOT button    - held for 3 s, it restarts into setup mode.
+ *  13. State machine  - from here on the only code that changes the state.
  *                       Before the link, whose events it must not miss.
- *  13. Server link    - waits for WiFi, then finds and joins the server.
+ *  14. Server link    - waits for WiFi, then finds and joins the server.
  *                       Before WiFi, whose "connected" event it waits for.
- *  14. WiFi           - starts joining the network.
- *
- * Steps 12 to 14 run only if the settings they need are present. Without
- * them the state is SETUP, with the reason, and stays there until they are
- * entered at the console and the device is rebooted. They do not run
- * either when the brownout guard has tripped; the state is then ERROR.
+ *  15. WiFi           - starts joining the network.
  */
 #include "app_config.h"
 #include "app_state.h"
@@ -51,6 +52,7 @@
 #include "display.h"
 #include "server_link.h"
 #include "net.h"
+#include "setup.h"
 #include "player.h"
 #include "protocol.h"
 #include "wakeword.h"
@@ -151,6 +153,22 @@ static void init_nvs(void)
     ESP_ERROR_CHECK(err);
 }
 
+/* WiFi settings that have never worked are given up by net, which calls
+ * this, in the event loop's or the timer task: the device restarts into
+ * setup mode, where new ones can be entered */
+static void on_wifi_hopeless(net_hopeless_t why)
+{
+    setup_restart(why == NET_HOPELESS_REFUSED ? SETUP_WHY_WIFI_REFUSED
+                                              : SETUP_WHY_WIFI_NOT_FOUND);
+}
+
+/* The server refused this device's identifier and token. Called by the
+ * state machine, in its task, once any turn has stopped. */
+static void on_refused(void)
+{
+    setup_restart(SETUP_WHY_TOKEN_REFUSED);
+}
+
 void app_main(void)
 {
     log_banner();
@@ -227,19 +245,20 @@ void app_main(void)
     }
 
     const app_config_t *cfg = app_config_get();
-    if (!app_config_has_wifi()) {
-        /* First boot, or settings erased: wait for them to be entered over serial */
-        ESP_LOGW(TAG, "WiFi not configured. Enter: config set wifi_ssid \"<name>\", "
-                      "config set wifi_pass \"<password>\", then reboot");
-        app_state_set(APP_STATE_SETUP, "WiFi not set up");
-        return;
+    /* Asked for by the restart that started this boot, or needed because
+     * settings are missing */
+    setup_why_t setup_why = setup_needed();
+    if (setup_why != SETUP_WHY_NONE) {
+        /* The settings can still be entered at the console as well, with
+         * `config set` and then `reboot` */
+        setup_run(setup_why);   /* does not return: it ends in a restart */
     }
-    if (cfg->device_token[0] == '\0') {
-        /* The server accepts no device without its token (docs/PROTOCOL.md) */
-        ESP_LOGW(TAG, "Server token not configured. Enter: "
-                      "config set device_token \"<token>\", then reboot");
-        app_state_set(APP_STATE_SETUP, "Server token not set up");
-        return;
+
+    /* Not ESP_ERROR_CHECK: the button is a convenience, and setup mode can
+     * still be reached from the console */
+    err = setup_button_start();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "BOOT button not watched: %s", esp_err_to_name(err));
     }
 
     /* The last state set from here. The state machine takes over as the
@@ -248,6 +267,7 @@ void app_main(void)
     app_state_set(APP_STATE_CONNECTING, NULL);
     const state_machine_config_t machine = {
         .speaker_ok = speaker_ok,
+        .on_refused = on_refused,
     };
     /* ESP_ERROR_CHECK: these fail only if memory has run out this early,
      * and without them the device can do nothing useful */
@@ -270,7 +290,7 @@ void app_main(void)
      * fix it. Logging and carrying on keeps the console available. The
      * state is left as it is: with the state machine running, this code no
      * longer sets it, and CONNECTING is what a device without WiFi shows. */
-    err = net_start(cfg->wifi_ssid, cfg->wifi_pass, cfg->device_id);
+    err = net_start(cfg->wifi_ssid, cfg->wifi_pass, cfg->device_id, on_wifi_hopeless);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "WiFi not started: %s. Check the settings with: config show",
                  esp_err_to_name(err));

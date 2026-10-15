@@ -30,6 +30,10 @@
 /* What the state machine is told at start about the parts it depends on */
 typedef struct {
     bool speaker_ok;    /* the amplifier and the player started */
+    /* Called, from the state machine's task, when the server refuses this
+     * device's identifier and token, once any turn has been stopped.
+     * Required: it is expected to restart the chip into setup mode. */
+    void (*on_refused)(void);
 } state_machine_config_t;
 
 /* Starts the state machine in its own task. Call once at boot, after the

@@ -54,6 +54,12 @@
 #define PROTO_VOLUME_MIN                1
 #define PROTO_VOLUME_MAX                10
 
+/* ---- The device's identity ---- */
+
+/* Lengths of the device token the server accepts, in characters */
+#define PROTO_DEVICE_TOKEN_MIN          24
+#define PROTO_DEVICE_TOKEN_MAX          64
+
 /* ---- The device's deadlines ----
  * Each is a guard against a server that has stopped answering, and each is
  * longer than the server's own limit for the same wait, so that the

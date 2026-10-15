@@ -22,6 +22,25 @@
  * after app_state_init(). */
 esp_err_t display_init(void);
 
+/* What the setup screen shows besides the reason, which is the SETUP
+ * state's detail text: how to reach the setup page, and when setup mode
+ * closes by itself */
+typedef struct {
+    char ssid[33];          /* the hotspot's name */
+    char password[16];      /* its password */
+    char address[16];       /* the page's address, e.g. "192.168.4.1" */
+    /* When setup mode closes, as esp_timer_get_time() counts (microseconds
+     * since boot); 0 if it stays until the page is used. The screen counts
+     * the minutes down by itself. */
+    int64_t closes_at_us;
+} display_setup_t;
+
+/* Gives the SETUP view its hotspot details, which it shows from now until
+ * the restart that ends setup mode. Until they arrive, the SETUP view shows
+ * only its title and reason. Copied. May be called from any task, and
+ * before the display has finished starting. */
+void display_show_setup(const display_setup_t *setup);
+
 /* Results of a display test */
 typedef struct {
     uint32_t seconds;       /* how long the test ran */

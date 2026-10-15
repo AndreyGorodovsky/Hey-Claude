@@ -17,7 +17,8 @@ history. Check what is tracked, not only what is staged.
 | Speech provider API keys | Same |
 | Device tokens | The server's `DEVICE_TOKENS` setting, firmware configuration, test fixtures, a command line |
 | The Claude Code login, used with `LLM_BACKEND=claude_code`, the default | Claude Code keeps it in the user's profile, outside the repository; it leaks only if that directory, or a login token set in an environment variable, is copied into a file here |
-| WiFi SSID and passphrase | `sdkconfig`, NVS CSV files, hardcoded during bring-up |
+| WiFi SSID and passphrase | `sdkconfig`, NVS CSV files, hardcoded during bring-up, the console log of setup mode (the network's name is logged when the page saves) |
+| The setup hotspot's password | Nowhere lasting: made at random for each entry into setup mode, shown on the screen, logged on the serial console, kept in RAM and gone at the restart that ends setup mode. A console log saved into the repository would carry it, and the network name with it |
 
 ### ESP-IDF specific traps
 

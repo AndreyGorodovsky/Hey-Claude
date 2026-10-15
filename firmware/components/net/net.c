@@ -17,9 +17,17 @@
  * 4 s ... up to 30 s) so that a router that is off for a while is not
  * hammered. A successful connection resets the wait to 1 s.
  *
- * Threading: event handlers run in the event loop task; the retry callback
- * runs in the esp_timer task. The notes on each static variable below explain
- * why they need no locks.
+ * Settings that have never connected are given up after 5 refusals of the
+ * password in a row, or 10 minutes without a connection (net.h). The two
+ * limits differ because the evidence does. A refused password says the
+ * password is wrong, plainly, so a few refusals are enough. "Network not
+ * found" is what a mistyped name looks like, and equally what a router
+ * still starting after a power cut looks like, so it is waited out far
+ * longer than a router takes to start.
+ *
+ * Threading: event handlers run in the event loop task; the retry and
+ * give-up callbacks run in the esp_timer task. The notes on each static
+ * variable below explain why they need no locks.
  */
 #include "net.h"
 
@@ -27,16 +35,28 @@
 #include <string.h>
 #include "esp_check.h"
 #include "esp_event.h"
+#include "esp_rom_crc.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "nvs.h"
 
 static const char *TAG = "net";
 
 #define BACKOFF_MIN_MS      1000    /* first retry delay */
 #define BACKOFF_MAX_MS      30000   /* retry delay stops growing here */
+
+/* When settings that have never connected are given up (see the top of
+ * this file). AUTH_EXPIRE is not counted as a refusal: some routers send it
+ * routinely at the first attempt and then let the device in. */
+#define REFUSALS_MAX        5
+#define NEVER_CONNECTED_MS  (10 * 60 * 1000)
+
+/* Where the checksum of the settings that last connected is kept */
+#define NVS_NAMESPACE       "net"
+#define NVS_KEY_PROVEN      "proven"
 
 /* Guards against net_start() being called twice. Set once at boot. */
 static bool s_started;
@@ -55,6 +75,19 @@ static uint32_t s_backoff_ms = BACKOFF_MIN_MS;
  * is not treated as a lost connection. `volatile` because it is written by the
  * restarting task and read by others. */
 static volatile bool s_stopping;
+
+/* For giving up on settings that never work. Set at start and then written
+ * only in the event loop task, except s_given_up, which the give-up timer
+ * also writes; a bool is written in one instruction, and the worst a
+ * collision could do is report twice, which only restarts the chip sooner. */
+static void (*s_on_hopeless)(net_hopeless_t why);
+static esp_timer_handle_t s_give_up_timer;
+static uint32_t s_checksum;         /* of these settings */
+static bool s_proven;               /* these settings have connected, on some boot */
+static bool s_connected;            /* they have connected on this boot */
+static int s_refusals;              /* password refusals in a row */
+static bool s_last_refused;         /* the last failure was a refusal */
+static volatile bool s_given_up;
 
 /*
  * Turns the driver's numeric disconnect reason into advice. The numbers are
@@ -86,6 +119,57 @@ static const char *reason_str(uint8_t reason)
         return "connection failed";
     default:
         return "see wifi_err_reason_t in esp_wifi_types_generic.h";
+    }
+}
+
+/* Whether a disconnect reason says the password was wrong */
+static bool is_refusal(uint8_t reason)
+{
+    return reason == WIFI_REASON_AUTH_FAIL
+        || reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT
+        || reason == WIFI_REASON_HANDSHAKE_TIMEOUT;
+}
+
+static void give_up(net_hopeless_t why)
+{
+    if (s_given_up) {
+        return;
+    }
+    s_given_up = true;
+    ESP_LOGW(TAG, "giving up on settings that have never connected: %s",
+             why == NET_HOPELESS_REFUSED ? "the password keeps being refused"
+                                         : "no connection in 10 minutes");
+    s_on_hopeless(why);
+}
+
+/* The give-up timer: runs out NEVER_CONNECTED_MS after start unless a
+ * connection stops it first. esp_timer task. */
+static void give_up_cb(void *arg)
+{
+    give_up(s_last_refused ? NET_HOPELESS_REFUSED : NET_HOPELESS_NOT_FOUND);
+}
+
+/* Remembers that these settings work, once: a write to flash at the first
+ * connection with new settings, and never again for them */
+static void remember_proven(void)
+{
+    if (s_proven) {
+        return;
+    }
+    s_proven = true;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err == ESP_OK) {
+        err = nvs_set_u32(h, NVS_KEY_PROVEN, s_checksum);
+        if (err == ESP_OK) {
+            err = nvs_commit(h);
+        }
+        nvs_close(h);
+    }
+    if (err != ESP_OK) {
+        /* Only costs this: after a restart, settings that do work could be
+         * given up if their network were away for 10 minutes */
+        ESP_LOGW(TAG, "could not note that the settings work: %s", esp_err_to_name(err));
     }
 }
 
@@ -135,6 +219,12 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         }
         ESP_LOGW(TAG, "disconnected, reason %d: %s; retrying in %lu s",
                  ev->reason, reason_str(ev->reason), (unsigned long)(s_backoff_ms / 1000));
+        s_last_refused = is_refusal(ev->reason);
+        s_refusals = s_last_refused ? s_refusals + 1 : 0;
+        if (!s_proven && !s_connected && s_refusals >= REFUSALS_MAX) {
+            give_up(NET_HOPELESS_REFUSED);
+            return;
+        }
         schedule_retry();
     }
 }
@@ -151,6 +241,10 @@ static void on_got_ip(void *arg, esp_event_base_t base, int32_t id, void *data)
     ESP_LOGI(TAG, "connected: ip " IPSTR ", rssi %d dBm, channel %d",
              IP2STR(&ev->ip_info.ip), ap.rssi, ap.primary);
     s_backoff_ms = BACKOFF_MIN_MS;      /* the next outage starts again at 1 s */
+    s_connected = true;
+    s_refusals = 0;
+    esp_timer_stop(s_give_up_timer);    /* an error if not running, which is fine */
+    remember_proven();
 }
 
 /* Runs on esp_restart() before the WiFi driver's own shutdown handler,
@@ -162,15 +256,51 @@ static void on_shutdown(void)
     esp_timer_stop(s_retry_timer);
 }
 
-esp_err_t net_start(const char *ssid, const char *pass, const char *hostname)
+/* A checksum of the settings, so that NVS can say whether these ones have
+ * connected without holding a second copy of the password. CRC32 is a
+ * checksum, not a secret-keeping hash: it tells settings apart, which is
+ * all that is asked of it. */
+static uint32_t settings_checksum(const char *ssid, const char *pass)
+{
+    uint32_t crc = esp_rom_crc32_le(0, (const uint8_t *)ssid, strlen(ssid) + 1);
+    return esp_rom_crc32_le(crc, (const uint8_t *)pass, strlen(pass));
+}
+
+/* Whether these settings have connected on an earlier boot */
+static bool load_proven(uint32_t checksum)
+{
+    nvs_handle_t h;
+    uint32_t stored = 0;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
+        return false;                   /* nothing stored yet */
+    }
+    esp_err_t err = nvs_get_u32(h, NVS_KEY_PROVEN, &stored);
+    nvs_close(h);
+    return err == ESP_OK && stored == checksum;
+}
+
+esp_err_t net_start(const char *ssid, const char *pass, const char *hostname,
+                    void (*on_hopeless)(net_hopeless_t why))
 {
     ESP_RETURN_ON_FALSE(!s_started, ESP_ERR_INVALID_STATE, TAG, "already started");
+    ESP_RETURN_ON_FALSE(on_hopeless != NULL, ESP_ERR_INVALID_ARG, TAG, "no on_hopeless");
     s_started = true;
+    s_on_hopeless = on_hopeless;
+    s_checksum = settings_checksum(ssid, pass);
+    s_proven = load_proven(s_checksum);
 
     /* Resources are not released on failure: net_start runs once at boot, and a
      * failure leaves the device on the console for the settings to be fixed. */
     const esp_timer_create_args_t timer_args = { .callback = retry_cb, .name = "wifi_retry" };
     ESP_RETURN_ON_ERROR(esp_timer_create(&timer_args, &s_retry_timer), TAG, "retry timer");
+    const esp_timer_create_args_t give_up_args = { .callback = give_up_cb, .name = "wifi_give_up" };
+    ESP_RETURN_ON_ERROR(esp_timer_create(&give_up_args, &s_give_up_timer), TAG, "give-up timer");
+    if (!s_proven) {
+        /* esp_timer counts in microseconds */
+        ESP_RETURN_ON_ERROR(esp_timer_start_once(s_give_up_timer,
+                                                 (uint64_t)NEVER_CONNECTED_MS * 1000),
+                            TAG, "give-up timer");
+    }
 
     /* Creates the network interface WiFi attaches to. As a side effect this
      * registers the driver's own shutdown handler, so ours, registered next,
@@ -217,6 +347,7 @@ esp_err_t net_start(const char *ssid, const char *pass, const char *hostname)
     /* Returns at once; WIFI_EVENT_STA_START follows and starts connecting */
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "start");
 
-    ESP_LOGI(TAG, "joining '%s' as %s", ssid, hostname);
+    ESP_LOGI(TAG, "joining '%s' as %s; these settings have %s connected", ssid, hostname,
+             s_proven ? "already" : "never");
     return ESP_OK;
 }

@@ -3,4 +3,5 @@
 idf_component_register(SRCS "app_config.c"
                        INCLUDE_DIRS "include"
                        PRIV_REQUIRES nvs_flash        # NVS storage
-                                     esp_hw_support)  # MAC address for the default device ID
+                                     esp_hw_support   # MAC address for the default device ID
+                                     protocol)        # the token's length, the server's rule

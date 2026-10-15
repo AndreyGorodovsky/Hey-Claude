@@ -54,6 +54,14 @@ CONFIG_ESP_TASK_WDT_PANIC=y
 # task asserts that its longest wait is well inside this.
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
 
+# --- Default event loop ---
+# The task that delivers system events runs the firmware's WiFi handlers.
+# Since stage 8 they also write to NVS when new settings first connect, and
+# may restart the chip into setup mode. Its default stack, 2304 bytes, had
+# only 308 bytes never used after an ordinary start (measured 2026-10-15
+# with the `mem` command, on the breadboard), so it is raised.
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=3584
+
 # --- Core dump ---
 # On a crash, save the state of every task to the `coredump` partition. It
 # survives the reboot and can be read with: idf.py coredump-info

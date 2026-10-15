@@ -15,6 +15,11 @@
  * Every setting is described once, in the FIELDS table below. Loading,
  * listing, validating and storing are all driven from that table, so adding a
  * setting means adding a struct member in app_config.h and one table row.
+ *
+ * Two ways in edit the stored settings, the console and the setup page, and
+ * both go through app_config_store(): every value is checked first, and
+ * nothing is written unless all of them pass, so a form with one bad field
+ * changes nothing.
  */
 #include "app_config.h"
 
@@ -25,8 +30,14 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "nvs.h"
+#include "protocol.h"
 
 static const char *TAG = "app_config";
+
+/* A number from a #define as text, at build time: STRINGIFY(24) is "24".
+ * Two steps, so that a macro's value is turned into text and not its name. */
+#define STRINGIFY_(x)       #x
+#define STRINGIFY(x)        STRINGIFY_(x)
 static const char *NVS_NAMESPACE = "config";
 
 /* A validator checks a value before it is stored. It returns NULL if the
@@ -36,6 +47,7 @@ typedef const char *(*validator_t)(const char *value);
 /* Description of one setting */
 typedef struct {
     const char *key;        /* NVS key and console name, at most 15 characters */
+    const char *label;      /* what it is called in a sentence */
     size_t offset;          /* where the value lives inside app_config_t */
     size_t max_len;         /* longest allowed value, excluding the NUL */
     bool secret;            /* never displayed, and cleared from console history */
@@ -62,7 +74,54 @@ static const char *validate_wifi_pass(const char *v)
         }
         return NULL;
     }
-    return "must be 8-63 characters, or 64 hexadecimal digits (unset it for an open network)";
+    /* Worded for the console and the setup page alike: each says in its
+     * own way how an open network is set */
+    return "must be 8-63 characters, or 64 hexadecimal digits";
+}
+
+/*
+ * The server accepts tokens of PROTO_DEVICE_TOKEN_MIN to _MAX characters
+ * (protocol.h, held to the server's own figures by a test), so a shorter
+ * one can only be a mistake. The longest is APP_CFG_DEVICE_TOKEN_MAX, which
+ * the length check before this applies. The token goes into an HTTP header,
+ * which a space or a control character would break.
+ */
+_Static_assert(APP_CFG_DEVICE_TOKEN_MAX == PROTO_DEVICE_TOKEN_MAX,
+               "the stored token's limit must be the server's");
+
+static const char *validate_device_token(const char *v)
+{
+    size_t len = strlen(v);
+    if (len < PROTO_DEVICE_TOKEN_MIN) {
+        return "must be at least " STRINGIFY(PROTO_DEVICE_TOKEN_MIN) " characters";
+    }
+    for (size_t i = 0; i < len; i++) {
+        if (!isgraph((unsigned char)v[i])) {
+            return "must not contain spaces or control characters";
+        }
+    }
+    return NULL;
+}
+
+/*
+ * The server's address, when it is not found on the network by itself: a
+ * host and optionally ":" and a port, with or without "ws://" in front, the
+ * forms the server link accepts (server_link.c). Checked only for that
+ * shape; whether anything answers there is found out by connecting.
+ */
+static const char *validate_server_url(const char *v)
+{
+    static const char SCHEME[] = "ws://";
+    const char *host = strncmp(v, SCHEME, strlen(SCHEME)) == 0 ? v + strlen(SCHEME) : v;
+    if (*host == '\0' || strstr(host, "://") != NULL) {
+        return "must be the server's address and port, e.g. 192.168.1.20:8765";
+    }
+    for (const char *p = v; *p; p++) {
+        if (!isgraph((unsigned char)*p)) {
+            return "must not contain spaces";
+        }
+    }
+    return NULL;
 }
 
 /*
@@ -86,11 +145,16 @@ static const char *validate_device_id(const char *v)
 
 /* The settings. Order here is the order `config show` lists them in. */
 static const field_t FIELDS[] = {
-    { "wifi_ssid",    offsetof(app_config_t, wifi_ssid),    APP_CFG_WIFI_SSID_MAX,    false, NULL },
-    { "wifi_pass",    offsetof(app_config_t, wifi_pass),    APP_CFG_WIFI_PASS_MAX,    true,  validate_wifi_pass },
-    { "server_url",   offsetof(app_config_t, server_url),   APP_CFG_SERVER_URL_MAX,   false, NULL },
-    { "device_id",    offsetof(app_config_t, device_id),    APP_CFG_DEVICE_ID_MAX,    false, validate_device_id },
-    { "device_token", offsetof(app_config_t, device_token), APP_CFG_DEVICE_TOKEN_MAX, true,  NULL },
+    { "wifi_ssid",    "The WiFi network",   offsetof(app_config_t, wifi_ssid),
+      APP_CFG_WIFI_SSID_MAX,    false, NULL },
+    { "wifi_pass",    "The WiFi password",  offsetof(app_config_t, wifi_pass),
+      APP_CFG_WIFI_PASS_MAX,    true,  validate_wifi_pass },
+    { "server_url",   "The server address", offsetof(app_config_t, server_url),
+      APP_CFG_SERVER_URL_MAX,   false, validate_server_url },
+    { "device_id",    "The device identifier", offsetof(app_config_t, device_id),
+      APP_CFG_DEVICE_ID_MAX,    false, validate_device_id },
+    { "device_token", "The device token",   offsetof(app_config_t, device_token),
+      APP_CFG_DEVICE_TOKEN_MAX, true,  validate_device_token },
 };
 #define N_FIELDS (sizeof(FIELDS) / sizeof(FIELDS[0]))
 
@@ -168,6 +232,12 @@ bool app_config_has_wifi(void)
     return s_config.wifi_ssid[0] != '\0';
 }
 
+bool app_config_complete(void)
+{
+    /* The server accepts no device without its token (docs/PROTOCOL.md) */
+    return app_config_has_wifi() && s_config.device_token[0] != '\0';
+}
+
 /* ---- stored configuration ---- */
 
 size_t app_config_key_count(void)
@@ -189,6 +259,12 @@ bool app_config_key_info(const char *key, bool *secret)
     return f != NULL;
 }
 
+const char *app_config_key_label(const char *key)
+{
+    const field_t *f = find_field(key);
+    return f ? f->label : key;
+}
+
 esp_err_t app_config_read_stored(const char *key, char *buf, size_t size)
 {
     if (!find_field(key)) {
@@ -206,21 +282,54 @@ esp_err_t app_config_read_stored(const char *key, char *buf, size_t size)
     return err == ESP_ERR_NVS_NOT_FOUND ? ESP_ERR_NOT_FOUND : err;
 }
 
-/* Stores `value` under `key`, or erases the key when `value` is NULL. */
-static esp_err_t write_value(const char *key, const char *value)
+/* The problem with storing `value` under `f`'s key, or NULL if there is
+ * none. A NULL value, which unsets the key, is always acceptable. */
+static const char *problem(const field_t *f, const char *value)
 {
+    if (value == NULL) {
+        return NULL;
+    }
+    if (strlen(value) > f->max_len) {
+        return "too long";
+    }
+    return f->validate ? f->validate(value) : NULL;
+}
+
+esp_err_t app_config_store(const app_config_edit_t *edits, size_t count,
+                           const char **bad_key, const char **reason)
+{
+    /* Everything is checked before anything is written */
+    for (size_t i = 0; i < count; i++) {
+        const field_t *f = find_field(edits[i].key);
+        const char *why = f ? problem(f, edits[i].value) : "unknown key";
+        if (why != NULL) {
+            if (bad_key) {
+                *bad_key = edits[i].key;
+            }
+            if (reason) {
+                *reason = why;
+            }
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
     if (err != ESP_OK) {
         return err;
     }
-    err = value ? nvs_set_str(h, key, value) : nvs_erase_key(h, key);
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
-        err = ESP_OK;               /* unsetting a key that was never set */
+    for (size_t i = 0; i < count && err == ESP_OK; i++) {
+        err = edits[i].value ? nvs_set_str(h, edits[i].key, edits[i].value)
+                             : nvs_erase_key(h, edits[i].key);
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            err = ESP_OK;           /* unsetting a key that was never set */
+        }
     }
     if (err == ESP_OK) {
         /* NVS may hold writes in RAM until committed; commit makes them
-         * permanent before the handle is closed. */
+         * permanent before the handle is closed. A failure part-way, which
+         * only a full or failing flash causes, can leave some of the values
+         * written: NVS has no way to make several keys change as one. */
         err = nvs_commit(h);
     }
     nvs_close(h);
@@ -229,29 +338,12 @@ static esp_err_t write_value(const char *key, const char *value)
 
 esp_err_t app_config_set(const char *key, const char *value, const char **reason)
 {
-    const field_t *f = find_field(key);
-    if (!f) {
-        if (reason) {
-            *reason = "unknown key";
-        }
-        return ESP_ERR_INVALID_ARG;
-    }
-    /* Length first, then the setting's own validator, if it has one */
-    const char *invalid = strlen(value) > f->max_len ? "too long"
-                        : f->validate ? f->validate(value) : NULL;
-    if (invalid) {
-        if (reason) {
-            *reason = invalid;
-        }
-        return ESP_ERR_INVALID_ARG;
-    }
-    return write_value(key, value);
+    const app_config_edit_t edit = { .key = key, .value = value };
+    return app_config_store(&edit, 1, NULL, reason);
 }
 
 esp_err_t app_config_unset(const char *key)
 {
-    if (!find_field(key)) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    return write_value(key, NULL);
+    const app_config_edit_t edit = { .key = key, .value = NULL };
+    return app_config_store(&edit, 1, NULL, NULL);
 }

@@ -50,11 +50,11 @@
  *                             wherever the device belongs.
  *   FAULT        ERROR        The device cannot hear or cannot speak.
  *                             Stays until that changes.
- *   REFUSED      SETUP        The server refused this device. Stays until
- *                             the settings are changed and it is rebooted.
  *
- * (BOOT, and SETUP for missing settings, are set by main.c before this
- * starts.)
+ * (BOOT is set by main.c before this starts. SETUP belongs to setup mode,
+ * a boot on which this is not started at all: when the server refuses
+ * this device, the state machine stops what it was doing and calls
+ * on_refused, which restarts the chip into setup mode, main.c.)
  *
  * A turn cannot be interrupted: the wake word is acted on only in IDLE.
  *
@@ -138,7 +138,6 @@ typedef enum {
     PH_DRAINING,
     PH_ERROR_HOLD,
     PH_FAULT,
-    PH_REFUSED,
 } phase_t;
 
 /* Everything that can be shown on the screen's detail line. One table of
@@ -236,8 +235,9 @@ static phase_t s_phase = PH_CONNECTING;
 /* Facts about the world, as last reported. They are not phases: a phase is
  * what the device is doing, these are what rest() chooses from. */
 static bool s_link_up;          /* the server connection is ready */
-static bool s_refused;          /* the server refused this device */
 static bool s_speaker_ok;       /* the amplifier and player work */
+/* Told when the server refuses this device */
+static void (*s_on_refused)(void);
 /* Why the last attempt to connect failed, shown under CONNECTING while
  * the device keeps trying. Before the first attempt has ended it is
  * WHY_NONE, or, after a restart nobody asked for, the reason for that
@@ -290,7 +290,6 @@ static app_state_t shown_as(phase_t phase)
     case PH_DRAINING:   return APP_STATE_SPEAKING;
     case PH_ERROR_HOLD:
     case PH_FAULT:      return APP_STATE_ERROR;
-    case PH_REFUSED:    return APP_STATE_SETUP;
     }
     return APP_STATE_ERROR;
 }
@@ -309,7 +308,6 @@ static const char *phase_name(phase_t phase)
     case PH_DRAINING:   return "draining";
     case PH_ERROR_HOLD: return "error_hold";
     case PH_FAULT:      return "fault";
-    case PH_REFUSED:    return "refused";
     }
     return "?";
 }
@@ -381,9 +379,7 @@ static why_t restart_why(esp_reset_reason_t reason)
  * written down. */
 static void rest(void)
 {
-    if (s_refused) {
-        enter(PH_REFUSED, WHY_REFUSED, NO_DEADLINE);
-    } else if (!wakeword_listening()) {
+    if (!wakeword_listening()) {
         /* Not IDLE: the screen must not say "waiting for the wake word"
          * on a device that cannot hear one. Asked of the wake-word
          * component each time, not kept here: it is the one that knows,
@@ -484,9 +480,13 @@ static void on_link_down(server_link_down_t reason)
     bool was_up = s_link_up;
     s_link_up = false;
     if (reason == SERVER_LINK_DOWN_REJECTED) {
-        s_refused = true;
+        /* The settings cannot work until they change. Whoever started the
+         * state machine arranges that, by restarting into setup mode, which
+         * shows the reason (main.c); nothing is shown here first, since the
+         * restart would replace it at once. */
+        ESP_LOGW(TAG, "the server refused this device");
         stop_turn_activity();
-        rest();
+        s_on_refused();
         return;
     }
     if (reason == SERVER_LINK_DOWN_DROPPED) {
@@ -828,7 +828,9 @@ void state_machine_reply_data(const uint8_t *pcm, size_t len)
 esp_err_t state_machine_start(const state_machine_config_t *cfg)
 {
     ESP_RETURN_ON_FALSE(s_events == NULL, ESP_ERR_INVALID_STATE, TAG, "already started");
+    ESP_RETURN_ON_FALSE(cfg->on_refused != NULL, ESP_ERR_INVALID_ARG, TAG, "no on_refused");
     s_speaker_ok = cfg->speaker_ok;
+    s_on_refused = cfg->on_refused;
     s_attempt_why = restart_why(esp_reset_reason());
 
     /* The volume as it was left, given to the player before anything can

@@ -41,10 +41,14 @@ static const char *TAG = "mem_cmd";
  * their components; a task added or renamed there has to be added here by
  * hand. "server_link_ws" exists only while there is a connection, or an attempt at
  * one, and can end between being found and being read: on a diagnostic
- * command, a wrong figure for it once in a while is accepted. */
+ * command, a wrong figure for it once in a while is accepted. Two are
+ * ESP-IDF's own, listed because this firmware's code runs in them: the
+ * default event loop ("sys_evt"), which runs WiFi's handlers, including
+ * the note that new settings work, and esp_timer's task, which runs the
+ * WiFi retry and give-up timers and the BOOT button's watch. */
 static const char *const TASKS[] = {
     "capture", "wakeword", "player", "upload", "state_machine", "server_link",
-    "server_link_ws", "display",
+    "server_link_ws", "display", "sys_evt", "esp_timer",
 };
 
 static void print_heap(const char *name, uint32_t caps)

@@ -17,6 +17,7 @@
  *   config set <key> <value>      validate and store a setting
  *   config unset <key>            remove a stored setting
  *   reboot                        restart, applying changed settings
+ *   setup                         restart into setup mode, the hotspot and page
  *   audio ...                     audio tests, listed in audio_cmd.c
  *   state, display ...            the device state and the display test, in ui_cmd.c
  *   wake ...                      wake-word counters and tuning, in wake_cmd.c
@@ -42,6 +43,7 @@
 #include "esp_console.h"
 #include "esp_system.h"
 #include "linenoise/linenoise.h"
+#include "setup.h"
 
 static const char *TAG = "console";
 
@@ -53,6 +55,14 @@ static int cmd_reboot(int argc, char **argv)
     /* Runs registered shutdown handlers (WiFi stops cleanly), then resets the
      * chip. The next boot logs the reset reason as "software restart". */
     esp_restart();
+    return 0;   /* not reached */
+}
+
+static int cmd_setup(int argc, char **argv)
+{
+    /* Restarts the chip into setup mode (setup.h): a hotspot of the
+     * device's own, with a page for the settings */
+    setup_restart(SETUP_WHY_ASKED);
     return 0;   /* not reached */
 }
 
@@ -172,6 +182,14 @@ esp_err_t console_start(void)
         .func = cmd_reboot,
     };
     ESP_RETURN_ON_ERROR(esp_console_cmd_register(&reboot), TAG, "reboot");
+
+    const esp_console_cmd_t setup = {
+        .command = "setup",
+        .help = "Restart into setup mode: a hotspot of the device's own, with a "
+                "settings page for a phone. The screen shows how to join it",
+        .func = cmd_setup,
+    };
+    ESP_RETURN_ON_ERROR(esp_console_cmd_register(&setup), TAG, "setup");
 
     const esp_console_cmd_t config = {
         .command = "config",
