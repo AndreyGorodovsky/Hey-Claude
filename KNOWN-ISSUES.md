@@ -478,21 +478,6 @@ sentence while the current one is being sent was already built in
 stage 6. The failed first request is covered instead by a second try at
 connecting.
 
-**Found in stage 8: a request ending in a number waited about 5 s
-longer.** Speech-to-text was asked for `smart_format`, which writes
-numbers as digits and, after a number, holds back the end of speech in
-case more digits follow. Measured on 2026-10-15 with synthetic speech
-sent to the service directly, the end of speech came 5.6 to 5.7 s after
-"Volume three.", "Set the volume to 5." and "What is 12 times 4?", and
-0.6 to 0.7 s after each with `punctuate`, which keeps punctuation and
-capitals and leaves numbers as words; a request with no number ended
-after 0.6 to 0.7 s either way. On the device the same day, requests ending
-in a number ran on for 6.9 to 13 s, so that the person repeated them.
-Changed to `punctuate`; after it, "What is twelve times ten?" spoken on
-the device ended normally and its first audio came 3.3 s after the end of
-speech. Every question since stage 5 that ended in a number had waited
-those 5 s; no figure in this section included one.
-
 *Mitigation:* none further planned. The server logs its figures for every
 turn, and the device logs each change of phase with its time, as
 `phase [state]`: `chime`
@@ -698,6 +683,23 @@ at low effort, Claude Code 2.1.296, a home internet connection.
   looked for; it is outside the trial.
 
 ## Resolved
+
+- **A request ending in a number waited about 5 s longer.** Found and
+  corrected in stage 8. Speech-to-text was asked for `smart_format`, which
+  writes numbers as digits and, after a number, holds back the end of
+  speech in case more digits follow. Measured on 2026-10-15 with synthetic
+  speech sent to the service directly from the server's machine: the end
+  of speech came 5.6 to 5.7 s after "Volume three.", "Set the volume to
+  5." and "What is 12 times 4?", and 0.6 to 0.7 s after each with
+  `punctuate`, which keeps punctuation and capitals and leaves numbers as
+  words; a request with no number ended after 0.6 to 0.7 s either way. On
+  the device the same day, requests ending in a number ran on for 6.9 to
+  13 s, so that the person repeated them. Changed to `punctuate`; after
+  it, "What is twelve times ten?" spoken on the device ended normally, its
+  first audio 3.3 s after the end of speech. Every question since stage 5
+  that ended in a number had waited those 5 s; none of the latency figures
+  in R19 included one. Turning `smart_format` back on, to give Claude
+  digits, would bring the wait back.
 
 - **R4 — Provisional pinout unvalidated.** Built on the breadboard and each
   peripheral exercised by a test program during stage 0. The pinout matched

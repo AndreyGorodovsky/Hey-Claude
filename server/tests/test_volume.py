@@ -3,6 +3,8 @@
 import pytest
 
 from server.pipeline.volume import volume_request
+from server.protocol import VOLUME_MAX, VOLUME_MIN
+from server.spoken import spoken_number
 
 
 @pytest.mark.parametrize(
@@ -22,6 +24,10 @@ from server.pipeline.volume import volume_request
         "It's too quiet.",
         "Claude, louder.",
         "I can't hear you.",
+        "Make voice louder.",
+        "Make your voice louder.",
+        "Your voice is too quiet.",
+        "More sound.",
     ],
 )
 def test_louder_raises_the_level_by_one(transcript):
@@ -43,6 +49,8 @@ def test_louder_raises_the_level_by_one(transcript):
         "Too loud.",
         "Turn it down a notch.",
         "Turn the sound down.",
+        "Make your voice quieter.",
+        "Less sound.",
     ],
 )
 def test_quieter_lowers_the_level_by_one(transcript):
@@ -54,19 +62,25 @@ def test_quieter_lowers_the_level_by_one(transcript):
 @pytest.mark.parametrize(
     ("transcript", "level"),
     [
+        # Speech-to-text writes numbers as words (stt/deepgram.py); digits
+        # are understood as well.
         ("Volume five.", 5),
         ("Volume 5.", 5),
         ("Set the volume to 3.", 3),
         ("Set volume to ten", 10),
         ("Volume seven out of ten.", 7),
+        ("Turn it up to five.", 5),
+        ("Set it to two.", 2),
+        # Every family of phrases takes "sound" and "voice" as well
+        ("Set the sound to four.", 4),
         ("Maximum volume.", 10),
         ("Volume max", 10),
         ("Volume to the max.", 10),
+        ("Sound to the max.", 10),
         ("Turn it all the way up.", 10),
+        ("Turn the sound all the way up.", 10),
         ("Minimum volume", 1),
         ("Volume to lowest", 1),
-        ("Turn it up to five.", 5),
-        ("Set it to two.", 2),
     ],
 )
 def test_a_level_can_be_named(transcript, level):
@@ -75,23 +89,65 @@ def test_a_level_can_be_named(transcript, level):
     assert change.level == level
 
 
+@pytest.mark.parametrize(
+    ("transcript", "current", "level", "reply"),
+    [
+        ("Volume three volume three", 9, 3, "Volume three."),
+        ("Volume three. Volume three.", 9, 3, "Volume three."),
+        ("Set volume nine volume nine", 1, 9, "Volume nine."),
+        ("Louder, volume nine.", 1, 9, "Volume nine."),
+        ("Louder, louder.", 5, 7, "Volume seven."),
+        ("Louder louder", 5, 7, "Volume seven."),
+        # A run that comes back where it started is not an end of the scale
+        ("Louder, quieter.", 5, 5, "Volume five."),
+        ("Volume five, quieter.", 4, 4, "Volume four."),
+        # A step that meets the end is said, after the level it reached
+        ("Louder, louder.", 9, 10, "Volume ten. That's as loud as I go."),
+    ],
+)
+def test_a_run_of_commands_is_applied_in_order(transcript, current, level, reply):
+    change = volume_request(transcript, current)
+    assert change is not None
+    assert (change.level, change.reply) == (level, reply)
+
+
 def test_the_ends_of_the_scale_are_said_and_not_passed():
-    loudest = volume_request("Louder.", 10)
-    quietest = volume_request("Quieter.", 1)
-    assert loudest is not None and loudest.level == 10
-    assert "loud" in loudest.reply
-    assert quietest is not None and quietest.level == 1
-    assert "quiet" in quietest.reply
+    loudest = volume_request("Louder.", VOLUME_MAX)
+    quietest = volume_request("Quieter.", VOLUME_MIN)
+    assert loudest is not None and loudest.level == VOLUME_MAX
+    assert loudest.reply == "That's as loud as I go."
+    assert quietest is not None and quietest.level == VOLUME_MIN
+    assert quietest.reply == "That's as quiet as I go."
+
+
+SCALE = (
+    f"The volume goes from {spoken_number(VOLUME_MIN)}"
+    f" to {spoken_number(VOLUME_MAX)}."
+)
 
 
 @pytest.mark.parametrize(
-    "transcript", ["Volume 11.", "Volume 0", "Set the volume to 20"]
+    "transcript",
+    ["Volume 11.", "Volume 0", "Set the volume to 20", "Turn it up to eleven."],
 )
 def test_a_level_off_the_scale_changes_nothing(transcript):
     change = volume_request(transcript, 4)
     assert change is not None
     assert change.level == 4
-    assert "one to ten" in change.reply
+    assert change.reply == SCALE
+
+
+def test_a_level_off_the_scale_does_not_hide_a_change_before_it():
+    change = volume_request("Louder, volume eleven.", 5)
+    assert change is not None
+    assert change.level == 6
+    assert change.reply == f"Volume six. {SCALE}"
+
+
+def test_the_commands_are_described_for_the_log():
+    change = volume_request("Louder, volume nine.", 5)
+    assert change is not None
+    assert change.understood == "+1 =9"
 
 
 @pytest.mark.parametrize(
@@ -100,11 +156,18 @@ def test_a_level_off_the_scale_changes_nothing(transcript):
         "How do I turn up the volume on my television?",
         "Why is the music louder than the speech?",
         "What does volume mean?",
+        "Is it too loud?",
         "Volume",
+        "Volume one hundred",
         "Five.",
+        "Please.",
         "Turn it up to eleven, the song is great.",
         "What is the capital of France?",
         "",
+        # Correction words are deliberately not handled (volume.py)
+        "Volume two, no, volume four.",
+        # A word in another script cannot ride along with a command
+        "Louder, 李.",
     ],
 )
 def test_anything_else_goes_to_the_model(transcript):
@@ -114,32 +177,3 @@ def test_anything_else_goes_to_the_model(transcript):
 @pytest.mark.parametrize("current", [None, 0, 11])
 def test_without_a_valid_level_from_the_device_nothing_is_taken(current):
     assert volume_request("Louder.", current) is None
-
-
-@pytest.mark.parametrize(
-    ("transcript", "current", "level"),
-    [
-        ("Volume three volume three", 9, 3),
-        ("Volume three. Volume three.", 9, 3),
-        ("Set volume nine volume nine", 1, 9),
-        ("Louder volume nine.", 1, 9),
-        ("Louder, louder.", 5, 7),
-        ("Volume two, no, volume four.", 5, None),
-        ("Make voice louder.", 5, 6),
-        ("Make your voice quieter.", 5, 4),
-        ("Your voice is too quiet.", 5, 6),
-    ],
-)
-def test_repeated_and_corrected_commands_end_on_the_last(transcript, current, level):
-    change = volume_request(transcript, current)
-    if level is None:
-        assert change is None
-    else:
-        assert change is not None
-        assert change.level == level
-
-
-def test_a_number_spoken_as_words_is_understood():
-    # Speech-to-text writes numbers as words (stt/deepgram.py, punctuate)
-    change = volume_request("Set the volume to five.", 8)
-    assert change is not None and change.level == 5

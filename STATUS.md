@@ -92,7 +92,7 @@ by another. The protocol is written down in
 is built against.
 
 The server is tested at two levels. Its own tests, 100 of them as of
-stage 7, 161 with part C's and 229 with stage 8's volume, run the
+stage 7, 161 with part C's and 245 with stage 8's volume, run the
 whole path with stand-ins for the three services and need no keys or
 network. A desktop client, `server/tools/desktop_client.py`, plays recorded
 requests to a running server as the device will. Measured with it on
@@ -130,7 +130,7 @@ is to stay reusable.
 | A2. The server recognises a volume request ("louder", "quieter", "volume five") from the transcript, without Claude, answers it with a short spoken confirmation, and sends the new level to the device in a new protocol message | Built: `server/pipeline/volume.py`, and a `volume` message in protocol version 1, which the rule on unknown types and fields allows. The device states its level in `utterance_start`, so the server keeps none. Such turns are not added to the conversation. A phrasing the list misses goes to Claude, whose prompt now says how the volume is changed. The desktop client states a level too, `--volume` |
 | A3. The device applies the level at once and keeps it in NVS: the first setting that takes effect without a restart. A `volume` console command for the bench | Built: `state_machine/volume.c`, in an NVS namespace of its own; a level from the server reaches the player as it arrives, and is stored only in `IDLE`. `volume [1-10]` on the console |
 | A4. The chime follows the volume down to a floor, so that it is always heard before the device listens | Built: the floor is -9 dB, level 5 |
-| A5. Measured on the device, with the chip's temperature (R20); reviewed, documented | Done on 2026-10-15; the figures are below. Reviewed by both agents and corrected before the test; corrected again after the first round on the device. The server's 229 tests pass |
+| A5. Measured on the device, with the chip's temperature (R20); reviewed, documented | Done on 2026-10-15; the figures are below. Reviewed by both agents and corrected before the test; corrected again after the first round on the device. The server's 245 tests pass |
 
 **Part A on the device, 2026-10-15.** Breadboard, USB-powered, a person
 speaking, in two rounds with the server's code changed between them.
@@ -149,7 +149,7 @@ speaking, in two rounds with the server's code changed between them.
   repeat or correct themselves; "voice" is understood ("make your voice
   louder"); the system prompt has Claude say that a volume request it is
   given was not recognised and nothing changed; the server logs what was
-  heard on each volume turn.
+  understood on each volume turn.
 - Second round, four turns, judged by the person to work better. "Volume
   ten" set +6 dB; a reply of 10 s at that level met the limiter on 5
   samples, by at most 0.6 dB, so the boost has room and does not clip.
@@ -162,9 +162,23 @@ speaking, in two rounds with the server's code changed between them.
 - Chip temperature: 43.5 °C 35 s after flashing, rising to 52.5 °C over
   the first round; 54.5 to 55.5 °C through the second (R20).
 
-The corrections after the device test were not put to the review agents
-again: they are a setting of speech-to-text, the phrase grammar and its
-tests, a sentence of the prompt and a log line.
+The corrections after the device test were reviewed by both agents on
+the same day. Neither found a critical fault. The first found one major:
+a run of commands that came back to its starting level and ended on a
+step, as "louder, quieter", was answered "That's as quiet as I go." The
+second traced it, and the first agent's other wording fault, to the
+reply being chosen from the last command alone. Corrected: the reply is
+now worded from what happened as the commands were applied; a request is
+cut into clauses at its punctuation before any word is searched, and the
+search is memoised; "sound" and "voice" are taken by every family of
+phrases, not only the steps; the log gives the commands as understood
+and not the words heard, so that `LOG_TRANSCRIPTS` keeps its meaning; a
+word in another script can no longer ride along with a command; the
+prompt's sentence on the volume takes the scale from the protocol's
+constants, through a small module of spoken numbers that the phrases use
+too; the finding about speech-to-text moved out of R19 into an entry of
+its own under Resolved; the tests were regrouped so that each says what
+it covers. The server's 245 tests pass.
 
 **What the review changed.** Neither agent found a critical or major
 fault. Corrected from the first: `volume` on the console printed 0 on a

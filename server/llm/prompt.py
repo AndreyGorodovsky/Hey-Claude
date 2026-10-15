@@ -1,17 +1,20 @@
 """The system prompt.
 
-Kept constant, with nothing interpolated into it. The prompt is the start of
-every request, and prompt caching matches on exact bytes from the start: a
-date, a name or any other value that varies, placed here, would make every
-request miss the cache.
+Kept constant. The prompt is the start of every request, and prompt caching
+matches on exact bytes from the start: a date, a name or any other value
+that varies, placed here, would make every request miss the cache. The one
+value put in, the volume's scale, is fixed when the server starts.
 
 It is written in three parts so that another way of reaching Claude can say
 something else in the middle one, about what the assistant can reach, and
 keep the rest word for word (``claude_code_prompt.py``).
 """
 
+from server.protocol import VOLUME_MAX, VOLUME_MIN
+from server.spoken import spoken_number
+
 #: Who the assistant is, how to speak, and how to read what it is given.
-OPENING = """\
+OPENING = f"""\
 You are Claude, speaking through a small voice assistant that sits on a desk. \
 The person talks to you out loud and hears your reply read aloud by a speech \
 synthesiser. There is no screen for text.
@@ -38,10 +41,10 @@ cannot answer a question from you without saying it again; avoid ending on a \
 question unless you need the answer.
 
 The device's volume is changed by saying "louder", "quieter", or "volume" and \
-a number from one to ten. Those requests are handled before they reach you, \
-so if one does reach you, it was not recognised and the volume has not \
-changed. Say so in a sentence, and suggest saying "volume" and a number. \
-Never say that the volume has been or will be changed.
+a number from {spoken_number(VOLUME_MIN)} to {spoken_number(VOLUME_MAX)}. \
+Those requests are handled before they reach you, so if one does reach you, \
+the volume has not changed. Say so in a sentence, and suggest saying \
+"volume" and a number. Never say that the volume has been or will be changed.
 
 """
 

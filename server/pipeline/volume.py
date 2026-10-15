@@ -11,46 +11,51 @@ The device keeps its own level, states it with each request, and decides
 what each level sounds like; this module works out the new level and the
 sentence that confirms it. It holds no state.
 
-The phrases are built from one table per direction (``_Direction``), filled
-into shared patterns, so that what can be said to turn the volume up can
-always be said, mirrored, to turn it down. A request may hold several in a
-row, as people repeat or correct themselves ("volume three, volume three",
-"louder, volume nine"); they are applied in order.
+How a request is read:
+
+1. It is cut into clauses at the punctuation speech-to-text writes, since
+   people repeat or correct themselves: "Volume three. Volume three.",
+   "Louder, volume nine."
+2. Each clause is one or more commands. A clause that is not exactly one is
+   split into words and searched for a run of commands ("louder louder").
+3. The commands are applied in order, noting whether a step met the end of
+   the scale and whether a level off the scale was ignored. The reply is
+   worded from those facts and the final level.
+
+The phrases themselves come from one table per direction (``_Direction``),
+filled into shared patterns, so that what turns the volume up can always be
+said, mirrored, to turn it down; and every pattern accepts the same nouns
+(``_NOUN``), so that "sound" and "voice" work wherever "volume" does.
+Correction words ("no, I mean") are deliberately not handled: such a
+request goes to the model.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import cache
 
 from server.protocol import VOLUME_MAX, VOLUME_MIN
+from server.spoken import NUMBER_NAMES, spoken_number
 
 #: Levels moved by one "louder" or "quieter".
 _STEP = 1
 
-#: Numbers as speech recognition may write them out, by value.
-_NUMBER_NAMES = (
-    "zero one two three four five six seven eight nine ten eleven twelve"
-    " thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty"
-).split()
-# Every level must have a name, to be confirmed aloud. Checked when the
-# server starts, so that a change to the scale fails there and not in a turn.
-assert VOLUME_MAX < len(_NUMBER_NAMES), "a volume level has no spoken name"
-_NUMBER_VALUES = {name: value for value, name in enumerate(_NUMBER_NAMES)}
+_NUMBER_VALUES = {name: value for value, name in enumerate(NUMBER_NAMES)}
 
-
-def _name(level: int) -> str:
-    return _NUMBER_NAMES[level]
-
-
-# Words around the request, taken off both ends before it is matched.
+# Words around a command, taken off both ends of each clause.
 _FILLER = (
     r"please|okay|ok|hey|claude|so|now|just|thanks|thank you"
     r"|can you|could you|would you|will you"
     r"|a bit|a little|a little bit|a tad|a notch|one notch|slightly"
 )
 _LEADING = re.compile(rf"^(?:(?:{_FILLER})\s+)+")
+_ONLY_FILLER = re.compile(rf"(?:(?:{_FILLER})\s*)+")
 _TRAILING = re.compile(rf"(?:\s+(?:{_FILLER}))+$")
+
+#: What is made louder or quieter: "the volume", "your voice".
+_NOUN = r"(?:(?:the |your )?(?:volume|sound|voice))"
 
 
 @dataclass(frozen=True)
@@ -65,8 +70,7 @@ class _Direction:
     verbs: tuple[str, ...]
     #: "more volume"
     amount: str
-    #: "too quiet" asks for the other direction's opposite: these are the
-    #: complaints that ask for this direction.
+    #: "too quiet" asks for this direction: the complaints that do.
     complaints: tuple[str, ...]
     #: "maximum volume"
     extremes: tuple[str, ...]
@@ -78,10 +82,6 @@ def _alternatives(words: tuple[str, ...]) -> str:
     return "(?:" + "|".join(words) + ")"
 
 
-#: What is made louder or quieter: "the volume", "your voice".
-_NOUN = r"(?:(?:the |your )?(?:volume|sound|voice))"
-
-
 def _step_pattern(d: _Direction) -> re.Pattern[str]:
     comparative = _alternatives(d.comparatives)
     particle = d.particle
@@ -91,7 +91,7 @@ def _step_pattern(d: _Direction) -> re.Pattern[str]:
         rf"turn {particle} {_NOUN}",
         rf"{_alternatives(d.verbs)} {_NOUN}",
         rf"{_NOUN} {particle}",
-        rf"{d.amount} volume",
+        rf"{d.amount} {_NOUN}",
         rf"(?:you are |you're |it's |it is |that's |{_NOUN} is )?too"
         rf" {_alternatives(d.complaints)}",
         *d.extra,
@@ -102,9 +102,9 @@ def _step_pattern(d: _Direction) -> re.Pattern[str]:
 def _extreme_pattern(d: _Direction) -> re.Pattern[str]:
     extreme = _alternatives(d.extremes)
     phrases = [
-        rf"{extreme} volume",
-        rf"(?:set |turn |put )?(?:the )?volume (?:to )?(?:the )?{extreme}",
-        rf"turn (?:it|the volume|yourself) all the way {d.particle}",
+        rf"{extreme} {_NOUN}",
+        rf"(?:set |turn |put )?{_NOUN} (?:to )?(?:the )?{extreme}",
+        rf"turn (?:it|yourself|{_NOUN}) all the way {d.particle}",
     ]
     return re.compile("|".join(phrases))
 
@@ -134,12 +134,99 @@ _EXTREMES = (
     (_extreme_pattern(_DOWN), VOLUME_MIN),
 )
 
-_NUMBER = r"(?:\d+|" + "|".join(_NUMBER_NAMES) + r")"
+_NUMBER = r"(?:\d+|" + "|".join(NUMBER_NAMES) + r")"
 _SET = re.compile(
-    r"(?:(?:set|change|put|turn) )?(?:the )?volume (?:level )?(?:up |down )?"
-    rf"(?:to |at |on )?(?P<level>{_NUMBER})(?: out of {_name(VOLUME_MAX)})?"
+    rf"(?:(?:set|change|put|turn) )?{_NOUN} (?:level )?(?:up |down )?"
+    rf"(?:to |at |on )?(?P<level>{_NUMBER})(?: out of {spoken_number(VOLUME_MAX)})?"
     rf"|(?:set|turn|put) (?:it|yourself) (?:up |down )?to (?P<level_it>{_NUMBER})"
 )
+
+
+# --- Commands --------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Step:
+    """Louder or quieter by ``delta`` levels."""
+
+    delta: int
+
+    def __str__(self) -> str:
+        return f"{self.delta:+d}"
+
+
+@dataclass(frozen=True)
+class _Set:
+    """A named level, which may be off the scale."""
+
+    level: int
+
+    @property
+    def on_scale(self) -> bool:
+        return VOLUME_MIN <= self.level <= VOLUME_MAX
+
+    def __str__(self) -> str:
+        return f"={self.level}"
+
+
+_Command = _Step | _Set
+
+
+def _command(text: str) -> _Command | None:
+    """``text`` as exactly one command, or None."""
+    for pattern, step in _STEPS:
+        if pattern.fullmatch(text):
+            return _Step(step)
+    for pattern, level in _EXTREMES:
+        if pattern.fullmatch(text):
+            return _Set(level)
+    if match := _SET.fullmatch(text):
+        said = match["level"] or match["level_it"]
+        return _Set(int(said) if said.isdigit() else _NUMBER_VALUES[said])
+    return None
+
+
+def _clause_commands(clause: str) -> tuple[_Command, ...] | None:
+    """One clause as one or more commands, or None if it is not."""
+    # A clause of filler alone, as in "Louder, please.", holds no command
+    if not clause or _ONLY_FILLER.fullmatch(clause):
+        return ()
+    clause = _TRAILING.sub("", _LEADING.sub("", clause))
+    if (single := _command(clause)) is not None:
+        return (single,)
+    words = tuple(clause.split())
+
+    # A run without punctuation between, such as "louder louder". Each
+    # starting word is searched once (``cache``), so the search costs at
+    # most the square of the clause's length in calls to _command.
+    @cache
+    def run_from(start: int) -> tuple[_Command, ...] | None:
+        if start == len(words):
+            return ()
+        for end in range(start + 1, len(words) + 1):
+            first = _command(" ".join(words[start:end]))
+            if first is not None and (rest := run_from(end)) is not None:
+                return (first, *rest)
+        return None
+
+    return run_from(0)
+
+
+def _clauses(transcript: str) -> list[str]:
+    """The transcript in lower case, cut at its punctuation into clauses of
+    plain words."""
+    text = transcript.lower().replace("’", "'").replace("-", " ")
+    # A word in another script becomes a token no pattern matches, so that
+    # it cannot ride along with a command unseen.
+    text = re.sub(r"[^\x00-\x7f]+", " ~ ", text)
+    clauses = []
+    for clause in re.split(r"[.,;:!?]+", text):
+        # Digits and apostrophes are kept: "volume 5", "can't hear you".
+        clauses.append(" ".join(re.sub(r"[^a-z0-9'~ ]+", " ", clause).split()))
+    return clauses
+
+
+# --- The answer --------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -150,61 +237,10 @@ class VolumeChange:
     level: int
     #: The sentence spoken in answer, at the new level.
     reply: str
-
-
-#: Longest request read as a run of volume commands, in words. Anything
-#: longer is a sentence about something else, and is not searched.
-_MAX_WORDS = 16
-
-
-def _normalise(transcript: str) -> str:
-    text = transcript.lower().replace("-", " ").replace("’", "'")
-    # Digits and apostrophes are kept: "volume 5", "can't hear you".
-    text = re.sub(r"[^a-z0-9' ]+", " ", text)
-    return " ".join(text.split())
-
-
-def _trim(text: str) -> str:
-    return _TRAILING.sub("", _LEADING.sub("", text))
-
-
-def _command(text: str) -> tuple[str, int] | None:
-    """One volume command: ("step", +1 or -1) or ("set", a level, which may
-    be off the scale). None if ``text`` is not exactly one command."""
-    text = _trim(text)
-    for pattern, step in _STEPS:
-        if pattern.fullmatch(text):
-            return ("step", step)
-    for pattern, level in _EXTREMES:
-        if pattern.fullmatch(text):
-            return ("set", level)
-    if match := _SET.fullmatch(text):
-        said = match["level"] or match["level_it"]
-        return ("set", int(said) if said.isdigit() else _NUMBER_VALUES[said])
-    return None
-
-
-def _commands(words: list[str]) -> list[tuple[str, int]] | None:
-    """Split ``words`` into one or more commands, or None if they are not.
-
-    Tries the shortest first command first, so that "louder louder" is two
-    steps, and backtracks when the rest cannot be split. The requests are a
-    few words long, so the search is small.
-    """
-    if not words:
-        return []
-    for end in range(1, len(words) + 1):
-        first = _command(" ".join(words[:end]))
-        if first is None:
-            continue
-        rest = _commands(words[end:])
-        if rest is not None:
-            return [first, *rest]
-    return None
-
-
-def _confirm(level: int) -> VolumeChange:
-    return VolumeChange(level, f"Volume {_name(level)}.")
+    #: The commands as understood, for the log: "+1 =9" is "louder, volume
+    #: nine". Kept apart from the transcript, which is logged only when
+    #: transcripts are.
+    understood: str
 
 
 def volume_request(transcript: str, current: int | None) -> VolumeChange | None:
@@ -216,27 +252,38 @@ def volume_request(transcript: str, current: int | None) -> VolumeChange | None:
     """
     if current is None or not VOLUME_MIN <= current <= VOLUME_MAX:
         return None
-    words = _trim(_normalise(transcript)).split()
-    if len(words) > _MAX_WORDS:
-        return None
-    commands = _commands(words)
+    commands: list[_Command] = []
+    for clause in _clauses(transcript):
+        found = _clause_commands(clause)
+        if found is None:
+            return None
+        commands.extend(found)
     if not commands:
         return None
 
+    # Applied in order, noting what the reply must mention
     level = current
-    for kind, value in commands:
-        if kind == "step":
-            level = min(max(level + value, VOLUME_MIN), VOLUME_MAX)
-        elif VOLUME_MIN <= value <= VOLUME_MAX:
-            level = value
-    # The answer is about the last command, which is what was meant last
-    kind, value = commands[-1]
-    if kind == "set" and not VOLUME_MIN <= value <= VOLUME_MAX:
-        return VolumeChange(
-            level,
-            f"The volume goes from {_name(VOLUME_MIN)} to {_name(VOLUME_MAX)}.",
+    met_end = 0             # +1 or -1: a step met that end of the scale
+    off_scale = False       # a named level off the scale was ignored
+    for command in commands:
+        if isinstance(command, _Step):
+            wanted = level + command.delta
+            level = min(max(wanted, VOLUME_MIN), VOLUME_MAX)
+            met_end = command.delta if wanted != level else met_end
+        elif command.on_scale:
+            level = command.level
+        else:
+            off_scale = True
+
+    notes = []
+    if met_end:
+        notes.append(f"That's as {'loud' if met_end > 0 else 'quiet'} as I go.")
+    if off_scale:
+        notes.append(
+            f"The volume goes from {spoken_number(VOLUME_MIN)}"
+            f" to {spoken_number(VOLUME_MAX)}."
         )
-    if kind == "step" and level == current:
-        end = "loud" if value > 0 else "quiet"
-        return VolumeChange(level, f"That's as {end} as I go.")
-    return _confirm(level)
+    # The level is said whenever it moved, and when there is nothing else to say
+    if level != current or not notes:
+        notes.insert(0, f"Volume {spoken_number(level)}.")
+    return VolumeChange(level, " ".join(notes), " ".join(map(str, commands)))

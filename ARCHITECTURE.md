@@ -519,13 +519,15 @@ server/
   protocol.py     Message shapes and constants of the device protocol
   transport/      WebSocket endpoint, device auth, one connection per device,
                   framing of reply audio
-  pipeline/       One turn from request to reply; sentence splitting
+  pipeline/       One turn from request to reply; sentence splitting;
+                  volume requests
   stt/            Speech-to-text adapter interface and implementations
   llm/            Two Claude clients behind one interface: one runs the
                   Claude Code tool, the default; one calls the API
   tts/            Text-to-speech adapter interface and implementations
   conversation/   Day-scoped conversation store
   discovery.py    mDNS advertisement
+  spoken.py       Numbers as spoken, for the volume's phrases and the prompt
   config.py       Environment-driven configuration
   tools/          Desktop client that stands in for the device
   tests/          Tests, run with stand-ins for the three services
@@ -549,10 +551,13 @@ that what turns the volume up can always be said, mirrored, to turn it
 down. A request the phrases miss goes to the model, whose system prompt
 says how the volume is changed and forbids it to claim it changed it.
 A request may hold several commands, as people repeat or correct
-themselves ("volume three, volume three", "louder, volume nine"); they are
-applied in order. What was heard on a volume turn is logged, even with
-transcripts otherwise kept out of the log, since it is a command and
-nothing else.
+themselves ("volume three, volume three", "louder, volume nine"): it is
+cut into clauses at the punctuation speech-to-text writes, a clause may
+hold a run of commands, and they are applied in order. The reply is
+worded from what happened as they were applied: the final level, a step
+that met the end of the scale, a level off the scale that was ignored.
+The log gives the commands as understood ("+1 =9"), and the words heard
+only when transcripts are logged.
 
 Device tokens are configured on the server as one setting, `DEVICE_TOKENS`,
 mapping each device identifier to its token, and compared in constant time.
@@ -575,8 +580,8 @@ with no reply.
 The transcript has punctuation and capitals, so that Claude reads
 sentences, and numbers stay as words. The service's fuller formatting,
 which writes numbers, dates and prices as figures, was used until stage
-8 and dropped: after a number it held the end of speech back about 5 s in
-case more digits followed (KNOWN-ISSUES R19).
+8 and dropped: after a number it held the end of speech back in case more
+digits followed (KNOWN-ISSUES, Resolved).
 
 Speech-to-text was chosen for its streaming utterance-end events, which supply
 the end-of-speech signal directly. A separate voice-activity detector would

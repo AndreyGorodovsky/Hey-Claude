@@ -157,15 +157,15 @@ async def run_turn(
             return
         change = volume_request(transcript, volume)
         if change is not None:
-            # What was heard is logged even without log_transcripts: it is a
-            # volume command and nothing else, and it explains a level the
-            # person did not expect.
+            # The commands as understood, which explain a level the person
+            # did not expect; the words themselves are logged above, only
+            # when transcripts are.
             log.info(
-                "device %s: volume %s to %d, from %r",
+                "device %s: volume %s to %d, understood as %s",
                 device_id,
                 volume,
                 change.level,
-                transcript,
+                change.understood,
             )
             if change.level != volume:
                 await io.set_volume(change.level)
