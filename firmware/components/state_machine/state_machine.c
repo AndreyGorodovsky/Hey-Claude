@@ -58,6 +58,11 @@
  *
  * A turn cannot be interrupted: the wake word is acted on only in IDLE.
  *
+ * The playback volume (volume.h) passes through here too. A new level from
+ * the server or the console arrives as a message like everything else, so
+ * that this task is the level's one writer, and the level is stored only in
+ * IDLE, where writing to flash cannot interrupt a reply.
+ *
  * When the device gives up on a turn by itself (a deadline passed, the
  * reply stopped arriving, something arrived that makes no sense), it closes
  * the connection with server_link_drop(). That is the protocol's rule for a device
@@ -79,6 +84,7 @@
 #include "freertos/task.h"
 #include "protocol.h"
 #include "upload.h"
+#include "volume.h"
 #include "wakeword.h"
 
 static const char *TAG = "state_machine";
@@ -205,6 +211,7 @@ typedef enum {
     EV_LINK,            /* what: a server_link_report_t; value: as server_link.h says */
     EV_PLAYER,          /* what: a player_report_t; value: as player.h says */
     EV_UPLOAD_FAILED,   /* value: an upload_failure_t */
+    EV_VOLUME,          /* from the console; value: a level already on the scale */
 } ev_kind_t;
 
 typedef struct {
@@ -250,6 +257,16 @@ static TickType_t s_quiet_until;
 static uint32_t s_wake_pos;
 
 /* ---- Building blocks ---- */
+
+/* Plays at `level`, which is on the scale, from the next reply or chime
+ * on. Stored at once in IDLE, and otherwise when the turn is over. */
+static void change_volume(unsigned level)
+{
+    volume_set(level);
+    if (s_phase == PH_IDLE) {
+        volume_store();
+    }
+}
 
 static bool in_turn(void)
 {
@@ -321,6 +338,11 @@ static void enter(phase_t phase, why_t why, uint32_t deadline_ms)
     esp_err_t err = app_state_set(shown_as(phase), WHY_TEXT[why]);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "state not announced: %s", esp_err_to_name(err));
+    }
+    if (phase == PH_IDLE) {
+        /* A level changed during the turn, as "louder" does, is stored now
+         * that nothing is playing */
+        volume_store();
     }
 }
 
@@ -438,7 +460,7 @@ static void begin_request(void)
     /* From now until the turn ends, reply audio is let through to the
      * player. Before the upload starts, so that nothing can arrive first. */
     atomic_store(&s_reply_wanted, true);
-    upload_start(now);
+    upload_start(now, (uint8_t)volume_level());
     enter(PH_CAPTURING, WHY_NONE, PROTO_DEVICE_CAPTURE_LIMIT_MS);
 }
 
@@ -560,6 +582,13 @@ static void on_link(server_link_report_t what, uint32_t value)
             fail(why_error((server_link_error_t)value), false);
         }
         break;
+    case SERVER_LINK_VOLUME:
+        /* Taken in any phase. The server sends it while the device awaits
+         * the reply that confirms it, but a level is harmless at any time,
+         * and nothing is gained by refusing one. The player already has it
+         * (state_machine_link_report); this records it. */
+        change_volume(value);
+        break;
     }
 }
 
@@ -634,6 +663,9 @@ static void handle(const ev_t *ev)
         if (s_phase == PH_CAPTURING) {
             fail(ev->value == UPLOAD_FAIL_MICROPHONE ? WHY_MICROPHONE : WHY_NOT_SENT, true);
         }
+        break;
+    case EV_VOLUME:
+        change_volume(ev->value);
         break;
     }
 }
@@ -727,6 +759,17 @@ static void enqueue(ev_kind_t kind, uint32_t what, uint32_t value)
 
 void state_machine_link_report(server_link_report_t what, uint32_t value)
 {
+    if (what == SERVER_LINK_VOLUME) {
+        /* The player is given a new level here, in the link's task, and
+         * not when this task gets round to the message: the reply that
+         * confirms the level follows straight after, and its audio goes to
+         * the player from the link's task too (state_machine_reply_start).
+         * Done here, the level is in place before that audio can be, by
+         * the order of the messages and not by luck. Setting the player's
+         * level is safe from any task; recording and storing it is left to
+         * this component's task. */
+        player_set_gain_db(volume_db(value));
+    }
     enqueue(EV_LINK, what, value);
 }
 
@@ -751,6 +794,21 @@ static void on_wakeword_event(void *arg, esp_event_base_t base, int32_t id, void
     }
 }
 
+/* Runs in the console's task */
+esp_err_t state_machine_set_volume(unsigned level)
+{
+    ESP_RETURN_ON_FALSE(s_events != NULL, ESP_ERR_INVALID_STATE, TAG, "not started");
+    ESP_RETURN_ON_FALSE(volume_on_scale(level), ESP_ERR_INVALID_ARG, TAG,
+                        "volume off the scale");
+    enqueue(EV_VOLUME, 0, level);
+    return ESP_OK;
+}
+
+unsigned state_machine_volume(void)
+{
+    return volume_level();
+}
+
 /* The two functions below run in the WebSocket client's task */
 
 void state_machine_reply_start(uint32_t sample_rate)
@@ -772,6 +830,10 @@ esp_err_t state_machine_start(const state_machine_config_t *cfg)
     ESP_RETURN_ON_FALSE(s_events == NULL, ESP_ERR_INVALID_STATE, TAG, "already started");
     s_speaker_ok = cfg->speaker_ok;
     s_attempt_why = restart_why(esp_reset_reason());
+
+    /* The volume as it was left, given to the player before anything can
+     * play */
+    volume_init();
 
     s_events = xQueueCreate(QUEUE_LENGTH, sizeof(ev_t));
     ESP_RETURN_ON_FALSE(s_events != NULL, ESP_ERR_NO_MEM, TAG, "no memory");

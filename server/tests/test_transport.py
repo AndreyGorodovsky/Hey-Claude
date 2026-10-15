@@ -300,3 +300,35 @@ def test_a_pause_in_the_reply_is_not_counted_as_playback(tmp_path):
     # What arrived in the first moments after the pause: about 2 s, 96000
     # bytes, and well short of the 3.5 s that was ready.
     assert 80_000 < burst < 115_000
+
+
+def test_a_volume_request_sends_the_new_level_before_the_reply(tmp_path):
+    deps = make_deps(tmp_path, stt=FakeStt(transcript="Volume three."))
+    with client_for(deps) as client:
+        with client.websocket_connect(STREAM_PATH, headers=HEADERS) as ws:
+            ws.receive_json()
+            ws.send_json({"type": "utterance_start", "volume": 8})
+            for _ in range(10):
+                ws.send_bytes(FRAME)
+            assert ws.receive_json() == {"type": "stop_capture"}
+            assert ws.receive_json() == {"type": "volume", "level": 3}
+            types, audio = read_turn(ws)
+
+    assert types == ["reply_start", "reply_end"]
+    assert audio
+
+
+def test_a_request_with_a_malformed_volume_is_still_answered(tmp_path):
+    llm = FakeLlm()
+    deps = make_deps(tmp_path, stt=FakeStt(transcript="Louder."), llm=llm)
+    with client_for(deps) as client:
+        with client.websocket_connect(STREAM_PATH, headers=HEADERS) as ws:
+            ws.receive_json()
+            ws.send_json({"type": "utterance_start", "volume": 5.5})
+            for _ in range(10):
+                ws.send_bytes(FRAME)
+            types, _ = read_turn(ws)
+
+    # Read as a device that stated no volume: the model answers
+    assert types == WHOLE_TURN
+    assert llm.calls

@@ -186,6 +186,14 @@ background hiss audible; the printed level is that of the unboosted recording.
 `audio tone 100` is loud and draws the most supply current the device will
 ever need, which makes it the test for a weak supply or cable.
 
+The playback volume runs from 1 to 10 and is kept through a restart. It is
+changed by voice ("louder", "quieter", "volume five"), or from the console:
+
+```
+volume              print the volume
+volume 9            set it, from the next reply on
+```
+
 The display shows the device's state, which the firmware's state machine
 alone decides. The console can read it, and check the panel:
 

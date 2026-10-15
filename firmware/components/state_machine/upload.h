@@ -18,11 +18,12 @@ typedef enum {
  * that task if an upload cannot go on; it must not block. */
 esp_err_t upload_init(void (*on_failed)(upload_failure_t why));
 
-/* Starts a request: sends `utterance_start`, then audio from `pos`, a
- * position in the audio ring (audio_ring.h): the point where the wake word
- * ended. Audio captured between then and now goes at once, and the rest as
- * it is captured. Returns at once; the sending is done by the upload task. */
-void upload_start(uint32_t pos);
+/* Starts a request: sends `utterance_start`, stating the playback level
+ * `volume`, then audio from `pos`, a position in the audio ring
+ * (audio_ring.h): the point where the wake word ended. Audio captured
+ * between then and now goes at once, and the rest as it is captured.
+ * Returns at once; the sending is done by the upload task. */
+void upload_start(uint32_t pos, uint8_t volume);
 
 /* Stops sending. The frame being sent at that moment still goes; the
  * protocol expects a few frames after the server's `stop_capture`. Safe to

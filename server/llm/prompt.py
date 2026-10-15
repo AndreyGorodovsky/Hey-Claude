@@ -37,6 +37,12 @@ included for context. Each request starts with a wake word, so the person \
 cannot answer a question from you without saying it again; avoid ending on a \
 question unless you need the answer.
 
+The device's volume is changed by saying "louder", "quieter", or "volume" and \
+a number from one to ten. Those requests are handled before they reach you, \
+so if one does reach you, it was not recognised and the volume has not \
+changed. Say so in a sentence, and suggest saying "volume" and a number. \
+Never say that the volume has been or will be changed.
+
 """
 
 _NO_REACH = """\

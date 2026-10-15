@@ -44,6 +44,19 @@ void state_machine_link_report(server_link_report_t what, uint32_t value);
 /* For player_init(): the player's reports. May be called from any task. */
 void state_machine_player_report(player_report_t what, uint32_t value);
 
+/* Sets the playback volume, from PROTO_VOLUME_MIN to PROTO_VOLUME_MAX
+ * (protocol.h), as if the server had sent it: from the next reply or chime
+ * on, and kept through a restart. For the console. Returns
+ * ESP_ERR_INVALID_STATE before state_machine_start(), which does not run
+ * while the device is waiting to be set up, and ESP_ERR_INVALID_ARG for a
+ * level off the scale. The change is made by the state machine's task a
+ * moment later. */
+esp_err_t state_machine_set_volume(unsigned level);
+
+/* The playback volume now; 0 before state_machine_start(). May be called
+ * from any task. */
+unsigned state_machine_volume(void);
+
 /* For server_link_start(), as its audio sink. Reply audio goes to the player
  * through these, and only while the state machine is in a turn that awaits
  * a reply: audio arriving at any other time, such as the tail of a turn

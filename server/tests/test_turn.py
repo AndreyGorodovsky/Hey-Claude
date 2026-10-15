@@ -275,3 +275,54 @@ async def test_text_without_audio_in_time_is_a_synthesis_failure(tmp_path):
 
     assert io.steps == ["capture_done", "fail"]
     assert io.failure is ErrorCode.TTS_FAILED
+
+
+async def run_with_volume(deps, volume: int | None) -> RecordingIO:
+    await deps.store.initialise()
+    audio: asyncio.Queue[bytes] = asyncio.Queue()
+    for _ in range(50):
+        audio.put_nowait(FRAME)
+    io = RecordingIO()
+    await run_turn("dev", audio, io, deps, volume)
+    return io
+
+
+async def test_a_volume_request_is_answered_without_the_model(tmp_path):
+    llm, tts = FakeLlm(), FakeTts()
+    stt = FakeStt(transcript="Louder, please.")
+    deps = make_deps(tmp_path, stt=stt, llm=llm, tts=tts)
+    io = await run_with_volume(deps, 7)
+
+    # The new level reaches the device before the reply that confirms it.
+    assert io.steps == ["capture_done", "set_volume", "reply_audio", "reply_done"]
+    assert io.volume == 8
+    assert tts.spoken == ["Volume eight."]
+    assert llm.calls == []
+    assert await deps.store.history("dev", NOON) == []
+
+
+async def test_a_volume_request_at_the_end_of_the_scale_sends_no_level(tmp_path):
+    deps = make_deps(tmp_path, stt=FakeStt(transcript="Louder."))
+    io = await run_with_volume(deps, 10)
+
+    assert io.steps == ["capture_done", "reply_audio", "reply_done"]
+    assert io.volume is None
+
+
+async def test_a_device_that_states_no_volume_is_answered_by_the_model(tmp_path):
+    llm = FakeLlm()
+    deps = make_deps(tmp_path, stt=FakeStt(transcript="Louder."), llm=llm)
+    io = await run_with_volume(deps, None)
+
+    assert "set_volume" not in io.steps
+    assert llm.calls == [([], "Louder.")]
+
+
+async def test_a_volume_confirmation_that_cannot_be_spoken_fails_the_turn(tmp_path):
+    tts = FakeTts(error=TextToSpeechError("down"))
+    deps = make_deps(tmp_path, stt=FakeStt(transcript="Quieter."), tts=tts)
+    io = await run_with_volume(deps, 5)
+
+    # The level was sent and is kept; only the confirmation is lost.
+    assert io.steps == ["capture_done", "set_volume", "fail"]
+    assert io.failure is ErrorCode.TTS_FAILED

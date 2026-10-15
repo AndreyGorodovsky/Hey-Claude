@@ -11,6 +11,10 @@ goes through two phases:
    synthesised while the next is still being written, and sent while the
    next is being synthesised.
 
+A request that is only about the volume ("louder", "volume five") skips the
+model: the device is sent its new level and a short spoken confirmation, and
+nothing is added to the conversation (``volume.py``).
+
 Once started, a turn runs to its end; nothing a device sends interrupts it.
 An exchange is recorded in the conversation only if its turn completed, so
 the stored history always alternates between the person and the assistant.
@@ -35,6 +39,7 @@ from typing import Protocol
 from server.conversation import ConversationStore, Exchange
 from server.llm import LanguageModel, LanguageModelError, ReplyRefused
 from server.pipeline.sentences import SentenceSplitter
+from server.pipeline.volume import volume_request
 from server.protocol import (
     CAPTURE_SAMPLE_RATE,
     FIRST_AUDIO_LIMIT_SECONDS,
@@ -75,6 +80,13 @@ class TurnIO(Protocol):
 
     async def fail(self, code: ErrorCode, message: str) -> None:
         """The turn was abandoned."""
+
+    async def set_volume(self, level: int) -> None:
+        """The device should play at ``level`` from now on.
+
+        Reported before the reply that confirms it, so that the confirmation
+        is heard at the new level.
+        """
 
 
 @dataclass(frozen=True)
@@ -126,11 +138,13 @@ async def run_turn(
     audio: asyncio.Queue[bytes],
     io: TurnIO,
     deps: TurnDeps,
+    volume: int | None = None,
 ) -> None:
     """Run one turn to its end, reporting any failure to the device.
 
-    ``audio`` supplies the device's capture frames. Returns normally whatever
-    happened, except when cancelled.
+    ``audio`` supplies the device's capture frames, and ``volume`` is the
+    playback level the device stated, if it stated one. Returns normally
+    whatever happened, except when cancelled.
     """
     timings = _Timings(started=time.monotonic())
     try:
@@ -140,6 +154,22 @@ async def run_turn(
         if not transcript:
             # The wake word fired and nothing was said.
             await io.reply_done()
+            return
+        change = volume_request(transcript, volume)
+        if change is not None:
+            # What was heard is logged even without log_transcripts: it is a
+            # volume command and nothing else, and it explains a level the
+            # person did not expect.
+            log.info(
+                "device %s: volume %s to %d, from %r",
+                device_id,
+                volume,
+                change.level,
+                transcript,
+            )
+            if change.level != volume:
+                await io.set_volume(change.level)
+            await _speak(change.reply, io, deps, timings)
             return
         await _reply(device_id, transcript, io, deps, timings)
     except ConnectionLost:
@@ -245,6 +275,31 @@ async def _capture(
         with suppress(asyncio.CancelledError):
             await pump
         await stream.aclose()
+
+
+async def _speak(line: str, io: TurnIO, deps: TurnDeps, timings: _Timings) -> None:
+    """Say one fixed sentence as the whole reply, with no model involved.
+
+    Under the same limit on the wait for the first audio as a reply from the
+    model (``_reply``), so that the server's failure comes before the
+    device's own deadline.
+    """
+    waited = time.monotonic() - (timings.capture_done or time.monotonic())
+    try:
+        async with asyncio.timeout(
+            max(0.0, deps.limits.first_audio_seconds - waited)
+        ) as limit:
+            async for piece in deps.tts.synthesize(line, deps.playback_sample_rate):
+                if timings.first_audio is None:
+                    timings.first_audio = time.monotonic()
+                    # The limit is on the wait for the first audio only
+                    limit.reschedule(None)
+                await io.reply_audio(piece)
+    except TimeoutError:
+        raise TextToSpeechError("no reply audio in time") from None
+    if timings.first_audio is None:
+        raise TextToSpeechError("synthesis produced no audio")
+    await io.reply_done()
 
 
 class _SpokenAudio:

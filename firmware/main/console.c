@@ -23,6 +23,7 @@
  *   link                          the server connection, in link_cmd.c
  *   temp                          the chip's temperature, in temp_cmd.c
  *   mem                           free memory and stack headroom, in mem_cmd.c
+ *   volume [level]                the playback volume, in volume_cmd.c
  */
 #include "console.h"
 
@@ -35,6 +36,7 @@
 #include "mem_cmd.h"
 #include "temp_cmd.h"
 #include "ui_cmd.h"
+#include "volume_cmd.h"
 #include "wake_cmd.h"
 #include "esp_check.h"
 #include "esp_console.h"
@@ -188,6 +190,7 @@ esp_err_t console_start(void)
     ESP_RETURN_ON_ERROR(link_cmd_register(), TAG, "link");
     ESP_RETURN_ON_ERROR(temp_cmd_register(), TAG, "temp");
     ESP_RETURN_ON_ERROR(mem_cmd_register(), TAG, "mem");
+    ESP_RETURN_ON_ERROR(volume_cmd_register(), TAG, "volume");
 
     /* Starts the console task and returns; the task runs from now on */
     return esp_console_start_repl(repl);

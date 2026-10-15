@@ -90,17 +90,38 @@ and the wake-word model.
 | *binary* | Server | After `reply_start` | Device plays it, and enters `SPEAKING` when the first sound comes out |
 | `reply_end` | Server | The turn is over | Device finishes playing what it holds, then enters `IDLE` |
 | `error` | Server | The turn was abandoned | Device stops playback, discards unplayed audio, shows `ERROR` briefly, then enters `IDLE` |
+| `volume` | Server | The request asked for a change of volume; after `stop_capture` and before the `reply_start` of the reply that confirms it | Device plays at the new level from that reply on, and keeps it |
 
 ### Fields
 
 ```json
 {"type": "ready", "protocol": 1}
-{"type": "utterance_start"}
+{"type": "utterance_start", "volume": 8}
 {"type": "stop_capture"}
 {"type": "reply_start", "format": "pcm_s16le", "sample_rate": 24000, "channels": 1}
 {"type": "reply_end"}
 {"type": "error", "code": "llm_failed", "message": "The assistant failed to answer."}
+{"type": "volume", "level": 9}
 ```
+
+### Volume
+
+The device's playback volume is a level from **1** to **10**. The device
+keeps it, through restarts, and states it as `volume` in every
+`utterance_start`. What a level sounds like is the device's own business.
+
+The server answers a request that is only about the volume ("louder",
+"turn it down", "volume five") itself, without the model: it sends
+`volume` with the new level, then a short spoken confirmation as an
+ordinary reply. Nothing of such a turn is added to the conversation. At
+the end of the scale, or for a level off it, nothing is sent and the
+spoken reply says so.
+
+`volume` is an addition within version 1, which the rule on unknown fields
+and types allows: a device that states no `volume`, or one that is not a
+whole number, is answered by the model whatever it says, because it could
+not act on the answer. A device ignores a `volume` whose level is off the
+scale.
 
 ### Error codes
 
@@ -139,6 +160,7 @@ Variations:
 | Case | Sequence |
 | --- | --- |
 | Nothing was said | `stop_capture`, then `reply_end`. No `reply_start`, no audio |
+| A change of volume | `stop_capture`, `volume`, then the confirmation as a reply: `reply_start`, audio, `reply_end`. Without `volume` when the level does not change |
 | A service failed before any reply audio | `error`, with or without a `stop_capture` before it |
 | A service failed part-way through the reply | `stop_capture`, `reply_start`, some audio, then `error`. No `reply_end` |
 

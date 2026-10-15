@@ -88,7 +88,12 @@ class DeepgramSpeechToText(SpeechToText):
                 "endpointing": self._endpointing_ms,
                 "utterance_end_ms": _UTTERANCE_END_MS,
                 # Punctuation and capitals, so that Claude reads a sentence.
-                "smart_format": "true",
+                # Not smart_format, which also writes numbers as digits and
+                # so holds the end of speech back about 5 s after a request
+                # that ends in a number, in case more digits follow
+                # (measured in stage 8: "Volume three." ended after 5.6 s
+                # with it and 0.6 s with this). Numbers stay as words.
+                "punctuate": "true",
             }
         )
         try:

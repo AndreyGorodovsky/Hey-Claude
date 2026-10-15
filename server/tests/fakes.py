@@ -137,6 +137,7 @@ class RecordingIO:
     steps: list[str] = field(default_factory=list)
     audio_bytes: int = 0
     failure: ErrorCode | None = None
+    volume: int | None = None
 
     async def capture_done(self) -> None:
         self.steps.append("capture_done")
@@ -152,6 +153,10 @@ class RecordingIO:
     async def fail(self, code: ErrorCode, message: str) -> None:
         self.steps.append("fail")
         self.failure = code
+
+    async def set_volume(self, level: int) -> None:
+        self.steps.append("set_volume")
+        self.volume = level
 
 
 def make_deps(

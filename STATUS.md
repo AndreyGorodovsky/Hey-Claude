@@ -2,7 +2,9 @@
 
 **Current stage:** Stage 8, polish. Planned and approved on 2026-10-15:
 volume by voice, provisioning through a hotspot web page, and refined
-animations. Nothing is built yet. The steps are under Stage 8 plan below.
+animations. Part A, volume by voice, is built, reviewed, corrected and
+tested on the device. The steps are under Stage 8 plan
+below.
 
 Stage 7, latency and robustness, closed on 2026-10-15. Its one remaining
 test, WiFi lost and restored, is under Before release.
@@ -90,7 +92,7 @@ by another. The protocol is written down in
 is built against.
 
 The server is tested at two levels. Its own tests, 100 of them as of
-stage 7 and 161 with part C's, run the
+stage 7, 161 with part C's and 229 with stage 8's volume, run the
 whole path with stand-ins for the three services and need no keys or
 network. A desktop client, `server/tools/desktop_client.py`, plays recorded
 requests to a running server as the device will. Measured with it on
@@ -102,6 +104,10 @@ request, and the first reply audio came 2.4-3.5 s after the end of speech,
 above the budget (KNOWN-ISSUES R19). The review agents reviewed the stage
 before it was committed; what they found and what was deferred is in
 [KNOWN-ISSUES.md](KNOWN-ISSUES.md) (R17 to R19, and the caveats).
+
+Since stage 8 the playback volume is changed by voice: a request that is
+only about the volume is answered by the server without Claude, and the
+device keeps the level through restarts (ARCHITECTURE.md, Volume).
 
 ## Stage 8 plan
 
@@ -120,11 +126,67 @@ is to stay reusable.
 
 | Step | State |
 | --- | --- |
-| A1. The loudest level: a boost of about 6 dB in the firmware, with a light limiter that turns loud peaks down instead of letting them clip. If still too quiet, the amplifier's `GAIN` pin, and `audio tone 100` repeated as the supply check (R2) | Not started |
-| A2. The server recognises a volume request ("louder", "quieter", "volume five") from the transcript, without Claude, answers it with a short spoken confirmation, and sends the new level to the device in a new protocol message | Not started |
-| A3. The device applies the level at once and keeps it in NVS: the first setting that takes effect without a restart. A `volume` console command for the bench | Not started |
-| A4. The chime follows the volume down to a floor, so that it is always heard before the device listens | Not started |
-| A5. Measured on the device, with the chip's temperature (R20); reviewed, documented | Not started |
+| A1. The loudest level: a boost of about 6 dB in the firmware, with a light limiter that turns loud peaks down instead of letting them clip. If still too quiet, the amplifier's `GAIN` pin, and `audio tone 100` repeated as the supply check (R2) | Built: ten levels 3 dB apart, level 8 the audio as sent and the default, level 10 +6 dB; a limiter with a ceiling 1 dB under full scale. Each reply's summary line says how often and how deeply the limiter acted. On the device, a reply of 10 s at +6 dB met the limiter on 5 samples, by at most 0.6 dB: the boost is clean, with room to spare |
+| A2. The server recognises a volume request ("louder", "quieter", "volume five") from the transcript, without Claude, answers it with a short spoken confirmation, and sends the new level to the device in a new protocol message | Built: `server/pipeline/volume.py`, and a `volume` message in protocol version 1, which the rule on unknown types and fields allows. The device states its level in `utterance_start`, so the server keeps none. Such turns are not added to the conversation. A phrasing the list misses goes to Claude, whose prompt now says how the volume is changed. The desktop client states a level too, `--volume` |
+| A3. The device applies the level at once and keeps it in NVS: the first setting that takes effect without a restart. A `volume` console command for the bench | Built: `state_machine/volume.c`, in an NVS namespace of its own; a level from the server reaches the player as it arrives, and is stored only in `IDLE`. `volume [1-10]` on the console |
+| A4. The chime follows the volume down to a floor, so that it is always heard before the device listens | Built: the floor is -9 dB, level 5 |
+| A5. Measured on the device, with the chip's temperature (R20); reviewed, documented | Done on 2026-10-15; the figures are below. Reviewed by both agents and corrected before the test; corrected again after the first round on the device. The server's 229 tests pass |
+
+**Part A on the device, 2026-10-15.** Breadboard, USB-powered, a person
+speaking, in two rounds with the server's code changed between them.
+
+- First round, eleven turns. Every level the server sent was applied, the
+  confirmation was heard at the new level, and at level 1 the chime stayed
+  at its floor of -9 dB. But a "volume" with a number worked only at
+  times. Requests that ended in a number ran on for 6.9 to 13 s, because
+  speech-to-text held the end of speech back after a number (KNOWN-ISSUES
+  R19), so the person said them again; "volume three volume three" then
+  matched no phrase and went to Claude, as did "make voice louder". Claude
+  answered that the volume "should already be set", which was untrue.
+- Corrected: speech-to-text no longer formats numbers, which ends such a
+  request about 5 s sooner, and any question ending in a number with it;
+  a request may hold several volume commands, applied in order, as people
+  repeat or correct themselves; "voice" is understood ("make your voice
+  louder"); the system prompt has Claude say that a volume request it is
+  given was not recognised and nothing changed; the server logs what was
+  heard on each volume turn.
+- Second round, four turns, judged by the person to work better. "Volume
+  ten" set +6 dB; a reply of 10 s at that level met the limiter on 5
+  samples, by at most 0.6 dB, so the boost has room and does not clip.
+  "Make your voice louder" at level 10 was answered "That's as loud as I
+  go." "What is twelve times ten?" ended normally, its first audio 3.3 s
+  after the end of speech.
+- Not heard on the device: a repeated command and a level below 9 after
+  the correction; the tests cover them. One change in the first round,
+  from 9 to 1, is unexplained, because volume turns were not logged then.
+- Chip temperature: 43.5 °C 35 s after flashing, rising to 52.5 °C over
+  the first round; 54.5 to 55.5 °C through the second (R20).
+
+The corrections after the device test were not put to the review agents
+again: they are a setting of speech-to-text, the phrase grammar and its
+tests, a sentence of the prompt and a log line.
+
+**What the review changed.** Neither agent found a critical or major
+fault. Corrected from the first: `volume` on the console printed 0 on a
+device not yet set up; a `volume` that was not a whole number made the
+server drop the whole request, where it now counts as no volume; the level
+was written to flash as it arrived, which pauses the audio tasks and could
+glitch a reply, and is now stored only in `IDLE`. From the second: the
+scale was counted down from the player's ceiling, so that the default was
+0 dB only by coincidence, and is now built outward from the default; the
+volume moved out of the state machine into a file of its own, and out of
+`app_config`'s namespace, which part B treats as settings, into one of its
+own; the phrases were two lists kept in step by hand, which had drifted,
+and are now built from one table for each direction, with the phrasings
+the agent found missing ("a bit louder", "too loud", "volume to the max");
+the system prompt says how the volume is changed, so that Claude does not
+claim to have changed it; the server checks at start that every level has
+a spoken name; the desktop client states a level, as the device does; the
+chime's floor sits beside its level, in `chime.h`; a new level reaches
+the player in the link's task, so that it is in place before the
+confirmation by the order of the messages and not by the synthesiser's
+delay; the confirmation is held to the same limit on the first audio as
+a reply from Claude.
 
 **Part B, provisioning through a hotspot.**
 
@@ -489,11 +551,11 @@ comes up then.
 | After a failed turn | Settled: the device shows `ERROR` briefly and returns to `IDLE`; only a lost connection leads to `CONNECTING` |
 | Reply audio pacing | Settled and built: the server sends at most 2 s ahead of playback and the device holds 4 s, whatever the length of the reply (R17) |
 | WiFi power saving | Off, from stage 6: the device is mains-powered, and the radio's sleep delays streamed audio. It raises the current drawn and the chip's temperature somewhat; neither has been measured against power saving on (R20) |
-| Playback volume | Reply audio is played as the server sends it, at 100 %, until volume control in stage 8; 40 % and 60 % were too quiet. If this is still too quiet, the next steps are the amplifier's gain pin, which is hardware, or boosting the audio in software with a limiter |
+| Playback volume | Settled and built in stage 8: ten levels, 3 dB apart, changed by voice or the console's `volume`. Level 8, the default, plays the audio as the server sends it, as before; the top two boost it by 3 and 6 dB, with a limiter. If level 10 is still too quiet, the next step is the amplifier's gain pin, which is hardware |
 | Start-up buffer for a reply | Left at 80 ms, decided on 2026-10-07. A reply can pause briefly in its first second (KNOWN-ISSUES, Caveats); raising the buffer to about 300 ms would cover it at the cost of about 0.2 s more wait before every reply. The device now logs each pause; the buffer is to be raised if that log gathers more evidence |
-| The chime and volume | Settled on 2026-10-15, to be built in stage 8: it follows the volume down to a floor. Before that: The chime has a level of its own, 30 % of full scale, and the playback level is applied on top of it, which changes nothing while that level is 100 %. With a volume control, the chime would fade with the volume while the device still waits for it before listening. To decide then: it follows the volume, follows it down to a floor, or keeps a fixed level |
+| The chime and volume | Settled on 2026-10-15 and built: it follows the volume down to a floor of -9 dB. Before that: The chime has a level of its own, 30 % of full scale, and the playback level is applied on top of it, which changes nothing while that level is 100 %. With a volume control, the chime would fade with the volume while the device still waits for it before listening. To decide then: it follows the volume, follows it down to a floor, or keeps a fixed level |
 | Reply voice | Settled: `aura-2-luna-en`. The first voice used had a harsh "s", in the audio itself and not from the device's speaker; this one was chosen by ear from eleven, and was heard on the device and preferred |
-| Loudness | Open. With the chosen voice and playback at 100 %, replies are a little quiet. Four ways to raise it are listed in KNOWN-ISSUES under Caveats: the amplifier's gain pin, a boost in the firmware, levelling on the server, or another voice. To be decided if it proves a nuisance |
+| Loudness | The boost in the firmware was taken in stage 8, up to +6 dB at the top volume, and heard clean on the device. If the top level proves too quiet in use, the ways left are in KNOWN-ISSUES under Caveats |
 | Languages | English only: speech-to-text is set to English and the synthesiser's voice is English. Speech in another language is not recognised and the turn ends with no reply. Whether to support others is open |
 | Seeing a screen state on demand | Settled and built: `display preview <state>` draws a state's screen for a few seconds without changing the state |
 | A reason on the `CONNECTING` screen | Settled and built: `CONNECTING` shows why the last attempt to reach the server failed |

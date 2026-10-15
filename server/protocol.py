@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import json
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, BeforeValidator, ConfigDict, ValidationError
 
 PROTOCOL_VERSION = 1
 
@@ -86,6 +86,11 @@ DEVICE_THINKING_LIMIT_SECONDS = 40
 #: How long a device lets a reply stay silent, once begun, before giving up.
 DEVICE_STALL_LIMIT_SECONDS = 40
 
+#: The playback volume's scale. The device keeps its level, states it in
+#: ``utterance_start``, and is sent a new one in ``volume``.
+VOLUME_MIN = 1
+VOLUME_MAX = 10
+
 #: Longest device identifier and token, as the firmware stores them.
 MAX_DEVICE_ID_LENGTH = 32
 MAX_DEVICE_TOKEN_LENGTH = 64
@@ -109,6 +114,13 @@ class ErrorCode(StrEnum):
     INTERNAL = "internal"
 
 
+def _whole_number_or_none(value: Any) -> int | None:
+    """A field's value if it is a whole number, otherwise None."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
 class _Message(BaseModel):
     # Unknown fields are ignored, so that a newer peer can add one without
     # breaking an older one.
@@ -122,6 +134,11 @@ class UtteranceStart(_Message):
     """The wake word fired; audio frames follow."""
 
     type: Literal["utterance_start"] = "utterance_start"
+    #: The device's playback volume, from VOLUME_MIN to VOLUME_MAX. Absent
+    #: from firmware older than stage 8. Anything that is not a whole number
+    #: is read as absent, and the range is checked where it is used: a
+    #: request with a bad value is still a request.
+    volume: Annotated[int | None, BeforeValidator(_whole_number_or_none)] = None
 
 
 DeviceMessage = UtteranceStart
@@ -170,7 +187,14 @@ class Error(_Message):
     message: str
 
 
-ServerMessage = Ready | StopCapture | ReplyStart | ReplyEnd | Error
+class Volume(_Message):
+    """Play at this volume from now on. Sent before the reply that confirms it."""
+
+    type: Literal["volume"] = "volume"
+    level: int
+
+
+ServerMessage = Ready | StopCapture | ReplyStart | ReplyEnd | Error | Volume
 
 
 class ProtocolError(ValueError):

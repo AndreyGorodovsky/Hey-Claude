@@ -17,10 +17,9 @@ static const float NOTE_HZ[CHIME_NOTES] = { 660.0f, 880.0f };
 /* Loudness, in percent of full scale (the largest value a 16-bit sample
  * can hold). A reply's peaks reach full scale; a steady note at that level
  * would be far louder than speech. Accepted by ear on the breadboard on
- * 2026-10-07. The player's playback level is applied on top of this, which
- * changes nothing while that level is 100 %; whether the chime should
- * follow a volume control is to be decided with stage 8 (STATUS.md, open
- * decisions). */
+ * 2026-10-07. The player's playback level is applied on top of this: the
+ * chime follows the volume down to CHIME_FLOOR_DB (chime.h), so that it is
+ * heard at every volume. */
 #define LEVEL_PERCENT       30
 
 void chime_make(int16_t *out)

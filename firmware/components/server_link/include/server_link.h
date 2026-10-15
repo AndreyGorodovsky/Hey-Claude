@@ -45,6 +45,8 @@ typedef enum {
                            The sink's start() has already been called. */
     SERVER_LINK_REPLY_END,     /* server: all reply audio has been sent */
     SERVER_LINK_SERVER_ERROR,  /* server: the turn was abandoned; value: a server_link_error_t */
+    SERVER_LINK_VOLUME,        /* server: play at this volume from now on; value: the
+                           level, checked to be within PROTO_VOLUME_MIN to MAX */
 } server_link_report_t;
 
 /* Why there is no connection. Reported once for every failed attempt and
@@ -114,8 +116,10 @@ typedef struct {
 esp_err_t server_link_start(const server_link_config_t *cfg);
 
 /* Tells the server a request begins: the wake word fired. Audio sent with
- * server_link_send_audio() from now on belongs to it. Blocks like server_link_send_audio(). */
-esp_err_t server_link_send_utterance_start(void);
+ * server_link_send_audio() from now on belongs to it. `volume` is the
+ * device's playback level, which the server needs to answer "louder".
+ * Blocks like server_link_send_audio(). */
+esp_err_t server_link_send_utterance_start(uint8_t volume);
 
 /* Sends `count` samples of request audio as one binary frame. Blocks while
  * the network takes them: normally not at all, but for several seconds when

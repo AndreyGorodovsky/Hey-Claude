@@ -47,6 +47,13 @@
 /* Reply audio the device has room for: at least twice the lead */
 #define PROTO_REPLY_BUFFER_MS           4000
 
+/* ---- Volume ----
+ * The playback volume's scale. The device keeps its level, states it in
+ * `utterance_start`, and is sent a new one in `volume`. What a level
+ * sounds like is the device's own business (state_machine.c). */
+#define PROTO_VOLUME_MIN                1
+#define PROTO_VOLUME_MAX                10
+
 /* ---- The device's deadlines ----
  * Each is a guard against a server that has stopped answering, and each is
  * longer than the server's own limit for the same wait, so that the

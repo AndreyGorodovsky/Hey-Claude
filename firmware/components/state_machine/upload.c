@@ -60,13 +60,16 @@ static void (*s_on_failed)(upload_failure_t why);
 /* Even while sending, odd while stopped. atomic_uint can be read and
  * written from several tasks without a lock. */
 static atomic_uint s_run;
-/* Where the next request starts. Written by upload_start() before it raises
- * s_run, and read by the task only after it has seen the new number. */
+/* Where the next request starts, and the volume it states. Written by
+ * upload_start() before it raises s_run, and read by the task only after it
+ * has seen the new number. */
 static uint32_t s_start_pos;
+static uint8_t s_start_volume;
 
-void upload_start(uint32_t pos)
+void upload_start(uint32_t pos, uint8_t volume)
 {
     s_start_pos = pos;
+    s_start_volume = volume;
     /* To the next even number, whatever it was */
     atomic_store(&s_run, (atomic_load(&s_run) | 1u) + 1u);
     xTaskNotifyGive(s_task);
@@ -87,12 +90,12 @@ static void failed(unsigned run, upload_failure_t why)
 }
 
 /* Sends one request. Returns when it is stopped or cannot go on. */
-static void send_request(unsigned run, uint32_t start_pos)
+static void send_request(unsigned run, uint32_t start_pos, uint8_t volume)
 {
     /* static: 640 bytes kept off the task's stack; only this task uses it */
     static int16_t frame[FRAME_SAMPLES];
 
-    if (server_link_send_utterance_start() != ESP_OK) {
+    if (server_link_send_utterance_start(volume) != ESP_OK) {
         ESP_LOGE(TAG, "the request could not be announced to the server");
         failed(run, UPLOAD_FAIL_SEND);
         return;
@@ -162,7 +165,7 @@ static void upload_task(void *arg)
         if (run & 1u) {
             continue;   /* stopped again before this task woke */
         }
-        send_request(run, s_start_pos);
+        send_request(run, s_start_pos, s_start_volume);
     }
 }
 

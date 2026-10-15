@@ -41,6 +41,7 @@ from server.protocol import (
     ServerMessage,
     StopCapture,
     UtteranceStart,
+    Volume,
     encode,
     frame_bytes,
     parse_device_message,
@@ -213,6 +214,9 @@ class DeviceConnection:
     async def fail(self, code: ErrorCode, message: str) -> None:
         await self._send(Error(code=code, message=message))
 
+    async def set_volume(self, level: int) -> None:
+        await self._send(Volume(level=level))
+
     # --- The connection ----------------------------------------------------
 
     async def run(self) -> None:
@@ -246,9 +250,9 @@ class DeviceConnection:
             log.warning("device %s: bad message: %s", self._device_id, exc)
             return
         if isinstance(message, UtteranceStart):
-            self._on_utterance_start()
+            self._on_utterance_start(message.volume)
 
-    def _on_utterance_start(self) -> None:
+    def _on_utterance_start(self, volume: int | None) -> None:
         if self._turn is not None:
             # A correct device asks only when idle. The turn in progress is
             # left alone and this request gets no answer. If that turn is
@@ -261,7 +265,7 @@ class DeviceConnection:
         self._dropped_frames = 0
         self._level = _Level()
         self._reply = None
-        self._turn = asyncio.create_task(self._run_turn(self._capture))
+        self._turn = asyncio.create_task(self._run_turn(self._capture, volume))
 
     def _on_audio(self, pcm: bytes) -> None:
         if self._capture is None:
@@ -284,9 +288,11 @@ class DeviceConnection:
                 log.warning("device %s: capture audio is backing up", self._device_id)
             self._dropped_frames += 1
 
-    async def _run_turn(self, audio: asyncio.Queue[bytes]) -> None:
+    async def _run_turn(
+        self, audio: asyncio.Queue[bytes], volume: int | None
+    ) -> None:
         try:
-            await run_turn(self._device_id, audio, self, self._deps)
+            await run_turn(self._device_id, audio, self, self._deps, volume)
         finally:
             self._capture = None
             self._turn = None

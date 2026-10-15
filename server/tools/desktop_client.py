@@ -45,6 +45,8 @@ from server.protocol import (
     MDNS_SERVICE_TYPE,
     SAMPLE_WIDTH_BYTES,
     STREAM_PATH,
+    VOLUME_MAX,
+    VOLUME_MIN,
     frame_bytes,
 )
 
@@ -90,6 +92,8 @@ class Reply:
     furthest_ahead: float = 0.0
     error: str | None = None
     dropped: bool = False
+    #: The level the server sent in a ``volume`` message, if it sent one.
+    volume: int | None = None
 
 
 async def _send_request(
@@ -118,14 +122,22 @@ async def _send_request(
 
 
 async def request(
-    ws: ClientConnection, pcm: bytes, *, preroll_ms: int = 0, drop: bool = False
+    ws: ClientConnection,
+    pcm: bytes,
+    *,
+    volume: int,
+    preroll_ms: int = 0,
+    drop: bool = False,
 ) -> Reply:
-    """Make one request and collect its reply."""
+    """Make one request and collect its reply.
+
+    ``volume`` is stated in ``utterance_start``, as a device states its own.
+    """
     result = Reply(
         speech_seconds=len(pcm) / SAMPLE_WIDTH_BYTES / CAPTURE_SAMPLE_RATE
     )
     stop = asyncio.Event()
-    await ws.send(json.dumps({"type": "utterance_start"}))
+    await ws.send(json.dumps({"type": "utterance_start", "volume": volume}))
     started = time.monotonic()
     sender = asyncio.create_task(
         _send_request(ws, pcm, stop, preroll_ms // CAPTURE_FRAME_MS)
@@ -157,6 +169,8 @@ async def request(
                     return result
             elif kind == "reply_start":
                 result.sample_rate = event["sample_rate"]
+            elif kind == "volume":
+                result.volume = event["level"]
             elif kind == "reply_end":
                 result.done_at = at
                 return result
@@ -186,6 +200,8 @@ def report(name: str, result: Reply) -> None:
     if result.dropped:
         print("  connection dropped here, on purpose")
         return
+    if result.volume is not None:
+        print(f"  volume set to           {result.volume}")
     if result.first_audio_at is None:
         print("  no reply audio (nothing was heard)")
         return
@@ -275,11 +291,19 @@ async def main_async(args: argparse.Namespace) -> int:
             if ready.get("type") != "ready":
                 raise SystemExit(f"expected ready, got {ready.get('type')!r}")
             print(f"connected, protocol {ready.get('protocol')}")
+            # Kept from one request to the next, as the device keeps it
+            volume = args.volume
             for path, pcm in requests:
                 result = await request(
-                    ws, pcm, preroll_ms=args.preroll_ms, drop=args.drop_mid_turn
+                    ws,
+                    pcm,
+                    volume=volume,
+                    preroll_ms=args.preroll_ms,
+                    drop=args.drop_mid_turn,
                 )
                 report(path.name, result)
+                if result.volume is not None:
+                    volume = result.volume
                 if result.dropped:
                     break
                 failed = failed or result.error is not None
@@ -304,6 +328,14 @@ def main() -> None:
         "--discover", action="store_true", help="find the server by mDNS"
     )
     parser.add_argument("--device-id", default="desktop-client")
+    parser.add_argument(
+        "--volume",
+        type=int,
+        choices=range(VOLUME_MIN, VOLUME_MAX + 1),
+        default=8,
+        metavar=f"{VOLUME_MIN}-{VOLUME_MAX}",
+        help="the playback volume to state, as a device does (default 8)",
+    )
     parser.add_argument(
         "--preroll-ms",
         type=int,

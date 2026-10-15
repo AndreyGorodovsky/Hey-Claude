@@ -22,6 +22,13 @@
 #define CHIME_NOTE_SAMPLES  (CHIME_RATE * CHIME_NOTE_MS / 1000)
 /* The whole chime, in 16-bit samples */
 #define CHIME_SAMPLES       (CHIME_NOTES * CHIME_NOTE_SAMPLES)
+/* The quietest the chime is played, in decibels of playback level, however
+ * low the volume. The device waits for the chime before it listens, so a
+ * person must hear it at every volume: at the lowest levels the chime
+ * stays here while replies go quieter. Together with LEVEL_PERCENT in
+ * chime.c this sets the quietest chime there is: 30 % of full scale at
+ * -9 dB, about 11 %. */
+#define CHIME_FLOOR_DB      -9
 
 /* Fills `out` with the chime: CHIME_SAMPLES samples, 16-bit signed mono.
  * Uses floating point, so call it once at start, from a task, and keep the

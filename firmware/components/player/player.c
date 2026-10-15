@@ -22,13 +22,19 @@
  * The chime (player.h) is played as if it were a very short reply: one
  * "playback" is either a reply or the chime, and the functions below named
  * for a playback serve both. Only the reports at the end differ.
+ *
+ * Every playback passes through the playback level (gain.h) on its way to
+ * the amplifier. The level is read once, when a playback starts.
  */
 #include "player.h"
 
+#include <math.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <string.h>
 #include "audio.h"
 #include "chime.h"
+#include "gain.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -68,15 +74,6 @@ _Static_assert((WATCHDOG_FEED_MS + WRITE_TIMEOUT_MS) * 2
                <= CONFIG_ESP_TASK_WDT_TIMEOUT_S * 1000,
                "the task must check in well within the watchdog's limit");
 
-/* Playback level, in percent of the level the server sends. Real volume
- * control arrives in stage 8; until then this is the one value. 40 and
- * then 60 were found too quiet on the breadboard (2026-10-06), so the
- * audio is now played exactly as sent. That is the loudest this constant
- * can make it; more needs the amplifier's own gain raised (its GAIN pin)
- * or the audio boosted before playing, with care not to clip. The supply
- * has been tested with a full-scale tone, the worst case (KNOWN-ISSUES R2). */
-#define VOLUME_PERCENT      100
-
 /* The chime's size in the ring. What it sounds like is chime.c's business. */
 #define CHIME_BYTES         (CHIME_SAMPLES * BYTES_PER_SAMPLE)
 
@@ -94,6 +91,11 @@ static uint32_t s_buffer_ms;
 static uint32_t s_stall_ms;
 static size_t s_buf_bytes;      /* size of the ring */
 static int16_t *s_chime_pcm;    /* the chime: CHIME_BYTES bytes in PSRAM */
+
+/* The playback level in decibels, set by player_set_gain_db() from any task
+ * and read by the playback task when a playback starts. atomic_int: one
+ * value that needs no lock. */
+static atomic_int s_gain_db;
 
 /* ---- Shared between tasks, guarded by s_lock ---- */
 
@@ -213,6 +215,14 @@ void player_end(void)
     nudge();
 }
 
+void player_set_gain_db(int db)
+{
+    if (db > PLAYER_GAIN_MAX_DB) {
+        db = PLAYER_GAIN_MAX_DB;
+    }
+    atomic_store(&s_gain_db, db);
+}
+
 void player_abort(void)
 {
     if (!ready()) {
@@ -313,6 +323,13 @@ static void play_out(uint32_t gen, uint32_t rate, bool is_chime)
      * counting waits, because a wait ends early whenever anything is fed. */
     bool dry = false;
     TickType_t dry_since = 0;
+    /* The level for this whole playback. The chime is held at its floor. */
+    int db = atomic_load(&s_gain_db);
+    if (is_chime && db < CHIME_FLOOR_DB) {
+        db = CHIME_FLOOR_DB;
+    }
+    gain_t gain;
+    gain_init(&gain, db, rate);
 
     for (;;) {
         /* Checks in with the task watchdog (see player_task): a pass here
@@ -382,11 +399,7 @@ static void play_out(uint32_t gen, uint32_t rate, bool is_chime)
                 s_report(PLAYER_STARTED, 0);
             }
         }
-        /* Scale to the playback level. The product of two 16-bit values
-         * needs 32 bits; dividing brings it back into range. */
-        for (size_t i = 0; i < samples; i++) {
-            chunk[i] = (int16_t)((int32_t)chunk[i] * VOLUME_PERCENT / 100);
-        }
+        gain_apply(&gain, chunk, samples);
         esp_err_t err = audio_play_write(chunk, samples, WRITE_TIMEOUT_MS);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "amplifier write failed: %s", esp_err_to_name(err));
@@ -406,13 +419,21 @@ static void play_out(uint32_t gen, uint32_t rate, bool is_chime)
     const char *how = failed ? "failed" : finished ? "finished" : "stopped";
     if (is_chime) {
         /* The buffer's figures say nothing about a sound put in whole */
-        ESP_LOGI(TAG, "chime %s: played %lu ms", how, (unsigned long)played_ms);
+        ESP_LOGI(TAG, "chime %s: played %lu ms at %d dB", how, (unsigned long)played_ms, db);
     } else {
+        /* The limiter's figures say whether the level is pressing the
+         * loudest replies against the ceiling, and how hard: the evidence
+         * for how high the volume can usefully go. The depth is printed in
+         * tenths of a decibel as whole numbers: printing a float would take
+         * more of this task's stack than it can spare. */
+        int tenths = (int)lrintf(-200.0f * log10f(gain.deepest));
         ESP_LOGI(TAG, "reply %s: played %lu ms; most held at once %lu ms of %lu; "
-                      "ran dry %lu times, silent %lu ms",
+                      "ran dry %lu times, silent %lu ms; at %d dB, limited %lu samples, "
+                      "by up to %d.%d dB",
                  how, (unsigned long)played_ms, (unsigned long)peak_ms,
                  (unsigned long)s_buffer_ms, (unsigned long)underruns,
-                 (unsigned long)silent_ms);
+                 (unsigned long)silent_ms, db, (unsigned long)gain.limited,
+                 tenths / 10, tenths % 10);
     }
     /* A report is made if the playback ran to its end or failed, as found
      * in the loop above. An abort that arrives after that, while the

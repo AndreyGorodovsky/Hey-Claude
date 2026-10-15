@@ -4,6 +4,7 @@
 idf_component_register(SRCS "main.c" "brownout_guard.c" "console.c" "audio_cmd.c"
                             "ui_cmd.c"
                             "wake_cmd.c" "link_cmd.c" "temp_cmd.c" "mem_cmd.c"
+                            "volume_cmd.c"
                        INCLUDE_DIRS "."
                        PRIV_REQUIRES app_config net audio audio_ring app_state display
                                      wakeword server_link player state_machine protocol

@@ -478,6 +478,21 @@ sentence while the current one is being sent was already built in
 stage 6. The failed first request is covered instead by a second try at
 connecting.
 
+**Found in stage 8: a request ending in a number waited about 5 s
+longer.** Speech-to-text was asked for `smart_format`, which writes
+numbers as digits and, after a number, holds back the end of speech in
+case more digits follow. Measured on 2026-10-15 with synthetic speech
+sent to the service directly, the end of speech came 5.6 to 5.7 s after
+"Volume three.", "Set the volume to 5." and "What is 12 times 4?", and
+0.6 to 0.7 s after each with `punctuate`, which keeps punctuation and
+capitals and leaves numbers as words; a request with no number ended
+after 0.6 to 0.7 s either way. On the device the same day, requests ending
+in a number ran on for 6.9 to 13 s, so that the person repeated them.
+Changed to `punctuate`; after it, "What is twelve times ten?" spoken on
+the device ended normally and its first audio came 3.3 s after the end of
+speech. Every question since stage 5 that ended in a number had waited
+those 5 s; no figure in this section included one.
+
 *Mitigation:* none further planned. The server logs its figures for every
 turn, and the device logs each change of phase with its time, as
 `phase [state]`: `chime`
@@ -537,6 +552,8 @@ The record:
 | 2026-10-12 | Same bench, the same session. Connected and idle, once a minute for the eighteen minutes after those turns | 55.5 °C each time but one, of 54.5 °C |
 | 2026-10-12 | Same bench, after a further reset. Connected and idle, just before four spoken turns; a minute later, between them; and during the last reply, of 18.7 s with a silence of 6.2 s in it | 55.5, 55.5, 57.5 °C |
 | 2026-10-12 | Same bench, the same firmware and server, with no reset: once a minute for 3 h 5 min, from 91 min to 4 h 36 min after the last reset. Connected throughout, idle but for twelve spoken turns in five groups, the replies 5 to 19 s long | 185 readings: 55.5 °C at 103 of them, 56.5 °C at 80, and 57.5 °C twice, a minute apart, during five turns spoken in two and a half minutes. No rise over the run |
+| 2026-10-15 | Same bench, the stage 8 part A firmware (volume control). Measured: once a minute from 35 s after flashing, through the first test of the volume, eleven spoken turns in four minutes, at levels from 1 to 9 | 43.5, 46.5, 49.5, 50.5, 51.5, 52.5, 51.5 °C |
+| 2026-10-15 | Same bench, the same session, 20 to 26 min after flashing: idle, then four spoken turns at volume 10 (+6 dB), one reply of 10 s | 54.5, 54.5, 54.5, 55.5 °C |
 
 The readings during replies were taken at playback levels of 40 % and
 60 %, but for the last, of 2026-10-07, at the present 100 %.
@@ -719,6 +736,12 @@ at low effort, Claude Code 2.1.296, a home internet connection.
 
 ## Caveats
 
+- **A comment in `protocol.h` gives the old figures for a stalled reply.**
+  Above `PROTO_DEVICE_STALL_LIMIT_MS` it still says the server's services
+  allow 35 s, with 20 s of silence from Claude; since stage 7 they are 39 s
+  and 24 s, as `server/protocol.py` and docs/PROTOCOL.md say. The values
+  are right and the test holds them; only the comment is stale. Found in
+  stage 8 and left for a change of its own.
 - **Wake word required for every request.** The device does not remain open for
   follow-up questions. This is intended behaviour, not a defect.
 - **Conversation resets at 04:00 local time.** A conversation that spans the
@@ -857,37 +880,38 @@ at low effort, Claude Code 2.1.296, a home internet connection.
   soldered and the speaker is mounted apart from the electronics; until
   then, a distorted voice on the breadboard is to be checked by lifting
   it before anything else is suspected.
-- **Playback has no volume control.** Reply audio is played at the level
-  the server sends it, until stage 8. At 40 % and at 60 % of that level a
-  reply was too quiet at arm's length; at 100 % it is a little quiet, as
-  the next item says.
-- **Replies are a little quiet.** Heard on 2026-10-06 at arm's length on
-  the breadboard, with playback at its full level. The voice in use,
+- **Replies were a little quiet before stage 8.** Heard on 2026-10-06 at
+  arm's length on the breadboard, with reply audio played as the server
+  sends it; 40 % and 60 % of that had been too quiet. The voice in use,
   `aura-2-luna-en`, was chosen by ear for its "s": the voice first used
   had a harsh one, in the synthesised audio itself, the same in a headset
   as on the device. The chosen voice peaks about 6 dB lower than that one
-  (-8.8 dBFS against -1.9 dBFS on the same sentence). Ways to make it
-  louder, none of them done yet:
+  (-8.8 dBFS against -1.9 dBFS on the same sentence). Stage 8 took the
+  boost in the firmware: the volume's top two levels add 3 and 6 dB, with
+  a limiter that turns loud peaks down instead of letting them clip, and
+  the default level plays the audio as sent. On the device on 2026-10-15
+  a reply of 10 s at +6 dB met the limiter on 5 samples, by at most
+  0.6 dB, so the top level is clean. If it proves too quiet in use, the
+  ways left are:
   - *The amplifier's gain pin, in hardware.* The MAX98357A's `GAIN` pin is
     unconnected, which sets 9 dB. Tied straight to ground it sets 12 dB,
-    and to ground through a 100 kΩ resistor, 15 dB: 3 or 6 dB more with no
-    change to the firmware. It raises the amplifier's peak current with
-    it, so `audio tone 100` is to be repeated afterwards as the supply
-    check (R2).
-  - *A boost in the firmware.* Multiply the reply's samples before playing
-    them. This voice leaves almost 9 dB unused below full scale, so about
-    6 dB can be added with little or no clipping; more than that needs a
-    limiter, which turns loud peaks down instead of letting them distort.
-    No hardware change; noise in the audio rises with it.
+    and to ground through a 100 kΩ resistor, 15 dB: 3 or 6 dB more at
+    every volume level. It raises the amplifier's peak current with it,
+    so `audio tone 100` is to be repeated afterwards as the supply check
+    (R2).
   - *Levelling on the server.* Scale each reply so that its loudest
     sample sits just below full scale, whatever the voice. It gives every
-    voice the same loudness and keeps the firmware as it is, but the
-    sentences of one reply are synthesised separately and would each need
-    the same factor.
+    voice the same loudness, but the sentences of one reply are
+    synthesised separately and would each need the same factor.
   - *Another voice.* `aura-2-andromeda-en` was also found clear, peaks
     about 3 dB higher than the chosen one, and speaks faster.
-  Real volume control is stage 8; whichever of these is used sets the
-  loudest level that control can reach.
+- **A volume request in other words goes to Claude.** The server
+  recognises a request that is only about the volume from a list of
+  phrasings (`server/pipeline/volume.py`), and answers it without the
+  model. One it does not recognise is answered by the model, which is told
+  how the volume is changed and that it cannot change it, and the volume
+  stays as it was. A phrasing found missing is added to the list, for
+  both directions at once.
 - **English only.** Speech-to-text is set to English and the synthesiser's
   voice is English. A request in another language is not recognised: the
   device listens, the server finds no words, and the device returns to

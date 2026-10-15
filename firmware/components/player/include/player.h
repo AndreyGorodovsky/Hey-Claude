@@ -87,6 +87,18 @@ void player_end(void);
  * Does nothing when nothing is playing. */
 void player_abort(void);
 
+/* The highest playback level, in decibels relative to the audio as the
+ * server sends it. Above 0 the audio is boosted, and the limiter (gain.h)
+ * keeps the loudest peaks from clipping; +6 dB is as far as that stays
+ * clean for the voice in use, which peaks about 9 dB under full scale. */
+#define PLAYER_GAIN_MAX_DB  6
+
+/* Sets the playback level, in decibels, at most PLAYER_GAIN_MAX_DB. Takes
+ * effect from the next reply or chime; one already playing keeps its
+ * level. 0, the audio as sent, until this is first called. May be called
+ * from any task, and before player_init(). */
+void player_set_gain_db(int db);
+
 /* Plays the chime: two short rising notes (chime.h), computed once at
  * start, that tell the person the wake word was heard. It goes through the
  * same path as a reply, so it cannot collide with one: a reply that begins

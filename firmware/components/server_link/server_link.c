@@ -254,6 +254,16 @@ static void on_text(const char *text, size_t len)
                  cJSON_IsString(code) ? code->valuestring : "?",
                  cJSON_IsString(message) ? message->valuestring : "");
         report(SERVER_LINK_SERVER_ERROR, e);
+    } else if (strcmp(t, "volume") == 0) {
+        /* A level off the scale is ignored, not treated as confusion: the
+         * device can go on perfectly well at the level it has */
+        const cJSON *level = cJSON_GetObjectItemCaseSensitive(root, "level");
+        if (cJSON_IsNumber(level) && level->valuedouble >= PROTO_VOLUME_MIN
+            && level->valuedouble <= PROTO_VOLUME_MAX) {
+            report(SERVER_LINK_VOLUME, (uint32_t)level->valuedouble);
+        } else {
+            ESP_LOGW(TAG, "server sent a volume off the scale; ignored");
+        }
     } else {
         ESP_LOGW(TAG, "server sent an unknown message type");
     }
@@ -654,10 +664,13 @@ static esp_err_t send_frame(bool text, const char *data, int len)
     return sent == len ? ESP_OK : ESP_FAIL;
 }
 
-esp_err_t server_link_send_utterance_start(void)
+esp_err_t server_link_send_utterance_start(uint8_t volume)
 {
-    static const char message[] = "{\"type\":\"utterance_start\"}";
-    return send_frame(true, message, (int)strlen(message));
+    /* At most 39 characters, with a three-digit level */
+    char message[48];
+    int len = snprintf(message, sizeof(message),
+                       "{\"type\":\"utterance_start\",\"volume\":%u}", (unsigned)volume);
+    return send_frame(true, message, len);
 }
 
 esp_err_t server_link_send_audio(const int16_t *samples, size_t count)

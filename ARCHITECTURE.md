@@ -31,9 +31,9 @@ made during the feasibility review and are binding unless explicitly revisited.
 | `audio_ring` | The microphone's only reader: a capture task filling a ring buffer of the last 2 s, from which every listener reads at its own position |
 | `wakeword` | On-device wake-word detection with a microWakeWord model; announces detections and decides nothing else |
 | `app_state` | The device state and its detail text: stored, and announced on change. Decides no transitions |
-| `state_machine` | The state machine: the one place that decides what the device does next, and the only writer of the state. Also runs the request upload |
+| `state_machine` | The state machine: the one place that decides what the device does next, and the only writer of the state. Also runs the request upload, and keeps the playback volume in a file of its own, `volume.c` |
 | `server_link` | The WebSocket connection to the server: finds it by mDNS, connects, authenticates, reconnects with backoff, and turns the server's messages into reports |
-| `player` | Reply playback: a buffer for 4 s of reply audio and the task that plays it |
+| `player` | Reply playback: a buffer for 4 s of reply audio and the task that plays it, at the playback level, through a limiter |
 | `protocol` | The protocol's numbers as the firmware uses them, in one header. A test on the server side holds it to the server's own |
 | `display` | The NV3007 panel, its backlight, and what is drawn for each state, from a single task that is the only user of LVGL |
 | `board` | The verified pin map and panel geometry, the single source of both |
@@ -241,7 +241,7 @@ longest wait is the firmware's own to bound.
 | Wake word | 8 | 1 | Features and model every 30 ms; sleeps between | No: it reports its own failure, and stops itself if the model fails |
 | WebSocket client | 7 | 0 | The component's own task, one per connection; receives reply audio and hands it to the player | No: it waits on the network |
 | Upload | 6 | 0 | Reads the ring and sends request frames while capturing; sleeps otherwise | No: a send can block for seconds |
-| State machine | 5 | 0 | Acts on one event at a time, each in well under a millisecond | Yes |
+| State machine | 5 | 0 | Acts on one event at a time, each in well under a millisecond, except storing a changed volume, which writes to flash and is done only in `IDLE` | Yes |
 | Link | 5 | 0 | Looks the server up, connects, and waits for the connection to end | No: it waits on the network |
 | Display | 4 | 0 | LVGL drawing and animation; sleeps between frames | No |
 | Console | 2 | either | ESP-IDF's REPL; typing must not stall animation or audio | No |
@@ -351,9 +351,30 @@ network. A chunk that does not fit ends the reply and the connection: the
 device does not play a reply with a hole in it. Playback starts once
 80 ms is waiting, so that the first chunks arriving unevenly cause no gap
 in the first word, and can be stopped within about 100 ms for error
-paths. Reply audio is played at the level the server sends it, with no
-reduction: 40 % and then 60 % were tried and found too quiet. Volume
-control arrives in stage 8.
+paths.
+
+**Volume.** The playback volume is a level from 1 to 10, set by voice
+("louder", "volume five"; see Volume requests, under Server) or with the
+console's `volume`. Each level is 3 dB from the next. Level 8, the default,
+plays reply audio exactly as the server sends it, as every stage before 8
+did; 40 % and 60 % of that had been tried and found too quiet. Level 10 is
++6 dB, a boost the audio has room for: the voice in use peaks about 9 dB
+under full scale. Level 1 is -21 dB. A limiter in the player (`gain.c`)
+keeps a boosted peak from clipping: when a sample would pass a ceiling
+1 dB under full scale it turns the level down at once by exactly enough,
+then lets it back up over about 100 ms. The level is read once at the
+start of each reply or chime. The chime follows the volume down to a floor
+of -9 dB, so that it is heard at every level before the device listens.
+
+The level is kept in NVS, in a namespace of its own, `volume`, apart from
+the settings: it is the one value that changes while the device runs and
+takes effect at once, and erasing the settings does not reset it. A level
+from the server reaches the player in the WebSocket client's task as soon
+as it arrives, so that it is in place before the reply that confirms it,
+by the order of the messages. Writing to flash pauses the chip's use of
+flash and PSRAM, and the audio tasks with it, for milliseconds and
+occasionally tens of them, so a changed level is stored only when the
+device is in `IDLE`, never during a reply.
 
 **WiFi power saving is off.** By default the radio sleeps between the
 router's beacons and can hold data back for up to 100 ms each way, which
@@ -517,6 +538,22 @@ A turn is added to the conversation only if it completed, so the stored
 history always alternates between the person and the assistant. A turn
 whose device disconnects is cancelled.
 
+**Volume requests.** A request that is only about the volume ("louder",
+"too loud", "turn it down a notch", "volume five", "maximum volume") is
+recognised from its transcript by `pipeline/volume.py` and answered
+without the model: the device is sent its new level and the synthesiser
+says "Volume six." The device states its level with each request, so the
+server keeps no volume of its own. Such a turn is not added to the
+conversation. The phrases are built from one table for each direction, so
+that what turns the volume up can always be said, mirrored, to turn it
+down. A request the phrases miss goes to the model, whose system prompt
+says how the volume is changed and forbids it to claim it changed it.
+A request may hold several commands, as people repeat or correct
+themselves ("volume three, volume three", "louder, volume nine"); they are
+applied in order. What was heard on a volume turn is logged, even with
+transcripts otherwise kept out of the log, since it is a command and
+nothing else.
+
 Device tokens are configured on the server as one setting, `DEVICE_TOKENS`,
 mapping each device identifier to its token, and compared in constant time.
 
@@ -534,6 +571,12 @@ length after speech (400 ms by default), or its second signal based on word
 timings, which still works over background noise. Silence before any speech
 does not end a request; if no word is recognised within 5 s, the turn ends
 with no reply.
+
+The transcript has punctuation and capitals, so that Claude reads
+sentences, and numbers stay as words. The service's fuller formatting,
+which writes numbers, dates and prices as figures, was used until stage
+8 and dropped: after a number it held the end of speech back about 5 s in
+case more digits followed (KNOWN-ISSUES R19).
 
 Speech-to-text was chosen for its streaming utterance-end events, which supply
 the end-of-speech signal directly. A separate voice-activity detector would
