@@ -247,8 +247,10 @@ joining the device's hotspot, seven tests, before the review:
 - Entry by BOOT held 3 s: setup mode about 2 s later, 9 to 11 networks in
   range offered.
 - The page: the phone joined, and the captive DNS answered its questions,
-  51 within about ten seconds of joining, so the page was served through
-  the portal. Whether the phone opened it by itself was not recorded.
+  51 within about ten seconds of joining. The phone did not open the page
+  by itself; it was opened at the address on the screen. The same phone
+  did not open it with the author's earlier project either, where another
+  phone did (KNOWN-ISSUES, Caveats).
 - Saved with nothing changed: Ready 7 s after the save.
 - A wrong WiFi password: 5 refusals in 24 s, then back to setup by itself,
   "WiFi password refused". The right password: Ready 7 s after the save.

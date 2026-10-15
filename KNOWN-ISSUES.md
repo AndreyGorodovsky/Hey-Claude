@@ -955,6 +955,17 @@ at low effort, Claude Code 2.1.296, a home internet connection.
   Accepted, like R8 for the connection to the server: HTTPS would need a
   certificate the phone trusts, which a device on its own network cannot
   have.
+- **Some phones do not open the setup page by themselves.** The captive
+  portal (ARCHITECTURE.md, Setup mode) depends on the phone asking the
+  device for names when it checks for the internet. On 2026-10-15 the
+  author's phone joined the hotspot and the device answered its questions,
+  but the page did not open; it was opened at the address on the screen.
+  The same phone behaved the same way with the author's earlier project,
+  whose portal works the same, and another phone opened the page there.
+  Not investigated. Possible causes, not checked: Android's "Private DNS"
+  set to a provider, which sends the phone's questions past the device, or
+  a phone that reports "no internet" instead of offering a sign-in page.
+  The address is always on the screen, and typing it works.
 - **Setup mode for a network that is away can wait a long time.** WiFi
   settings that have never connected are given up after 10 minutes without
   their network, and the device then waits in setup mode until the page is
