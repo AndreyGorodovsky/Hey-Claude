@@ -196,9 +196,18 @@ The WiFi password and the device token are stored in NVS in plain text.
 Anyone with physical access to the device and a USB cable can read them out
 of flash.
 
-*Mitigation:* accepted for LAN-only development, alongside R8. NVS encryption,
-or flash encryption, is to be adopted together with provisioning and OTA in
-stage 8.
+Neither is in the source or in the firmware image: both are entered on the
+device and kept only in its NVS partition. The device token is the shared
+password the device presents to the server, and the server holds the same
+value in its untracked `server/.env`. It is not an API key. Someone holding it
+could connect to the server as the device, and so use its speech and Claude
+services, but could not read the server's keys.
+
+*Mitigation:* accepted for good, decided on 2026-10-15. NVS encryption and
+flash encryption on the ESP32-S3 both burn eFuses, one-time fuses inside the
+chip that cannot be reset, and the board is to stay reusable for other work.
+If the token leaks, it is replaced on both sides: in `server/.env`, and on
+the device through the console or, from stage 8, the hotspot page.
 
 ### R12 — Speech arrives quietly from the microphone
 
@@ -896,8 +905,10 @@ at low effort, Claude Code 2.1.296, a home internet connection.
   stopped. Nothing waits on it but the upload.
 - **Nothing in the firmware can be stopped once started.** A refused
   device parks its connection task until reboot, and neither the server link nor
-  the player has a stop. An over-the-air update, if adopted in stage 8,
-  will want the turn machinery stopped with WiFi kept.
+  the player has a stop. Over-the-air updates, which would want the turn
+  machinery stopped with WiFi kept, were not adopted in stage 8. The
+  hotspot of stage 8 is to be entered by a restart into a mode of its own,
+  so that nothing running has to be stopped.
 - **The watchdog and the brownout guard were tested with a test build.**
   On 2026-10-08 a build with one extra console command hung the
   state-machine task, and counted ordinary restarts as brownouts; it was

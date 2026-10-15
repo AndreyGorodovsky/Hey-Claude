@@ -1,16 +1,13 @@
 # Status
 
-**Current stage:** Stage 7, latency and robustness. Its parts A, latency,
-and B, robustness, are built, reviewed and corrected, with one test left
-for later: WiFi lost and restored. The run of several hours was made on
-2026-10-12 and found nothing to correct. Part C, reaching Claude through
-a Claude Code subscription, with access to the web, began as a trial on
-a branch of its own, was measured on the device, reviewed and corrected,
-and was the server's way to Claude throughout that run. After it, on
-2026-10-12, it was merged and made the default; the API remains as a
-setting. The steps are under Stage 7 plan below.
+**Current stage:** Stage 8, polish. Planned and approved on 2026-10-15:
+volume by voice, provisioning through a hotspot web page, and refined
+animations. Nothing is built yet. The steps are under Stage 8 plan below.
 
-**Last updated:** 2026-10-12
+Stage 7, latency and robustness, closed on 2026-10-15. Its one remaining
+test, WiFi lost and restored, is under Before release.
+
+**Last updated:** 2026-10-15
 
 ## Where the project stands
 
@@ -105,6 +102,46 @@ request, and the first reply audio came 2.4-3.5 s after the end of speech,
 above the budget (KNOWN-ISSUES R19). The review agents reviewed the stage
 before it was committed; what they found and what was deferred is in
 [KNOWN-ISSUES.md](KNOWN-ISSUES.md) (R17 to R19, and the caveats).
+
+## Stage 8 plan
+
+Planned and approved on 2026-10-15. Each part is reviewed by both review
+agents, corrected, documented and committed by itself.
+
+Decided with the plan: the volume is changed by voice, since the device
+has no buttons; settings are entered through a web page served from a
+hotspot of the device's own, after the one in the author's earlier
+project; over-the-air updates are not adopted for now; and the settings
+in NVS stay unencrypted for good (KNOWN-ISSUES R10), because encryption on
+this chip burns eFuses, one-time fuses that cannot be reset, and the board
+is to stay reusable.
+
+**Part A, volume by voice.**
+
+| Step | State |
+| --- | --- |
+| A1. The loudest level: a boost of about 6 dB in the firmware, with a light limiter that turns loud peaks down instead of letting them clip. If still too quiet, the amplifier's `GAIN` pin, and `audio tone 100` repeated as the supply check (R2) | Not started |
+| A2. The server recognises a volume request ("louder", "quieter", "volume five") from the transcript, without Claude, answers it with a short spoken confirmation, and sends the new level to the device in a new protocol message | Not started |
+| A3. The device applies the level at once and keeps it in NVS: the first setting that takes effect without a restart. A `volume` console command for the bench | Not started |
+| A4. The chime follows the volume down to a floor, so that it is always heard before the device listens | Not started |
+| A5. Measured on the device, with the chip's temperature (R20); reviewed, documented | Not started |
+
+**Part B, provisioning through a hotspot.**
+
+| Step | State |
+| --- | --- |
+| B1. A settings page served by the device, using the same validation as the console: WiFi name, with the networks in range offered, WiFi password, device token, and an optional server address | Not started |
+| B2. The hotspot is protected by a random password shown on the panel, so that the token never crosses an open network; a captive-portal DNS makes a phone open the page by itself; the device restarts after a save | Not started |
+| B3. Entered in `SETUP`, after WiFi has failed for a long time, and from the console | Not started |
+| B4. Measured on the device with a phone, with the chip's temperature (R20); reviewed, documented | Not started |
+
+**Part C, the state animations.**
+
+| Step | State |
+| --- | --- |
+| C1. Mock-ups of the eight states, chosen before any LVGL work | Not started |
+| C2. Built in the one table in `display_ui.c`, mindful of tearing in fast movement (R13) | Not started |
+| C3. Each state seen on the device with `display preview`; reviewed, documented | Not started |
 
 ## Stage 7 plan
 
@@ -365,8 +402,8 @@ conditions it was taken under. The record is kept in R20 of
 | 4 | Wake word | Done, with a deviation (see below) | microWakeWord integrated with a continuous ring buffer; detection drives the state transition. Custom phrase trained and thresholds tuned against a multi-hour false-accept run. |
 | 5 | Server v1 | Done | WebSocket server, device authentication, day-scoped conversation store, and the speech-to-text, Claude and text-to-speech chain, with the reply synthesised sentence by sentence. Validated end to end by a desktop client script with no device involved. |
 | 6 | Integration | Done | Device WebSocket client and mDNS lookup, streaming upload during capture, server-driven endpointing, streaming playback, real state machine, and error, timeout and reconnect paths, all as [docs/PROTOCOL.md](docs/PROTOCOL.md) describes. First end-to-end conversation. |
-| 7 | Latency and robustness | In progress | Measured end-to-end latency against the budget, with the inexpensive ways of shortening it taken; the end-of-speech silence tuned; WiFi and server-drop recovery, watchdogs, brownout guard. The budget itself need not be met (see Stage 7 plan). |
-| 8 | Polish | Not started | Animation refinement, volume control, provisioning experience, and over-the-air update if adopted. |
+| 7 | Latency and robustness | Done, with WiFi lost and restored put off to Before release | Measured end-to-end latency against the budget, with the inexpensive ways of shortening it taken; the end-of-speech silence tuned; WiFi and server-drop recovery, watchdogs, brownout guard. The budget itself need not be met (see Stage 7 plan). |
+| 8 | Polish | In progress | Animation refinement, volume control by voice, and provisioning through a hotspot web page. Over-the-air updates are not adopted (see Stage 8 plan). |
 
 Stage 0 is hardware only and produces no code. Peripherals cannot be
 functionally verified there, since that requires firmware; it establishes that
@@ -454,7 +491,7 @@ comes up then.
 | WiFi power saving | Off, from stage 6: the device is mains-powered, and the radio's sleep delays streamed audio. It raises the current drawn and the chip's temperature somewhat; neither has been measured against power saving on (R20) |
 | Playback volume | Reply audio is played as the server sends it, at 100 %, until volume control in stage 8; 40 % and 60 % were too quiet. If this is still too quiet, the next steps are the amplifier's gain pin, which is hardware, or boosting the audio in software with a limiter |
 | Start-up buffer for a reply | Left at 80 ms, decided on 2026-10-07. A reply can pause briefly in its first second (KNOWN-ISSUES, Caveats); raising the buffer to about 300 ms would cover it at the cost of about 0.2 s more wait before every reply. The device now logs each pause; the buffer is to be raised if that log gathers more evidence |
-| The chime and volume | Open, for stage 8. The chime has a level of its own, 30 % of full scale, and the playback level is applied on top of it, which changes nothing while that level is 100 %. With a volume control, the chime would fade with the volume while the device still waits for it before listening. To decide then: it follows the volume, follows it down to a floor, or keeps a fixed level |
+| The chime and volume | Settled on 2026-10-15, to be built in stage 8: it follows the volume down to a floor. Before that: The chime has a level of its own, 30 % of full scale, and the playback level is applied on top of it, which changes nothing while that level is 100 %. With a volume control, the chime would fade with the volume while the device still waits for it before listening. To decide then: it follows the volume, follows it down to a floor, or keeps a fixed level |
 | Reply voice | Settled: `aura-2-luna-en`. The first voice used had a harsh "s", in the audio itself and not from the device's speaker; this one was chosen by ear from eleven, and was heard on the device and preferred |
 | Loudness | Open. With the chosen voice and playback at 100 %, replies are a little quiet. Four ways to raise it are listed in KNOWN-ISSUES under Caveats: the amplifier's gain pin, a boost in the firmware, levelling on the server, or another voice. To be decided if it proves a nuisance |
 | Languages | English only: speech-to-text is set to English and the synthesiser's voice is English. Speech in another language is not recognised and the turn ends with no reply. Whether to support others is open |
@@ -463,9 +500,10 @@ comes up then.
 | Component names | Settled: the connection is `server_link` and the state machine `state_machine`, renamed before the first commit of stage 6 |
 | Internet access for the assistant | Settled on 2026-10-12: the assistant searches the web and reads pages, through Claude Code, the default (part C of stage 7). With the API it has no tools and is told it has no internet access, so it declines questions such as the weather. The ways considered: tools the server runs itself on free data (the date and time from its clock, weather from a free service), at a few hundred tokens a use; Anthropic's web search tool, at $10 per 1,000 searches plus the results as input tokens, estimated at about 4 cents a searched question on `claude-opus-5` and not measured; or both, with the search capped at one a question. Running Claude Code under a subscription login in place of the API was first set aside, because its documentation directs products built on it to API keys, and taken up again on 2026-10-08 as a trial, part C of stage 7: the device has one user, who is the account's owner. Built and measured on 2026-10-12 on a branch of its own: the assistant searches the web and reads pages, and answered the weather, the news and a price. Kept: merged on the same day and made the default, with the API one setting away |
 | Deployment | LAN only for now; off-LAN deployment deferred and would require TLS |
-| Over-the-air updates | Undecided, revisited at stage 8; the flash layout already allows it |
+| Over-the-air updates | Not adopted for now, decided on 2026-10-15; the device is flashed over USB. The flash layout keeps two application slots, so adopting them later needs no change to it |
+| Encrypting the stored settings | Not done, decided on 2026-10-15: on this chip it burns eFuses, which cannot be undone, and the board is to stay reusable (KNOWN-ISSUES R10) |
 | Server discovery | mDNS on the LAN, with `server_url` as an override; the server's side is built, the device's is stage 6 |
-| Device settings entry | Serial console for now; stage 8 provisioning reuses the same validation |
+| Device settings entry | Serial console; from stage 8 also a web page served from a hotspot of the device's own, which reuses the same validation |
 | Locking dependency versions | Settled: `firmware/dependencies.lock` is committed, and the wake-word libraries are pinned exactly (R14) |
 | Wake phrase | A two-syllable phrase first; a longer one if it cannot meet the R1 targets |
 | `SETUP` and `ERROR` detail text | Settled: the device shows its own short wording, chosen by reason code and sized for the panel, for server errors and for those the server never sees. The sentence in the server's `error` is for logs. Built in stage 6 |

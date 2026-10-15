@@ -150,9 +150,9 @@ ordinary restarts as brownouts; not seen with a real brownout (R2).
 | `coredump` | 0x820000 | 64 KB | Last crash |
 | unallocated | 0x830000 | ~7.8 MB | Reserved |
 
-The layout is OTA-ready from the start. Whether over-the-air updates are
-adopted is decided at stage 8, but adopting them then needs no change to the
-flash layout. Flash runs in QIO mode at 80 MHz; PSRAM is octal at 80 MHz.
+The layout is OTA-ready from the start. Over-the-air updates were not
+adopted at stage 8, and the device is flashed over USB; adopting them later
+needs no change to the flash layout. Flash runs in QIO mode at 80 MHz; PSRAM is octal at 80 MHz.
 
 ### State machine
 
