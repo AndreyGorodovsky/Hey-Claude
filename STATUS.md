@@ -356,8 +356,8 @@ running, a person speaking nine turns in three minutes:
   again without repeating words.
 - Chip temperature 55.5 to 56.5 °C (R20).
 - Claude Code had updated itself to 2.1.302 from the 2.1.296 tested. The
-  turns above ran on it without fault; the bench that R21 asks for after an
-  update is still to be run.
+  turns above ran on it without fault, and so did the bench that R21 asks
+  for after an update, run afterwards (R21).
 
 **What the review changed.** Neither agent found a critical or major
 fault. The first found that a cancellation could be swallowed in two
@@ -735,7 +735,7 @@ The server runs on Python 3.11 in a virtual environment, `server/.venv`,
 with the packages in `server/requirements.txt`. API keys for Anthropic and
 Deepgram, a device token and the timezone are in the untracked
 `server/.env`. Stage 6 reached Claude through the API. Since part C of
-stage 7 the default is Claude Code, 2.1.296 as tested, installed on the
+stage 7 the default is Claude Code, 2.1.302 as last tested, installed on the
 same machine and signed in; its login is in the user's profile, outside
 the repository.
 

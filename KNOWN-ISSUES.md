@@ -688,6 +688,17 @@ at low effort, Claude Code 2.1.296, a home internet connection.
   the server logged no failure or second try. In the two of them that
   searched, the first sound came after 5.7 and 6.3 s. The cause was not
   looked for; it is outside the trial.
+- After the tool updated itself to 2.1.302, measured with the bench
+  script on 2026-10-18, on the server's machine, same model and effort:
+  eleven questions, all answered, nothing in the tool's options or events
+  found changed. Five plain ones: first text after 1.67 to 2.34 s, median
+  1.98 s, the whole reply in 2.7 to 3.9 s. Six that could search: first
+  text after 1.45 to 4.73 s, median 1.77 s; the five that searched or
+  read a page each opened with "Let me check." and were whole in 7.7 to
+  17.7 s. The 4.73 s, on the news, is the latest first text the bench has
+  seen; once in one run, it is not taken as a change. The news question
+  was not answered: no site with the day's stories could be read. No list
+  of sources removed.
 
 ## Resolved
 

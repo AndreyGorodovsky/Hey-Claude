@@ -47,7 +47,7 @@ Work proceeds in numbered stages listed in [STATUS.md](STATUS.md).
 | esp-tflite-micro, esp-nn, esp-micro-speech-features | 1.3.3~1, 1.1.2, 1.2.3 | Pinned exactly: the tuned wake-word cutoff depends on their arithmetic |
 | Python | 3.11+ | |
 | Claude model | `claude-opus-5` | |
-| Claude Code tool | 2.1.296, tested, not pinned | For `LLM_BACKEND=claude_code`, the default. The tool updates itself: after an update run `python -m server.tools.claude_cli_bench` (KNOWN-ISSUES R21) |
+| Claude Code tool | 2.1.302, tested, not pinned | For `LLM_BACKEND=claude_code`, the default. The tool updates itself: after an update run `python -m server.tools.claude_cli_bench` (KNOWN-ISSUES R21) |
 
 Confirm `IDF_PATH` points at a v5.5.x checkout before building. Run ESP-IDF
 from PowerShell, never from Git Bash (`MSYSTEM` blocks activation). The board's
