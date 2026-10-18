@@ -10,10 +10,11 @@
  *
  * Most messages are put in the queue directly by the part that has
  * something to report: the link, the player and the upload each call a
- * function here, from their own tasks. Wake-word events are the exception.
- * They are announced on the default event loop, as they were before this
- * component existed and as the `wake` console command also expects, so a
- * handler registered here copies them into the queue.
+ * function here, from their own tasks. Wake-word events and button presses
+ * are the exception. They are announced on the default event loop, as
+ * wake-word events were before this component existed and as the `wake`
+ * console command also expects, so handlers registered here copy them into
+ * the queue.
  *
  * Time limits use the queue too. The task waits for the next message only
  * until the current deadline, if there is one, and when a wait runs out it
@@ -46,6 +47,9 @@
  *                             `reply_end`: to DRAINING.
  *   DRAINING     SPEAKING     The server has sent everything; the rest is
  *                             playing out. Last sample played: to IDLE.
+ *   CANCELLING   IDLE         The person pressed the button; capture and
+ *                             playback have stopped and `cancel` is on its
+ *                             way. The turn's end from the server: to IDLE.
  *   ERROR_HOLD   ERROR        A failure, shown for a few seconds. Then
  *                             wherever the device belongs.
  *   FAULT        ERROR        The device cannot hear or cannot speak.
@@ -56,7 +60,20 @@
  * this device, the state machine stops what it was doing and calls
  * on_refused, which restarts the chip into setup mode, main.c.)
  *
- * A turn cannot be interrupted: the wake word is acted on only in IDLE.
+ * The wake word is acted on only in IDLE. The button is what interrupts a
+ * turn. Pressed while the device listens, thinks or speaks, it stops
+ * everything at once and shows IDLE; the server is told with `cancel`, and
+ * until it has answered with the turn's end the phase is CANCELLING, which
+ * looks like IDLE but does not take the wake word, since the server would
+ * ignore a new request while the old turn runs. In CHIME no request has
+ * been sent and in DRAINING the server has already ended the turn, so there
+ * the press only stops the sound. In any other phase it does nothing.
+ *
+ * One rule holds once the button has been pressed: nothing about that turn
+ * is shown as a failure, since the person has already dismissed it. If the
+ * server never answers, or `cancel` cannot be sent, the device closes the
+ * connection quietly; the screen then shows CONNECTING, which is a fact
+ * about the connection and not about the turn.
  *
  * The playback volume (volume.h) passes through here too. A new level from
  * the server or the console arrives as a message like everything else, so
@@ -74,6 +91,7 @@
 #include <stdatomic.h>
 #include "app_state.h"
 #include "audio_ring.h"
+#include "controls.h"
 #include "esp_check.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -136,6 +154,7 @@ typedef enum {
     PH_BUFFERING,
     PH_PLAYING,
     PH_DRAINING,
+    PH_CANCELLING,
     PH_ERROR_HOLD,
     PH_FAULT,
 } phase_t;
@@ -209,8 +228,9 @@ typedef enum {
                            is now is asked of wakeword_listening() */
     EV_LINK,            /* what: a server_link_report_t; value: as server_link.h says */
     EV_PLAYER,          /* what: a player_report_t; value: as player.h says */
-    EV_UPLOAD_FAILED,   /* value: an upload_failure_t */
+    EV_UPLOAD,          /* value: an upload_report_t */
     EV_VOLUME,          /* from the console; value: a level already on the scale */
+    EV_BUTTON,          /* the button was pressed */
 } ev_kind_t;
 
 typedef struct {
@@ -268,6 +288,10 @@ static void change_volume(unsigned level)
     }
 }
 
+/* The phases in which the server's messages for a turn are expected.
+ * CANCELLING is left out on purpose: for the device that turn is over, and
+ * whatever of it still arrives is a tail to ignore, not a sign that the two
+ * sides disagree (out_of_step). */
 static bool in_turn(void)
 {
     return s_phase == PH_CHIME || s_phase == PH_CAPTURING || s_phase == PH_AWAITING
@@ -280,6 +304,8 @@ static app_state_t shown_as(phase_t phase)
 {
     switch (phase) {
     case PH_CONNECTING: return APP_STATE_CONNECTING;
+    /* An interrupted turn looks over at once, as the person meant it */
+    case PH_CANCELLING:
     case PH_IDLE:       return APP_STATE_IDLE;
     /* The screen changes with the sound, not after it: both say "heard" */
     case PH_CHIME:
@@ -306,10 +332,19 @@ static const char *phase_name(phase_t phase)
     case PH_BUFFERING:  return "buffering";
     case PH_PLAYING:    return "playing";
     case PH_DRAINING:   return "draining";
+    case PH_CANCELLING: return "cancelling";
     case PH_ERROR_HOLD: return "error_hold";
     case PH_FAULT:      return "fault";
     }
     return "?";
+}
+
+/* Starts the current phase's deadline again, `ms` from now, without
+ * moving to another phase */
+static void restart_deadline(uint32_t ms)
+{
+    s_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(ms);
+    s_deadline_set = true;
 }
 
 /* Moves to a phase and shows it. The only place the device state is set.
@@ -392,6 +427,18 @@ static void rest(void)
     } else {
         enter(PH_CONNECTING, s_attempt_why, NO_DEADLINE);
     }
+}
+
+/* Gives up waiting for the server's answer to `cancel`, without showing a
+ * failure (see the rule at the top of this file). Closing the connection
+ * ends the turn on the server, as the protocol has it. */
+static void give_up_cancel(const char *why)
+{
+    ESP_LOGW(TAG, "%s; closing the connection", why);
+    server_link_drop();
+    /* IDLE until the link reports the connection closed, a moment later;
+     * rest() then finds it down and shows CONNECTING */
+    rest();
 }
 
 /* Abandons the turn, if there is one, and shows why for a few seconds;
@@ -501,9 +548,11 @@ static void on_link_down(server_link_down_t reason)
         /* A turn or a working connection was lost: shown as a failure for
          * a few seconds. What CONNECTING says afterwards starts empty,
          * except after being replaced: the link then waits a full minute
-         * before trying again, and the screen should say why. */
+         * before trying again, and the screen should say why. In
+         * CANCELLING the loss is of the connection, which the screen shows
+         * as it would in IDLE, and not of the turn already dismissed. */
         s_attempt_why = reason == SERVER_LINK_DOWN_REPLACED ? why : WHY_NONE;
-        if (in_turn() || s_phase == PH_IDLE) {
+        if (in_turn() || s_phase == PH_IDLE || s_phase == PH_CANCELLING) {
             fail(why, false);
         }
         /* otherwise a failure or a fault is already on the screen, and
@@ -572,12 +621,22 @@ static void on_link(server_link_report_t what, uint32_t value)
             /* The rest plays out; the player's report ends the turn */
             player_end();
             enter(PH_DRAINING, WHY_NONE, DRAIN_LIMIT_MS);
+        } else if (s_phase == PH_CANCELLING) {
+            /* The server's answer to `cancel`, or the turn's own end
+             * crossing it on the way: either way the turn is over */
+            ESP_LOGI(TAG, "the interrupted turn has ended");
+            rest();
         } else {
             out_of_step("reply_end");
         }
         break;
     case SERVER_LINK_SERVER_ERROR:
-        if (in_turn()) {
+        if (s_phase == PH_CANCELLING) {
+            /* The turn failed as it was being interrupted. It is over, as
+             * the person wanted; the failure is not shown. */
+            ESP_LOGI(TAG, "the interrupted turn ended in a server error");
+            rest();
+        } else if (in_turn()) {
             /* The connection is fine; only this turn is over */
             fail(why_error((server_link_error_t)value), false);
         }
@@ -640,6 +699,80 @@ static void on_player(player_report_t what, uint32_t value)
     }
 }
 
+/* The button: interrupts the turn, in the phases where there is one to
+ * interrupt (see the top of this file) */
+static void on_button(void)
+{
+    switch (s_phase) {
+    case PH_CHIME:
+        /* Nothing has been sent yet, so the server has no turn */
+        ESP_LOGI(TAG, "button: request abandoned before it began");
+        player_abort();
+        rest();
+        break;
+    case PH_CAPTURING:
+    case PH_AWAITING:
+    case PH_BUFFERING:
+    case PH_PLAYING:
+        ESP_LOGI(TAG, "button: turn interrupted");
+        /* Reply audio still arriving is dropped by the sink from here on;
+         * what the player holds is discarded within about 100 ms */
+        atomic_store(&s_reply_wanted, false);
+        player_abort();
+        /* Stops the request's audio, if it is still being sent, and sends
+         * `cancel` after it; the outcome is reported back */
+        upload_cancel();
+        /* The same time again for the cancel to be sent at all: a send
+         * held up by the network gives up within it (server_link.c,
+         * SEND_MS). Started afresh once it has gone (on_upload). */
+        enter(PH_CANCELLING, WHY_NONE, PROTO_DEVICE_CANCEL_LIMIT_MS);
+        break;
+    case PH_DRAINING:
+        /* The server has ended the turn already; only the sound is left */
+        ESP_LOGI(TAG, "button: end of the reply skipped");
+        player_abort();
+        turn_done();
+        break;
+    default:
+        ESP_LOGI(TAG, "button: nothing to interrupt");
+        break;
+    }
+}
+
+static void on_upload(upload_report_t what)
+{
+    switch (what) {
+    case UPLOAD_FAIL_SEND:
+    case UPLOAD_FAIL_MICROPHONE:
+        if (s_phase == PH_CAPTURING) {
+            fail(what == UPLOAD_FAIL_MICROPHONE ? WHY_MICROPHONE : WHY_NOT_SENT, true);
+        }
+        break;
+    case UPLOAD_CANCEL_SENT:
+        /* The server's answer ends CANCELLING. Its time limit counts from
+         * here, as the protocol says, and not from the press: the cancel
+         * may have waited behind a send held up by the network. */
+        if (s_phase == PH_CANCELLING) {
+            restart_deadline(PROTO_DEVICE_CANCEL_LIMIT_MS);
+        }
+        break;
+    case UPLOAD_CANCEL_NOT_NEEDED:
+        /* The press came before the request was announced: no turn on the
+         * server, so no answer will come */
+        if (s_phase == PH_CANCELLING) {
+            rest();
+        }
+        break;
+    case UPLOAD_CANCEL_FAILED:
+        /* A failed send ends the connection, which ends the turn on the
+         * server as `cancel` would have */
+        if (s_phase == PH_CANCELLING) {
+            give_up_cancel("cancel not sent");
+        }
+        break;
+    }
+}
+
 static void handle(const ev_t *ev)
 {
     switch (ev->kind) {
@@ -659,13 +792,14 @@ static void handle(const ev_t *ev)
     case EV_PLAYER:
         on_player((player_report_t)ev->what, ev->value);
         break;
-    case EV_UPLOAD_FAILED:
-        if (s_phase == PH_CAPTURING) {
-            fail(ev->value == UPLOAD_FAIL_MICROPHONE ? WHY_MICROPHONE : WHY_NOT_SENT, true);
-        }
+    case EV_UPLOAD:
+        on_upload((upload_report_t)ev->value);
         break;
     case EV_VOLUME:
         change_volume(ev->value);
+        break;
+    case EV_BUTTON:
+        on_button();
         break;
     }
 }
@@ -688,6 +822,9 @@ static void on_deadline(void)
     case PH_AWAITING:
     case PH_BUFFERING:
         fail(WHY_NO_ANSWER, true);
+        break;
+    case PH_CANCELLING:
+        give_up_cancel("no answer to cancel");
         break;
     case PH_DRAINING:
         /* The player should have reported by now. Whatever became of that
@@ -779,9 +916,9 @@ void state_machine_player_report(player_report_t what, uint32_t value)
 }
 
 /* Runs in the upload task */
-static void on_upload_failed(upload_failure_t why)
+static void on_upload_report(upload_report_t what)
 {
-    enqueue(EV_UPLOAD_FAILED, 0, why);
+    enqueue(EV_UPLOAD, 0, what);
 }
 
 /* Runs in the default event loop's task */
@@ -792,6 +929,12 @@ static void on_wakeword_event(void *arg, esp_event_base_t base, int32_t id, void
     } else if (id == WAKEWORD_LISTENING) {
         enqueue(EV_LISTENING, 0, 0);
     }
+}
+
+/* Runs in the default event loop's task */
+static void on_controls_event(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    enqueue(EV_BUTTON, 0, 0);
 }
 
 /* Runs in the console's task */
@@ -839,9 +982,11 @@ esp_err_t state_machine_start(const state_machine_config_t *cfg)
 
     s_events = xQueueCreate(QUEUE_LENGTH, sizeof(ev_t));
     ESP_RETURN_ON_FALSE(s_events != NULL, ESP_ERR_NO_MEM, TAG, "no memory");
-    ESP_RETURN_ON_ERROR(upload_init(on_upload_failed), TAG, "upload");
+    ESP_RETURN_ON_ERROR(upload_init(on_upload_report), TAG, "upload");
     ESP_RETURN_ON_ERROR(esp_event_handler_register(WAKEWORD_EVENT, ESP_EVENT_ANY_ID,
                                                    on_wakeword_event, NULL), TAG, "wake");
+    ESP_RETURN_ON_ERROR(esp_event_handler_register(CONTROLS_EVENT, CONTROLS_BUTTON_PRESSED,
+                                                   on_controls_event, NULL), TAG, "button");
 
     /* Shows where the device stands from the start: CONNECTING, with the
      * reason for the restart if nobody asked for it, or the fault if it

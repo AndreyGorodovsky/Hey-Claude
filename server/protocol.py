@@ -86,6 +86,10 @@ DEVICE_THINKING_LIMIT_SECONDS = 40
 #: How long a device lets a reply stay silent, once begun, before giving up.
 DEVICE_STALL_LIMIT_SECONDS = 40
 
+#: How long a device waits for the turn's end after sending ``cancel``,
+#: which the server answers at once, before giving up.
+DEVICE_CANCEL_LIMIT_SECONDS = 3
+
 #: The playback volume's scale. The device keeps its level, states it in
 #: ``utterance_start``, and is sent a new one in ``volume``.
 VOLUME_MIN = 1
@@ -141,10 +145,22 @@ class UtteranceStart(_Message):
     volume: Annotated[int | None, BeforeValidator(_whole_number_or_none)] = None
 
 
-DeviceMessage = UtteranceStart
+class Cancel(_Message):
+    """The person pressed the device's button: end the running turn now.
+
+    Answered with ``reply_end`` when a turn is running. Ignored when none
+    is: the turn has already ended, and its ``reply_end`` or ``error`` is
+    on its way to the device, which takes that as the end it waits for.
+    """
+
+    type: Literal["cancel"] = "cancel"
+
+
+DeviceMessage = UtteranceStart | Cancel
 
 _DEVICE_MESSAGES: dict[str, type[_Message]] = {
     "utterance_start": UtteranceStart,
+    "cancel": Cancel,
 }
 
 

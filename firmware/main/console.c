@@ -25,6 +25,7 @@
  *   temp                          the chip's temperature, in temp_cmd.c
  *   mem                           free memory and stack headroom, in mem_cmd.c
  *   volume [level]                the playback volume, in volume_cmd.c
+ *   controls                      the button and the switch, in controls_cmd.c
  */
 #include "console.h"
 
@@ -33,6 +34,7 @@
 #include <string.h>
 #include "app_config.h"
 #include "audio_cmd.h"
+#include "controls_cmd.h"
 #include "link_cmd.h"
 #include "mem_cmd.h"
 #include "temp_cmd.h"
@@ -209,6 +211,7 @@ esp_err_t console_start(void)
     ESP_RETURN_ON_ERROR(temp_cmd_register(), TAG, "temp");
     ESP_RETURN_ON_ERROR(mem_cmd_register(), TAG, "mem");
     ESP_RETURN_ON_ERROR(volume_cmd_register(), TAG, "volume");
+    ESP_RETURN_ON_ERROR(controls_cmd_register(), TAG, "controls");
 
     /* Starts the console task and returns; the task runs from now on */
     return esp_console_start_repl(repl);

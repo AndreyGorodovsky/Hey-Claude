@@ -124,6 +124,19 @@ pins. It is polarised: the side marked with a stripe is negative and goes to
 | `CS` | GPIO 10 | Chip select; the `CS-LOW` solder jumper stays open |
 | `BL` | GPIO 14 | Backlight, dimmed by PWM from the LEDC peripheral |
 
+**Button and switch**, added in stage 8, on a breadboard of their own whose
+ground rail is joined to the main one. Each closes its pin to ground; the
+chip's internal pull-up holds the pin high while open, so no resistor is
+fitted.
+
+| Part | Leg | Connection | Purpose |
+| --- | --- | --- | --- |
+| Momentary push button, two legs | One leg | GPIO 1 | Pressed, interrupts a turn |
+| | Other leg | Ground rail | |
+| Three-leg slide switch | Middle leg | Ground rail | The common |
+| | One outer leg | GPIO 2 | Reserved for continuous conversation, not yet built |
+| | Other outer leg | Not connected | |
+
 GPIO 26–37 are reserved by the flash and PSRAM and must not be used. GPIO 0, 3,
 45 and 46 are strapping pins; GPIO 19 and 20 carry native USB. The board's own
 BOOT button, on GPIO 0, is read by the firmware once it is running, to open
@@ -254,6 +267,17 @@ answer" when the screen shows `connecting` or `error`. `temp` reads the
 chip's own sensor, which runs hotter than the chip's surface; about 55 °C
 with the device idle is normal. Every test on the device notes it
 (KNOWN-ISSUES R20).
+
+The push button interrupts a turn. Pressed while the device listens,
+thinks or speaks, it stops at once and returns to `idle`; the server keeps
+the request and the reply as far as it was sent, so a follow-up question
+can refer to it. Speech does not interrupt. The `controls` command shows
+how the button and the switch stand, for checking their wiring:
+
+```
+controls                  the button and the switch, and the presses
+                          counted since boot
+```
 
 A false-accept measurement is `wake reset`, then hours of background sound
 with nobody saying the wake phrase, then `wake`: every detection counted is

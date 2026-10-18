@@ -1,6 +1,7 @@
 """Conversations, kept per device and per chat date in SQLite.
 
-A conversation is every completed exchange a device had on one chat date.
+A conversation is every exchange a device had on one chat date, completed
+or interrupted by the person (``INTERRUPTED_MARK``).
 The chat date is the calendar date shifted by the rollover hour, so that a
 conversation held past midnight is not split in two.
 
@@ -35,9 +36,15 @@ CREATE INDEX IF NOT EXISTS exchanges_by_conversation
 """
 
 
+#: Ends the reply of an exchange the person interrupted with the device's
+#: button. What comes before it is the reply as far as it was sent, which
+#: the person heard at most; it is empty when nothing had been sent.
+INTERRUPTED_MARK = "[interrupted]"
+
+
 @dataclass(frozen=True)
 class Exchange:
-    """One completed request and its reply."""
+    """One request and its reply: a completed one, or one interrupted."""
 
     user_text: str
     assistant_text: str

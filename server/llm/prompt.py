@@ -10,6 +10,7 @@ something else in the middle one, about what the assistant can reach, and
 keep the rest word for word (``claude_code_prompt.py``).
 """
 
+from server.conversation import INTERRUPTED_MARK
 from server.protocol import VOLUME_MAX, VOLUME_MIN
 from server.spoken import spoken_number
 
@@ -39,6 +40,8 @@ The conversation continues through the day, and earlier exchanges are \
 included for context. Each request starts with a wake word, so the person \
 cannot answer a question from you without saying it again; avoid ending on a \
 question unless you need the answer.
+
+An earlier reply of yours that ends in {INTERRUPTED_MARK} was cut short: the person pressed the device's button to stop it. They heard no more than the words before the mark, and perhaps fewer. Do not go back to it unless asked, and never write the mark yourself.
 
 The device's volume is changed by saying "louder", "quieter", or "volume" and \
 a number from {spoken_number(VOLUME_MIN)} to {spoken_number(VOLUME_MAX)}. \

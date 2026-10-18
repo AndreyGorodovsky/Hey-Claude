@@ -541,6 +541,11 @@ The record:
 | 2026-10-15 | Same bench, the same session, 20 to 26 min after flashing: idle, then four spoken turns at volume 10 (+6 dB), one reply of 10 s | 54.5, 54.5, 54.5, 55.5 °C |
 | 2026-10-15 | Same bench and firmware, no reset, 48 to 57 min after flashing: once a minute idle, then through eleven spoken turns in two minutes, at levels from 3 to 10 | 55.5 °C at eight readings, 56.5 °C at one, during the turns |
 | 2026-10-15 | Same bench, the stage 8 part B firmware (setup mode), a phone joining the device's hotspot. Once a minute for 48 min through the setup-mode tests: about 25 min connected and idle, then six entries into setup mode, each running its hotspot for 1 to 5 min, with eleven restarts between | 53.5 °C 30 s after flashing; 55.5 to 56.5 °C while idle; 54.5 to 57.5 °C in setup mode, 57.5 °C with the hotspot up for 2 min |
+| 2026-10-15 | Same bench, the stage 8 part B firmware, server running. Measured 30 s and 45 s after a restart (opening the console resets the board), while `display preview` showed the screens of all eight states, 5 s each | 49.5 °C at both readings |
+| 2026-10-18 | Same bench, the stage 8 part C firmware with the button and the switch, idle, through three checks of their wiring with `controls`, each about a minute | 51.5 °C 66 s after a restart; 53.5 °C at the end of the second and third |
+| 2026-10-18 | Same bench, the stage 8 part C firmware with the interrupt built, server running. Once a minute for 7 min, connected and idle, no turns | 53.5 °C, rising to 55.5 °C |
+| 2026-10-18 | Same bench, the part C firmware as corrected after review, on for 39 to 42 min. Before, halfway through and after six spoken turns in two and a half minutes, two of them interrupted with the button and three with a search, the longest reply 15 s | 56.5 °C at all three readings |
+| 2026-10-18 | Same bench and firmware, no reset. Once a minute for 7 min through the interrupt test: nine spoken turns in three minutes, four interrupted by the button, then idle | 55.5 to 56.5 °C, 56.5 °C during the turns |
 
 The readings during replies were taken at playback levels of 40 % and
 60 %, but for the last, of 2026-10-07, at the present 100 %.
@@ -686,6 +691,11 @@ at low effort, Claude Code 2.1.296, a home internet connection.
 
 ## Resolved
 
+- **A comment in `protocol.h` gave the old figures for a stalled reply.**
+  Found in stage 8 part B and corrected in part C, when the file was next
+  changed: the comment above `PROTO_DEVICE_STALL_LIMIT_MS` now gives the
+  server's 39 s and Claude's 24 s, as `server/protocol.py` and
+  docs/PROTOCOL.md do.
 - **A request ending in a number waited about 5 s longer.** Found and
   corrected in stage 8. Speech-to-text was asked for `smart_format`, which
   writes numbers as digits and, after a number, holds back the end of
@@ -750,12 +760,19 @@ at low effort, Claude Code 2.1.296, a home internet connection.
   command. Unplugging the board for a moment clears it. The firmware could
   send it "off" at every start, which needs the pin confirmed; that is not
   part of stage 8's approved steps and is left to be decided.
-- **A comment in `protocol.h` gives the old figures for a stalled reply.**
-  Above `PROTO_DEVICE_STALL_LIMIT_MS` it still says the server's services
-  allow 35 s, with 20 s of silence from Claude; since stage 7 they are 39 s
-  and 24 s, as `server/protocol.py` and docs/PROTOCOL.md say. The values
-  are right and the test holds them; only the comment is stale. Found in
-  stage 8 and left for a change of its own.
+- **Speech synthesis failed once, after an interrupted turn, for a reason
+  not found.** On 2026-10-18, in the stage 8 part C test, the turn after
+  an interrupted one failed part-way through its reply with
+  `RemoteProtocolError` from Deepgram. It could not be reproduced: 41
+  requests made afterwards from scripts, after requests cut off while
+  waiting for the answer and while their audio streamed, and after idle
+  gaps of up to 90 s, all succeeded. Whether it came from the interrupt or
+  from Deepgram is unknown. The likeliest cause, a kept-open connection
+  closed at the other end, is now covered: a sentence whose request fails
+  before any audio has arrived is tried once more, with a warning in the
+  log. A failure part-way through a sentence cannot be retried without
+  repeating words and still ends the turn; the log now says which of the
+  two happened.
 - **Wake word required for every request.** The device does not remain open for
   follow-up questions. This is intended behaviour, not a defect.
 - **Conversation resets at 04:00 local time.** A conversation that spans the
@@ -764,11 +781,13 @@ at low effort, Claude Code 2.1.296, a home internet connection.
   itself.** They go when the first exchange of a new day is stored, so a
   server that is not spoken to keeps the last day's conversation until it
   is. Deleted rows are not overwritten in the database file.
-- **A request cannot be interrupted.** A wake word during a reply does
-  nothing; the reply plays to its end.
-- **Only completed turns are remembered.** A request whose reply failed, or
-  that the model declined, is not part of the conversation, so a follow-up
-  cannot refer to it.
+- **Only the button interrupts a request.** A wake word or speech during a
+  reply does nothing; without the button the reply plays to its end.
+- **Only completed and interrupted turns are remembered.** A request whose
+  reply failed, or that the model declined, is not part of the
+  conversation, so a follow-up cannot refer to it. An interrupted one is
+  kept with its reply as far as it was sent, which may be more than was
+  heard: the device holds up to two seconds of audio.
 - **The assistant does not know the date or time**, and says so when
   asked. The system prompt is kept free of anything that varies, for
   prompt caching. With the trial of R21 it knows the date, which the

@@ -17,7 +17,9 @@ Two options imitate the device more closely. ``--preroll-ms`` sends the
 start of each recording in one burst, as the device does with the audio it
 already holds when the request begins. ``--drop-mid-turn`` closes the
 connection once the server has stopped the capture, as a device does when
-it loses power or gives up.
+it loses power or gives up. ``--cancel-after`` sends ``cancel`` that many
+seconds into each turn, as the device does when its button is pressed, and
+reports how soon the turn ended and how much audio still arrived.
 
 The device token is read from DEVICE_TOKENS in the server's configuration,
 or from the HEY_CLAUDE_DEVICE_TOKEN environment variable. It is never taken
@@ -33,6 +35,7 @@ import os
 import sys
 import time
 import wave
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -94,6 +97,9 @@ class Reply:
     dropped: bool = False
     #: The level the server sent in a ``volume`` message, if it sent one.
     volume: int | None = None
+    #: When ``cancel`` was sent, and the reply audio that arrived after it.
+    cancelled_at: float | None = None
+    audio_after_cancel: int = 0
 
 
 async def _send_request(
@@ -128,10 +134,13 @@ async def request(
     volume: int,
     preroll_ms: int = 0,
     drop: bool = False,
+    cancel_after: float | None = None,
 ) -> Reply:
     """Make one request and collect its reply.
 
     ``volume`` is stated in ``utterance_start``, as a device states its own.
+    With ``cancel_after``, the turn is cancelled that many seconds after it
+    began, unless it has ended by then.
     """
     result = Reply(
         speech_seconds=len(pcm) / SAMPLE_WIDTH_BYTES / CAPTURE_SAMPLE_RATE
@@ -142,12 +151,24 @@ async def request(
     sender = asyncio.create_task(
         _send_request(ws, pcm, stop, preroll_ms // CAPTURE_FRAME_MS)
     )
+
+    async def cancel() -> None:
+        await asyncio.sleep(cancel_after)
+        # A device stops capturing when its button is pressed. A frame
+        # already being sent may follow the cancel; the server drops it.
+        stop.set()
+        result.cancelled_at = time.monotonic() - started
+        await ws.send(json.dumps({"type": "cancel"}))
+
+    canceller = asyncio.create_task(cancel()) if cancel_after is not None else None
     try:
         while True:
             async with asyncio.timeout(_RECEIVE_TIMEOUT):
                 message = await ws.recv()
             at = time.monotonic() - started
             if isinstance(message, bytes):
+                if result.cancelled_at is not None:
+                    result.audio_after_cancel += len(message)
                 if result.first_audio_at is None:
                     result.first_audio_at = at
                 result.audio += message
@@ -180,6 +201,10 @@ async def request(
                 return result
     finally:
         stop.set()
+        if canceller is not None:
+            canceller.cancel()
+            with suppress(asyncio.CancelledError):
+                await canceller
         await sender
 
 
@@ -200,6 +225,14 @@ def report(name: str, result: Reply) -> None:
     if result.dropped:
         print("  connection dropped here, on purpose")
         return
+    if result.cancelled_at is not None:
+        after = result.audio_after_cancel / SAMPLE_WIDTH_BYTES / (result.sample_rate or 1)
+        print(f"  cancelled at            {result.cancelled_at:6.2f} s into the turn")
+        print(
+            f"  turn ended              "
+            f"{result.done_at - result.cancelled_at:6.2f} s after the cancel,"
+            f" {after:.2f} s of audio arriving after it"
+        )
     if result.volume is not None:
         print(f"  volume set to           {result.volume}")
     if result.first_audio_at is None:
@@ -300,6 +333,7 @@ async def main_async(args: argparse.Namespace) -> int:
                     volume=volume,
                     preroll_ms=args.preroll_ms,
                     drop=args.drop_mid_turn,
+                    cancel_after=args.cancel_after,
                 )
                 report(path.name, result)
                 if result.volume is not None:
@@ -346,6 +380,13 @@ def main() -> None:
         "--drop-mid-turn",
         action="store_true",
         help="close the connection when the server stops the capture",
+    )
+    parser.add_argument(
+        "--cancel-after",
+        type=float,
+        metavar="SECONDS",
+        help="cancel each turn this many seconds after it begins, as the"
+        " device's button does",
     )
     sys.exit(asyncio.run(main_async(parser.parse_args())))
 

@@ -6,4 +6,5 @@ idf_component_register(SRCS "state_machine.c" "upload.c" "volume.c"
                        INCLUDE_DIRS "include"
                        REQUIRES server_link player
                        PRIV_REQUIRES app_state wakeword audio_ring protocol nvs_flash
-                                     esp_event)
+                                     esp_event
+                                     controls)  # the button that interrupts a turn

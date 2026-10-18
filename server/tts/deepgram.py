@@ -10,6 +10,7 @@ or reused, so the wait is the synthesiser's own.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 
 import httpx
@@ -17,6 +18,8 @@ from pydantic import SecretStr
 
 from server.protocol import SERVICE_CONNECT_SECONDS, TTS_SILENCE_SECONDS
 from server.tts.base import TextToSpeech, TextToSpeechError
+
+log = logging.getLogger(__name__)
 
 _SPEAK_URL = "https://api.deepgram.com/v1/speak"
 
@@ -32,6 +35,11 @@ _TIMEOUT = httpx.Timeout(TTS_SILENCE_SECONDS, connect=SERVICE_CONNECT_SECONDS / 
 #: library, which retries only failures to connect: nothing has been sent
 #: by then, so a sentence cannot be spoken twice.
 _CONNECT_RETRIES = 1
+
+#: Failures of a request sent on a connection that was open, before any of
+#: the answer arrived: the other end closed it, or it broke, in the moment
+#: of reuse. Tried once more.
+_BROKEN_BEFORE_ANSWER = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
 
 
 class DeepgramTextToSpeech(TextToSpeech):
@@ -68,20 +76,36 @@ class DeepgramTextToSpeech(TextToSpeech):
         )
         try:
             # One limit over everything up to the start of the response:
-            # both tries at connecting, each with its two steps, and the
-            # synthesiser's own time to begin answering. The library's
-            # limits apply to each step separately and would add up to more
-            # than the protocol allows for reaching a service.
+            # both tries at connecting, each with its two steps, the one
+            # repeat below, and the synthesiser's own time to begin
+            # answering. The library's limits apply to each step separately
+            # and would add up to more than the protocol allows for reaching
+            # a service.
             async with asyncio.timeout(SERVICE_CONNECT_SECONDS):
-                response = await self._client.send(request, stream=True)
+                try:
+                    response = await self._client.send(request, stream=True)
+                except _BROKEN_BEFORE_ANSWER as exc:
+                    # A kept-open connection that turned out to be closed at
+                    # the other end, the likeliest of the causes left open
+                    # by a failure seen once on the device (KNOWN-ISSUES,
+                    # Caveats). No audio has come, so repeating the request
+                    # cannot speak anything twice; the library retries only
+                    # failures to connect, not this. Logged, so that how
+                    # often it happens stays visible.
+                    log.warning(
+                        "Deepgram request failed before answering (%s); trying once more",
+                        type(exc).__name__,
+                    )
+                    response = await self._client.send(request, stream=True)
         except TimeoutError:
             raise TextToSpeechError("Deepgram did not answer in time") from None
         except httpx.HTTPError as exc:
             # Only the kind of failure is kept; the text of an HTTP error
             # can repeat the request, which holds what is being said.
             raise TextToSpeechError(
-                f"Deepgram request failed ({type(exc).__name__})"
+                f"Deepgram request failed before answering ({type(exc).__name__})"
             ) from None
+        received = 0
         try:
             if response.status_code != httpx.codes.OK:
                 raise TextToSpeechError(
@@ -89,10 +113,13 @@ class DeepgramTextToSpeech(TextToSpeech):
                 )
             async for piece in response.aiter_bytes():
                 if piece:
+                    received += len(piece)
                     yield piece
         except httpx.HTTPError as exc:
+            # Not repeated: part of the sentence has been passed on, and
+            # would be heard twice
             raise TextToSpeechError(
-                f"Deepgram request failed ({type(exc).__name__})"
+                f"Deepgram stream broke after {received} bytes ({type(exc).__name__})"
             ) from None
         finally:
             await response.aclose()

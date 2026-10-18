@@ -70,8 +70,13 @@
 /* Longest wait from `stop_capture` to the first sound of the reply. The
  * server sends audio or an error within 30 s. */
 #define PROTO_DEVICE_THINKING_LIMIT_MS  40000
-/* Longest silence inside a reply. The server's services allow at most 35 s
- * between them: 20 s of silence from Claude, then 5 s to reach the
+/* Longest wait for the turn's end, `reply_end` or `error`, after sending
+ * `cancel`, and also the longest the device lets the sending itself take.
+ * The server answers at once; the wait covers a stalled network, and a
+ * server too old to know `cancel`, which ignores it. */
+#define PROTO_DEVICE_CANCEL_LIMIT_MS    3000
+/* Longest silence inside a reply. The server's services allow at most 39 s
+ * between them: 24 s of silence from Claude, then 5 s to reach the
  * synthesiser and 10 s of silence from it. */
 #define PROTO_DEVICE_STALL_LIMIT_MS     40000
 

@@ -37,6 +37,7 @@ made during the feasibility review and are binding unless explicitly revisited.
 | `player` | Reply playback: a buffer for 4 s of reply audio and the task that plays it, at the playback level, through a limiter |
 | `protocol` | The protocol's numbers as the firmware uses them, in one header. A test on the server side holds it to the server's own |
 | `display` | The NV3007 panel, its backlight, and what is drawn for each state, from a single task that is the only user of LVGL |
+| `controls` | The push button and the slide switch on the breadboard: reads both, settles their contact bounce, and announces a press of the button; decides nothing |
 | `board` | The verified pin map and panel geometry, the single source of both |
 
 Settings are loaded once at boot into a read-only structure. Edits change only
@@ -52,7 +53,10 @@ subscribe to the standard `IP_EVENT_STA_GOT_IP` and
 `app_state` announces changes the same way, as `APP_STATE_CHANGED` on the
 default event loop, and the display follows them without being called.
 `wakeword` announces each detection as `WAKEWORD_DETECTED`, carrying the
-position in the audio stream where the phrase ended.
+position in the audio stream where the phrase ended. `controls` announces
+each press of the button as `CONTROLS_BUTTON_PRESSED`, the moment the
+button goes down; the switch it only reports when asked, since nothing
+acts on it yet.
 `app_state` has exactly one writer on each kind of boot. In normal
 operation it is the state machine, `state_machine`: the boot sequence sets
 the first states and then hands over. On a boot that runs setup mode the
@@ -69,7 +73,8 @@ given to them at start, and `server_link` hands reply audio on the same way. The
 do not use the event loop for this: each report has one receiver, and a
 call cannot be lost on the way or arrive out of order. Neither component
 knows of `state_machine`; the boot sequence joins the three. Wake-word detection
-keeps its events, which the `wake` console command also relies on.
+keeps its events, which the `wake` console command also relies on, and the
+button's presses arrive the same way.
 
 Reply audio passes through `state_machine` on its way to `player`, and is let
 through only while a turn is under way. Audio arriving at any other time,
@@ -187,6 +192,19 @@ sentence in the server's `error` message goes to the log.
 A device whose identifier and token the server refuses restarts into setup
 mode: retrying cannot fix that.
 
+**Interrupting with the button.** A press while the device listens,
+thinks or speaks ends the turn. The device stops capture and playback at
+once, shows `IDLE`, and sends the server `cancel` (docs/PROTOCOL.md,
+Interrupting a turn). Until the server answers with the turn's end, the
+state machine is in a phase of its own that looks like `IDLE` but does not
+take the wake word, since the server would ignore a new request while the
+old turn runs; the answer normally comes within a quarter of a second.
+Nothing about an interrupted turn is shown as a failure: if the server
+does not answer, the device closes the connection quietly. A press during
+the chime only stops it, since no request has been sent; one in the last
+seconds of a reply, after `reply_end`, only stops the playback; one at any
+other time does nothing.
+
 ### Setup mode
 
 Setup mode lets the settings be entered from a phone, without a USB cable.
@@ -292,7 +310,7 @@ longest wait is the firmware's own to bound.
 | Task | Priority | Core | Notes | Watched |
 | --- | --- | --- | --- | --- |
 | WiFi driver | 23 | 0 | ESP-IDF's; must keep up with the radio | No |
-| `esp_timer` | 22 | 0 | ESP-IDF's; runs software timer callbacks, which must be short: the WiFi retry and give-up timers and the BOOT button's watch, which may restart the chip | No |
+| `esp_timer` | 22 | 0 | ESP-IDF's; runs software timer callbacks, which must be short: the WiFi retry and give-up timers, the BOOT button's watch, which may restart the chip, and the button and switch's watch, every 10 ms | No |
 | Default event loop | 20 | 0 | ESP-IDF's; delivers WiFi, state and wake-word events, and runs `net`'s handlers, which may write to NVS or restart the chip. Its stack is raised to 3584 bytes from 2304, which had 308 never used after an ordinary start (measured 2026-10-15) | No |
 | Capture | 12 | 1 | Reads the microphone into the ring; must never fall 75 ms behind | Yes |
 | Audio test tasks | 10 | 1 | Console `audio` commands, short-lived | No |
@@ -558,12 +576,14 @@ adapters, VPNs) that a device cannot reach.
 | Server to device | *binary* | Reply audio, in chunks of at most 40 ms |
 | Server to device | `reply_end` | All reply audio has been sent; return to `IDLE` once it has played |
 | Server to device | `error` | The turn was abandoned, with a code and message. The connection stays open |
+| Device to server | `cancel` | The person pressed the button; the server ends the turn with `reply_end` |
 
-A turn, once started, runs to its end. The server accepts `utterance_start`
-only when no turn is running and ignores one that arrives during a turn;
-the device acts on the wake word only in `IDLE`. A request cannot be
-interrupted by a second one. When nothing is said after the wake word, the
-server sends `stop_capture` and then `reply_end`, with no reply.
+The server accepts `utterance_start` only when no turn is running and
+ignores one that arrives during a turn; the device acts on the wake word
+only in `IDLE`. A request cannot be interrupted by a second one, or by
+speech: only the button ends a turn early, and every turn still ends with
+exactly one `reply_end` or `error`. When nothing is said after the wake
+word, the server sends `stop_capture` and then `reply_end`, with no reply.
 
 The server pings every 20 s for keepalive. It ends a capture after 13 s. A
 device-side hard cap of 15 s guards against a server that never sends
@@ -596,10 +616,16 @@ server/
 
 A turn is one task in `pipeline/`. It decides what happens and in what
 order, and reports each step (capture done, reply audio, reply done,
-failed) to the connection, which alone knows how a step is put on the wire.
-A turn is added to the conversation only if it completed, so the stored
-history always alternates between the person and the assistant. A turn
-whose device disconnects is cancelled.
+failed, interrupted) to the connection, which alone knows how a step is put
+on the wire. Everything of one turn on the connection's side is held in
+one object, so that a new turn starts clean. A turn that completed is
+added to the conversation whole. One the person interrupted is told to
+stop by the connection and handles that itself: it tells the device at
+once, before its work has finished stopping, and is added with its reply
+as far as the reply's audio had begun to be sent, followed by
+`[interrupted]`, which the system prompt explains. A turn whose device
+disconnects is cancelled and not added at all. Either way the stored
+history alternates between the person and the assistant.
 
 **Volume requests.** A request that is only about the volume ("louder",
 "too loud", "turn it down a notch", "volume five", "maximum volume") is
@@ -886,13 +912,15 @@ deferred.
 | mDNS server discovery | Fixed server address | The server machine's LAN address changes; a fixed address would need re-entering each time |
 | Server paces the reply, device holds 4 s | Device holds the whole reply | A minute of audio is 3 MB; a fixed small buffer works for a reply of any length |
 | Reconnecting done by `server_link`, not by the WebSocket client | The client's own automatic reconnect | The server may have moved, so every attempt starts again from the lookup; and the rest of the firmware must hear of every loss |
-| The device closes the connection to abandon a turn | A "cancel" message | One mechanism covers every case of doubt, and the server already cancels a turn whose connection closes |
+| The device closes the connection to abandon a turn by itself | A message for "I gave up" | One mechanism covers every case of doubt, and the server already cancels a turn whose connection closes. `cancel` is for the person's choice only, and keeps the connection |
+| `cancel` answered with an ordinary `reply_end` | A message of its own for "cancelled" | Every turn still ends with exactly one of `reply_end` and `error`, and the device already knows what both mean |
+| An interrupted turn kept, as far as it was sent | Forgetting it | The person often interrupts to change direction, and Claude then knows what it had been saying |
 | WiFi power saving off | The default, modem sleep | Mains-powered; the radio's sleep delays streamed audio in both directions |
 | OTA-ready partition layout | Single application slot | Costs nothing in 16 MB, and keeps OTA open without a later layout change |
 | Streaming transport | Request and response | Fourfold latency difference; cannot be retrofitted cheaply |
 | Ring buffer shared by position | One queue per listener | Listeners never take audio from each other, and a past position (the wake word's end) can be replayed |
 | Component versions locked (`dependencies.lock` committed, wake-word libraries pinned exactly) | Version ranges | A newer library can break the build or shift the model's scores without any change in the repository |
-| A turn cannot be interrupted | Barge-in | With no echo cancellation the device would interrupt itself, and a reply cut short leaves the history unsure of what was heard |
+| A turn interrupted only with a button | Barge-in, interrupting by speaking | With no echo cancellation the device would interrupt itself |
 | `error` ends a turn and keeps the connection | Reconnecting after every error | A failed service does not make the connection unhealthy; reconnecting would only add delay |
 | Newer connection replaces the older | Refusing a second connection | A device back from a power cut must not be locked out by its own dead connection |
 | Device tokens in the server's environment | A table in the database | Keeps credentials apart from the transcripts |

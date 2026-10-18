@@ -4,13 +4,16 @@
 volume by voice, provisioning through a hotspot web page, and refined
 animations. Part A, volume by voice, and part B, settings entered from a
 phone through a hotspot of the device's own, are built, reviewed,
-corrected and tested on the device. Part C, the animations, is next. The steps are under Stage 8 plan
-below.
+corrected and tested on the device. Replanned on 2026-10-18: the
+animations stay as they are, and part C, interrupting a reply with a
+button, is built, reviewed, corrected and tested on the device.
+Continuous conversation, chosen with a switch,
+is planned as part D and put off. The steps are under Stage 8 plan below.
 
 Stage 7, latency and robustness, closed on 2026-10-15. Its one remaining
 test, WiFi lost and restored, is under Before release.
 
-**Last updated:** 2026-10-15
+**Last updated:** 2026-10-18
 
 ## Where the project stands
 
@@ -293,13 +296,134 @@ is asked in one place; the page takes its length limits and labels from
 callbacks that every caller must give are required. The two agents'
 findings that touched documentation are in ARCHITECTURE.md and README.md.
 
-**Part C, the state animations.**
+**Replanned on 2026-10-18.** The refined animations, first planned as
+part C, are dropped: the placeholder animation of each state stays as it
+is. Two features take their place, each worked by a control added to the
+board: a momentary button that interrupts a reply (part C), and a
+three-leg switch that chooses continuous conversation (part D, put off).
+
+Decided with the replan:
+
+- The button is the only way to interrupt. Speech during a reply does
+  not interrupt it; the device does not listen while it speaks.
+- The interrupt acts the moment the button goes down, once its contact
+  bounce has settled, not on release. Holding it does nothing more, and
+  it has no long press. A new press counts only after a release.
+- The button interrupts while listening, thinking and speaking, and does
+  nothing in any other state. It is not a push-to-talk.
+- An interrupted turn stays in the conversation: the request, and the
+  reply as far as it was sent, marked as interrupted by the user. The
+  server cannot know how much of it was heard.
+- The button is on GPIO 1 and the switch on GPIO 2. Each connects its pin
+  to ground, against the chip's internal pull-up. The switch's middle leg
+  is the common, wired to ground; one outer leg goes to GPIO 2 and the
+  other is left unconnected. GPIO 2 is reserved for the switch from part
+  C on.
+
+**Part C, interrupting a reply with a button.**
 
 | Step | State |
 | --- | --- |
-| C1. Mock-ups of the eight states, chosen before any LVGL work | Not started |
-| C2. Built in the one table in `display_ui.c`, mindful of tearing in fast movement (R13) | Not started |
-| C3. Each state seen on the device with `display preview`; reviewed, documented | Not started |
+| C1. The button and the switch wired, and both added to the pin map in `board.h` and README.md. A `controls` component reads both pins every 10 ms from a timer, settles contact bounce, and posts a press to the state machine as an event, as the wake word does. A `controls` console command shows both positions, for checking the wiring | Done on 2026-10-18: the `controls` component, posting `CONTROLS_EVENT` / `CONTROLS_BUTTON_PRESSED`; a pin's level is believed after three equal readings, 30 ms. Checked on the device: six presses counted as six, a held press counted once, the switch read in both positions |
+| C2. Protocol: a `cancel` message from the device, which the server answers with `reply_end`, so that every turn still ends with exactly one of `reply_end` and `error`. Rules 1 and 6 of PROTOCOL.md rewritten. Protocol version 1 stays, as the rule on unknown types allows | Done on 2026-10-18, in PROTOCOL.md, Interrupting a turn. The server ignores a `cancel` when the turn's end has already been sent, so that no turn ends twice. A device waits 3 s for the end (`PROTO_DEVICE_CANCEL_LIMIT_MS`) |
+| C3. Server: on `cancel`, the running turn's speech-to-text, Claude and text-to-speech are stopped, no more audio is sent, and `reply_end` follows. The turn is kept as decided above. Tests; a `--cancel-after` option in the desktop client, to exercise it without the device | Done on 2026-10-18. The turn notes how far it has got (`TurnProgress`); the connection cancels it and records it (`record_interrupted`), with the reply's sentences whose audio had begun to be sent, then `[interrupted]`. The system prompt says what the mark means. Nine new tests; the server's 257 pass |
+| C4. Device: a press while listening, thinking or speaking stops capture and playback at once, discards held audio, sends `cancel`, and shows `IDLE`. Audio still arriving is dropped until `reply_end`, and the wake word is taken only after it. Without `reply_end` within 3 s, the device closes the connection (rule 6) | Done on 2026-10-18: a phase `CANCELLING`, shown as `IDLE`. `cancel` is sent by the upload task, after the request's audio, and only for a request that was announced. In the chime the press only stops the sound, and in the reply's last seconds, after `reply_end`, it only stops the playback |
+| C5. Tested on the device, with the chip's temperature (R20): a press in each state, early and late in a reply, during a web search, and repeated presses; the time from press to silence measured | Done on 2026-10-18; the figures are below |
+| C6. Reviewed by both agents, corrected, documented, committed | Done on 2026-10-18: reviewed, corrected, and the corrected version tested again on the device; the figures are below |
+
+**Part C on the device, 2026-10-18.** Breadboard, USB-powered, the server
+running, a person speaking nine turns in three minutes:
+
+- Interrupted while speaking, about 2 s into a long reply; while
+  thinking, twice, one of them a question that needed a web search; and
+  while the person was still speaking. Each time the device logged the
+  press, stopped, and showed `IDLE` within the same millisecond, and the
+  server's `reply_end` arrived 60 ms later after a reply, 70 ms after a
+  capture, and 210 ms while Claude was being stopped. The sound stopped
+  "almost immediately", by the person's account; it was not measured.
+- The next question, "what were you just telling me about?", was answered
+  from the interrupted reply, which Claude knew had been cut short.
+- A press at idle did nothing; a normal turn ran to its end.
+- The turn after the interrupted web-search question failed part-way
+  through its reply, with `RemoteProtocolError` from the synthesiser's
+  service. Twenty-three requests made afterwards from a script, after
+  requests cut off at two points and after idle gaps of up to 90 s, all
+  succeeded, so the failure is not shown to come from the interrupt.
+  Corrected all the same: a sentence whose request fails before any audio
+  has arrived, the usual sign of a kept-open connection closed at the
+  other end, is tried once more; and the log now says whether a failure
+  came before the answer or part-way through it, which cannot be tried
+  again without repeating words.
+- Chip temperature 55.5 to 56.5 °C (R20).
+- Claude Code had updated itself to 2.1.302 from the 2.1.296 tested. The
+  turns above ran on it without fault; the bench that R21 asks for after an
+  update is still to be run.
+
+**What the review changed.** Neither agent found a critical or major
+fault. The first found that a cancellation could be swallowed in two
+places, so that a turn interrupted at the wrong moment would carry on and
+play its whole reply; that the server sent its answer to `cancel` only
+after stopping Claude and storing the turn, with no limit, while the
+device waits 3 s; that the device's 3 s ran from the press, where the
+protocol says from sending `cancel`; and that ARCHITECTURE.md still said a
+turn cannot be interrupted. The second traced the first two to one
+cause: the connection decided what an interruption meant, recording the
+turn itself through state shared with the task it had just cancelled.
+Corrected: the turn handles its own interruption. The connection only
+sets its `interrupt` event; the turn stops its work, tells the device at
+once, before Claude has finished stopping, and records itself by the same
+rules as a completed turn, so that a refused reply is never kept. A turn
+counts as over once its end is sent, so a new request is taken while the
+old one is still stopping. Waiting for a task no longer swallows a
+cancellation, which a new test shows the old code did. Everything of one
+turn on the connection's side is one object, so that nothing carries over
+to the next. The sentences sent are known from a number carried with each
+piece of audio, and no longer from markers in the queue. On the device,
+one rule after a press: nothing about that turn is shown as a failure, and
+if the server does not answer, or `cancel` cannot be sent, the connection
+is closed quietly; the 3 s restart when `cancel` has gone. The Deepgram
+retry logs a warning when it acts, has an entry under Caveats in
+KNOWN-ISSUES, and a further script cutting requests off while their audio
+streamed did not reproduce the failure either. Not taken: keeping
+"interrupted" as a column of its own in the database, which would need a
+migration for a mark Claude reads as text anyway, in a history deleted
+each day. The server's 261 tests pass.
+
+**The corrected version on the device, 2026-10-18.** The same bench, a
+person speaking six turns in two and a half minutes:
+
+- Interrupted about 5 s into a long reply, and while thinking, just after
+  the request ended. Each time the device stopped and showed `IDLE` in the
+  millisecond of the press, and the server's `reply_end` arrived 30 ms
+  later after the reply and 70 ms later while Claude was thinking. No
+  failure was shown.
+- The next question, asked 9 s after the first interrupt, was taken and
+  answered in full, with a search: a new request is accepted straight
+  after an interruption. The synthesiser did not fail in any of the six
+  turns, and its retry did not have to act.
+- The reply interrupted while speaking was stored as far as its audio had
+  been sent, then `[interrupted]`; the one interrupted while thinking was
+  stored as `[interrupted]` alone. Asked "what were we talking about right
+  now?", the assistant answered from that turn and said it had been
+  stopped.
+- The three replies that searched said a short sentence, then fell silent
+  for 2.4 to 10.1 s while the search ran, as designed since stage 7 and
+  described there.
+- Chip temperature 56.5 °C at all three readings (R20).
+
+**Part D, continuous conversation, put off.** Planned on 2026-10-18 and
+not yet approved for work. With the switch in its second position, the
+device listens again after each reply instead of returning to `IDLE`, so
+that the conversation continues without the wake word.
+
+| Step | State |
+| --- | --- |
+| D1. The switch's position read when a reply has finished playing, so that a change takes effect at the end of the reply under way. Nothing stored in NVS: the switch is the setting | Put off |
+| D2. In continuous mode, after a reply has played in full, the chime and then capture, as after the wake word. A volume confirmation continues the conversation too | Put off |
+| D3. Back to `IDLE` when nothing is said within the server's 5 s wait for the first word, after an error, on the button, with the switch back in its first position, or on a lost connection. No change to the protocol | Put off |
+| D4. Whether the screen shows the mode: proposed, a small fixed mark on the `IDLE` and listening screens, leaving the animations as they are. To decide | Put off |
+| D5. Tested on the device, with the chip's temperature (R20): a conversation of several turns, leaving it by silence, the switch changed during a reply, the button during a follow-up capture, and whether noise in the room or the end of a reply keeps the loop going | Put off |
+| D6. Reviewed by both agents, corrected, documented, committed | Put off |
 
 ## Stage 7 plan
 
@@ -561,7 +685,7 @@ conditions it was taken under. The record is kept in R20 of
 | 5 | Server v1 | Done | WebSocket server, device authentication, day-scoped conversation store, and the speech-to-text, Claude and text-to-speech chain, with the reply synthesised sentence by sentence. Validated end to end by a desktop client script with no device involved. |
 | 6 | Integration | Done | Device WebSocket client and mDNS lookup, streaming upload during capture, server-driven endpointing, streaming playback, real state machine, and error, timeout and reconnect paths, all as [docs/PROTOCOL.md](docs/PROTOCOL.md) describes. First end-to-end conversation. |
 | 7 | Latency and robustness | Done, with WiFi lost and restored put off to Before release | Measured end-to-end latency against the budget, with the inexpensive ways of shortening it taken; the end-of-speech silence tuned; WiFi and server-drop recovery, watchdogs, brownout guard. The budget itself need not be met (see Stage 7 plan). |
-| 8 | Polish | In progress | Animation refinement, volume control by voice, and provisioning through a hotspot web page. Over-the-air updates are not adopted (see Stage 8 plan). |
+| 8 | Polish | In progress | Volume control by voice, provisioning through a hotspot web page, and interrupting a reply with a button. Continuous conversation is planned and put off; the animations stay as they are, and over-the-air updates are not adopted (see Stage 8 plan). |
 
 Stage 0 is hardware only and produces no code. Peripherals cannot be
 functionally verified there, since that requires firmware; it establishes that
@@ -643,7 +767,9 @@ comes up then.
 | Speech provider | Deepgram for both directions, behind adapter interfaces; built in stage 5 |
 | Day rollover | 04:00 local time, settled. Earlier days are deleted |
 | Endpointing | Server-side, settled. The silence that ends a request stays at 400 ms: 1 s was tried in stage 7 and made the ending erratic (R18) |
-| Interrupting a request | Not possible, settled: a turn runs to its end |
+| Interrupting a request | Changed on 2026-10-18, built in part C of stage 8: a button interrupts a turn while listening, thinking or speaking, and the device returns to `IDLE`. Speech does not interrupt |
+| Continuous conversation | Planned on 2026-10-18 as part D of stage 8 and put off: a switch makes the device listen again after each reply, without the wake word |
+| State animations | Settled on 2026-10-18: the placeholder animations stay; their refinement, first planned for stage 8, is dropped |
 | After a failed turn | Settled: the device shows `ERROR` briefly and returns to `IDLE`; only a lost connection leads to `CONNECTING` |
 | Reply audio pacing | Settled and built: the server sends at most 2 s ahead of playback and the device holds 4 s, whatever the length of the reply (R17) |
 | WiFi power saving | Off, from stage 6: the device is mains-powered, and the radio's sleep delays streamed audio. It raises the current drawn and the chip's temperature somewhat; neither has been measured against power saving on (R20) |

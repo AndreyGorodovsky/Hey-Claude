@@ -24,6 +24,14 @@
  * the one it started with. Stopping is therefore just a number changing: it
  * needs no waiting, and a stop followed at once by a new start cannot leave
  * the task sending the old request.
+ *
+ * `cancel`, sent when the person presses the button, goes from here too,
+ * for two reasons. Sending can block, as above. And it must follow the
+ * request's `utterance_start` and audio on the connection, never overtake
+ * them, which one task sending everything in turn guarantees. The run
+ * number also tells whether the request being cancelled was ever announced:
+ * one stopped before this task woke to announce it has no turn on the
+ * server, and its `cancel` would never be answered.
  */
 #include "upload.h"
 
@@ -56,7 +64,7 @@ static const char *TAG = "upload";
 #define NETWORK_CORE        0
 
 static TaskHandle_t s_task;
-static void (*s_on_failed)(upload_failure_t why);
+static void (*s_on_report)(upload_report_t what);
 /* Even while sending, odd while stopped. atomic_uint can be read and
  * written from several tasks without a lock. */
 static atomic_uint s_run;
@@ -65,6 +73,14 @@ static atomic_uint s_run;
  * has seen the new number. */
 static uint32_t s_start_pos;
 static uint8_t s_start_volume;
+/* A cancel asked for, and the run of the request it is for. The run is
+ * written by upload_cancel() before it sets the flag, and read by the task
+ * only after it has taken the flag. */
+static atomic_bool s_cancel_asked;
+static unsigned s_cancel_run;
+/* Used only by the task: the run whose `utterance_start` was last sent. 0,
+ * which is never a run's number, until the first. */
+static unsigned s_announced_run;
 
 void upload_start(uint32_t pos, uint8_t volume)
 {
@@ -80,13 +96,43 @@ void upload_stop(void)
     atomic_fetch_or(&s_run, 1u);
 }
 
+void upload_cancel(void)
+{
+    /* The latest request's run, whether it is still sending (an even
+     * number) or was stopped already (the odd number after it) */
+    s_cancel_run = atomic_load(&s_run) & ~1u;
+    atomic_store(&s_cancel_asked, true);
+    upload_stop();
+    xTaskNotifyGive(s_task);
+}
+
 /* Reports a failure, unless the request was stopped meanwhile: a stop that
  * arrived while a send was failing makes the failure irrelevant */
-static void failed(unsigned run, upload_failure_t why)
+static void failed(unsigned run, upload_report_t why)
 {
     if (atomic_load(&s_run) == run) {
-        s_on_failed(why);
+        s_on_report(why);
     }
+}
+
+/* Sends the cancel asked for by upload_cancel(), if its request was ever
+ * announced to the server, and reports how that went */
+static void send_cancel(void)
+{
+    if (s_announced_run != s_cancel_run) {
+        ESP_LOGI(TAG, "cancel not sent: the request was never announced");
+        s_on_report(UPLOAD_CANCEL_NOT_NEEDED);
+        return;
+    }
+    if (server_link_send_cancel() != ESP_OK) {
+        /* A failed send ends the connection (server_link.h), which ends the
+         * turn on the server as surely as `cancel` would */
+        ESP_LOGW(TAG, "cancel could not be sent");
+        s_on_report(UPLOAD_CANCEL_FAILED);
+        return;
+    }
+    ESP_LOGI(TAG, "cancel sent");
+    s_on_report(UPLOAD_CANCEL_SENT);
 }
 
 /* Sends one request. Returns when it is stopped or cannot go on. */
@@ -100,6 +146,7 @@ static void send_request(unsigned run, uint32_t start_pos, uint8_t volume)
         failed(run, UPLOAD_FAIL_SEND);
         return;
     }
+    s_announced_run = run;
     audio_ring_reader_t reader;
     audio_ring_reader_init_at(&reader, start_pos);
     if (reader.pos != start_pos) {
@@ -159,19 +206,26 @@ static void send_request(unsigned run, uint32_t start_pos, uint8_t volume)
 static void upload_task(void *arg)
 {
     for (;;) {
-        /* Sleeps until a request starts */
+        /* Sleeps until a request starts or a cancel is asked for */
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         unsigned run = atomic_load(&s_run);
-        if (run & 1u) {
-            continue;   /* stopped again before this task woke */
+        /* An odd number: stopped again before this task woke, or woken
+         * only for a cancel */
+        if (!(run & 1u)) {
+            send_request(run, s_start_pos, s_start_volume);
         }
-        send_request(run, s_start_pos, s_start_volume);
+        /* After the request has stopped sending, so that the cancel follows
+         * the last of its audio. A cancel asked for while a request was
+         * sending is what stopped it. */
+        if (atomic_exchange(&s_cancel_asked, false)) {
+            send_cancel();
+        }
     }
 }
 
-esp_err_t upload_init(void (*on_failed)(upload_failure_t why))
+esp_err_t upload_init(void (*on_report)(upload_report_t what))
 {
-    s_on_failed = on_failed;
+    s_on_report = on_report;
     atomic_store(&s_run, 1u);   /* stopped */
     BaseType_t made = xTaskCreatePinnedToCore(upload_task, "upload", TASK_STACK, NULL,
                                               TASK_PRIO, &s_task, NETWORK_CORE);

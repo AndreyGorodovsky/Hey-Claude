@@ -58,6 +58,9 @@ def test_shared_numbers_agree():
     assert D["PROTO_DEVICE_STALL_LIMIT_MS"] == (
         protocol.DEVICE_STALL_LIMIT_SECONDS * 1000
     )
+    assert D["PROTO_DEVICE_CANCEL_LIMIT_MS"] == (
+        protocol.DEVICE_CANCEL_LIMIT_SECONDS * 1000
+    )
 
 
 def test_a_capture_frame_fits_what_the_server_accepts():

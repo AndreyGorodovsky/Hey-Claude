@@ -332,3 +332,84 @@ def test_a_request_with_a_malformed_volume_is_still_answered(tmp_path):
     # Read as a device that stated no volume: the model answers
     assert types == WHOLE_TURN
     assert llm.calls
+
+
+# --- Cancel ------------------------------------------------------------------
+
+
+def test_a_cancel_while_thinking_ends_the_turn_and_keeps_the_request(tmp_path):
+    llm = FakeLlm(gate=asyncio.Event())
+    deps = make_deps(tmp_path, llm=llm)
+    with client_for(deps) as client:
+        with client.websocket_connect(STREAM_PATH, headers=HEADERS) as ws:
+            ws.receive_json()
+            ask(ws)
+            assert ws.receive_json() == {"type": "stop_capture"}
+            wait_until(lambda: len(llm.calls) == 1)
+            ws.send_json({"type": "cancel"})
+            assert ws.receive_json() == {"type": "reply_end"}
+            # Released after the cancel: the old turn must say nothing more,
+            # and the next turn runs whole
+            client.portal.call(llm.gate.set)
+            ask(ws)
+            assert read_turn(ws)[0] == WHOLE_TURN
+        history = client.portal.call(deps.store.history, "dev", NOON)
+
+    assert [e.assistant_text for e in history] == [
+        "[interrupted]",
+        "Paris. It is on the Seine.",
+    ]
+
+
+def test_a_cancel_mid_reply_ends_it_at_once(tmp_path):
+    # A reply of 6 s, sent no more than 2 s ahead: well under way, not done
+    tts = FakeTts(bytes_per_character=14_400)
+    llm = FakeLlm(pieces=("Aaaaaaaaa. ", "Bbbbbbbbb."))
+    deps = make_deps(tmp_path, llm=llm, tts=tts)
+    with client_for(deps) as client:
+        with client.websocket_connect(STREAM_PATH, headers=HEADERS) as ws:
+            ws.receive_json()
+            ask(ws)
+            assert ws.receive_json() == {"type": "stop_capture"}
+            assert ws.receive_json()["type"] == "reply_start"
+            assert ws.receive().get("bytes") is not None
+            started = time.monotonic()
+            ws.send_json({"type": "cancel"})
+            types, _ = read_turn(ws)
+            ended = time.monotonic() - started
+        history = client.portal.call(deps.store.history, "dev", NOON)
+
+    assert types == ["reply_end"]
+    assert ended < 1.0
+    assert [e.assistant_text for e in history] == ["Aaaaaaaaa. [interrupted]"]
+
+
+def test_a_cancel_while_capturing_ends_the_turn(tmp_path):
+    stt = FakeStt(start_after=None, end_after=None)
+    deps = make_deps(
+        tmp_path, stt=stt, max_capture_seconds=30, no_speech_timeout_seconds=30
+    )
+    with client_for(deps) as client:
+        with client.websocket_connect(STREAM_PATH, headers=HEADERS) as ws:
+            ws.receive_json()
+            ask(ws, frames=3)
+            wait_until(lambda: stt.streams and len(stt.streams[0].received) == 3)
+            ws.send_json({"type": "cancel"})
+            # No stop_capture: the device stopped capturing by itself
+            assert ws.receive_json() == {"type": "reply_end"}
+            wait_until(lambda: stt.streams[0].closed)
+        assert client.portal.call(deps.store.history, "dev", NOON) == []
+
+
+def test_a_cancel_with_no_turn_is_not_answered(tmp_path):
+    with client_for(make_deps(tmp_path)) as client:
+        with client.websocket_connect(STREAM_PATH, headers=HEADERS) as ws:
+            ws.receive_json()
+            ws.send_json({"type": "cancel"})
+            ask(ws)
+            # The first thing to come back is the turn, with nothing before it
+            assert read_turn(ws)[0] == WHOLE_TURN
+            # And a cancel just after a turn ended is not answered either
+            ws.send_json({"type": "cancel"})
+            ask(ws)
+            assert read_turn(ws)[0] == WHOLE_TURN

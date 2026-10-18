@@ -36,6 +36,8 @@
  *                       own with a settings page (setup.h). It ends in a
  *                       restart, and the steps below do not run.
  *  12. BOOT button    - held for 3 s, it restarts into setup mode.
+ *      Controls       - the button that interrupts a turn, and the switch.
+ *                       Before the state machine, which acts on presses.
  *  13. State machine  - from here on the only code that changes the state.
  *                       Before the link, whose events it must not miss.
  *  14. Server link    - waits for WiFi, then finds and joins the server.
@@ -48,6 +50,7 @@
 #include "audio_ring.h"
 #include "brownout_guard.h"
 #include "console.h"
+#include "controls.h"
 #include "state_machine.h"
 #include "display.h"
 #include "server_link.h"
@@ -259,6 +262,12 @@ void app_main(void)
     err = setup_button_start();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "BOOT button not watched: %s", esp_err_to_name(err));
+    }
+    /* Not ESP_ERROR_CHECK either: without the button a turn simply runs to
+     * its end, as it did before there was one */
+    err = controls_start();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "button and switch not watched: %s", esp_err_to_name(err));
     }
 
     /* The last state set from here. The state machine takes over as the

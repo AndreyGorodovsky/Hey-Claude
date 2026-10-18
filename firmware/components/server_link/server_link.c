@@ -673,6 +673,12 @@ esp_err_t server_link_send_utterance_start(uint8_t volume)
     return send_frame(true, message, len);
 }
 
+esp_err_t server_link_send_cancel(void)
+{
+    static const char message[] = "{\"type\":\"cancel\"}";
+    return send_frame(true, message, sizeof(message) - 1);  /* less the NUL */
+}
+
 esp_err_t server_link_send_audio(const int16_t *samples, size_t count)
 {
     /* The chip stores numbers least significant byte first, which is the

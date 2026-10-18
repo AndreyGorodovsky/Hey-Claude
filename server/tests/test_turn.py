@@ -1,6 +1,7 @@
 """The turn pipeline, driven directly with stand-in services."""
 
 import asyncio
+import time
 
 from server.conversation import Exchange
 from server.llm import LanguageModelError, ReplyRefused
@@ -326,3 +327,153 @@ async def test_a_volume_confirmation_that_cannot_be_spoken_fails_the_turn(tmp_pa
     # The level was sent and is kept; only the confirmation is lost.
     assert io.steps == ["capture_done", "set_volume", "fail"]
     assert io.failure is ErrorCode.TTS_FAILED
+
+
+# --- Interrupted by the person ----------------------------------------------
+
+
+class Interrupts(RecordingIO):
+    """Sets the turn's interrupt at a chosen step, and holds the reply at
+    its first audio, as pacing to playback would."""
+
+    def __init__(self, at: str) -> None:
+        super().__init__()
+        self.at = at
+        self.interrupt = asyncio.Event()
+
+    async def capture_done(self) -> None:
+        await super().capture_done()
+        if self.at == "capture_done":
+            self.interrupt.set()
+
+    async def reply_audio(self, pcm: bytes) -> None:
+        await super().reply_audio(pcm)
+        if self.at == "reply_audio":
+            self.interrupt.set()
+            await asyncio.Event().wait()
+
+
+async def interrupted_turn(deps, at: str, volume: int | None = None) -> Interrupts:
+    await deps.store.initialise()
+    audio: asyncio.Queue[bytes] = asyncio.Queue()
+    for _ in range(50):
+        audio.put_nowait(FRAME)
+    io = Interrupts(at)
+    async with asyncio.timeout(5):
+        await run_turn("dev", audio, io, deps, volume, io.interrupt)
+    return io
+
+
+async def test_an_interrupted_reply_is_recorded_as_far_as_it_was_sent(tmp_path):
+    deps = make_deps(tmp_path)
+    io = await interrupted_turn(deps, "reply_audio")
+
+    # The second sentence was synthesised, perhaps, but never sent
+    assert await deps.store.history("dev", NOON) == [
+        Exchange(QUESTION, "Paris. [interrupted]")
+    ]
+    assert io.steps == ["capture_done", "reply_audio", "interrupted"]
+
+
+async def test_a_request_interrupted_before_any_reply_is_recorded_with_the_mark(tmp_path):
+    deps = make_deps(tmp_path, llm=FakeLlm(gate=asyncio.Event()))
+    # Set at the end of the capture, read once the model is waiting
+    io = await interrupted_turn(deps, "capture_done")
+
+    assert io.steps[-1] == "interrupted"
+    history = await deps.store.history("dev", NOON)
+    # Interrupted before the transcript was taken to the model, or after
+    assert history in ([], [Exchange(QUESTION, "[interrupted]")])
+
+
+async def test_a_request_interrupted_while_capturing_is_not_recorded(tmp_path):
+    stt = FakeStt(start_after=None, end_after=None)
+    deps = make_deps(
+        tmp_path, stt=stt, max_capture_seconds=30, no_speech_timeout_seconds=30
+    )
+    await deps.store.initialise()
+    io = RecordingIO()
+    interrupt = asyncio.Event()
+    asyncio.get_running_loop().call_later(0.05, interrupt.set)
+    await run_turn("dev", asyncio.Queue(), io, deps, None, interrupt)
+
+    assert io.steps == ["interrupted"]
+    assert await deps.store.history("dev", NOON) == []
+    assert stt.streams[0].closed
+
+
+async def test_an_interrupt_during_the_captures_cleanup_is_not_lost(tmp_path):
+    # The capture is over and its audio pump is slow to stop: an interrupt
+    # landing then must stop the turn, not be swallowed by the cleanup
+    stt = FakeStt(slow_stop_after_end=0.2)
+    llm = FakeLlm()
+    deps = make_deps(tmp_path, stt=stt, llm=llm)
+    io = await interrupted_turn(deps, "capture_done")
+
+    assert llm.calls == []
+    assert io.steps == ["capture_done", "interrupted"]
+
+
+async def test_the_device_is_told_before_the_work_has_finished_stopping(tmp_path):
+    class SlowToStop(FakeLlm):
+        async def stream_reply(self, history, user_text):
+            try:
+                async for piece in super().stream_reply(history, user_text):
+                    yield piece
+            finally:
+                # As stopping the Claude Code process can take a while
+                await asyncio.shield(asyncio.sleep(1.0))
+
+    llm = SlowToStop(gate=asyncio.Event())
+    deps = make_deps(tmp_path, llm=llm)
+    await deps.store.initialise()
+    audio: asyncio.Queue[bytes] = asyncio.Queue()
+    for _ in range(50):
+        audio.put_nowait(FRAME)
+    told: list[float] = []
+
+    class Timed(RecordingIO):
+        async def interrupted(self) -> None:
+            told.append(time.monotonic())
+
+    interrupt = asyncio.Event()
+    turn = asyncio.create_task(run_turn("dev", audio, Timed(), deps, None, interrupt))
+    while not llm.calls:
+        await asyncio.sleep(0.01)
+    started = time.monotonic()
+    interrupt.set()
+    await turn
+
+    assert told and told[0] - started < 0.2
+    assert time.monotonic() - started >= 0.9
+
+
+async def test_an_interrupted_refusal_is_not_recorded(tmp_path):
+    llm = FakeLlm(pieces=(), error=ReplyRefused("no"))
+    deps = make_deps(tmp_path, llm=llm)
+    await interrupted_turn(deps, "reply_audio")
+
+    assert await deps.store.history("dev", NOON) == []
+
+
+async def test_an_interrupted_volume_request_is_not_recorded(tmp_path):
+    deps = make_deps(tmp_path, stt=FakeStt(transcript="Louder."))
+    io = await interrupted_turn(deps, "reply_audio", volume=5)
+
+    assert io.steps[-1] == "interrupted"
+    assert await deps.store.history("dev", NOON) == []
+
+
+async def test_an_interrupt_after_the_turn_has_ended_changes_nothing(tmp_path):
+    deps = make_deps(tmp_path)
+    await deps.store.initialise()
+    audio: asyncio.Queue[bytes] = asyncio.Queue()
+    for _ in range(50):
+        audio.put_nowait(FRAME)
+    io = RecordingIO()
+    interrupt = asyncio.Event()
+    await run_turn("dev", audio, io, deps, None, interrupt)
+    interrupt.set()
+
+    assert io.steps == ["capture_done", "reply_audio", "reply_done"]
+    assert await deps.store.history("dev", NOON) == [Exchange(QUESTION, ANSWER)]

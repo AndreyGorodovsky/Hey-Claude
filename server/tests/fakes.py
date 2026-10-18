@@ -40,6 +40,16 @@ class FakeSttStream(SpeechToTextStream):
     async def send_audio(self, pcm: bytes) -> None:
         self.received.append(pcm)
         owner, count = self._owner, len(self.received)
+        if (
+            owner.slow_stop_after_end is not None
+            and owner.end_after is not None
+            and count > owner.end_after
+        ):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await asyncio.sleep(owner.slow_stop_after_end)
+                raise
         if owner.fail_after is not None and count >= owner.fail_after:
             error = SpeechToTextError("fake failure")
             self.tracker.fail(error)
@@ -73,6 +83,9 @@ class FakeStt(SpeechToText):
     end_after: int | None = 5
     fail_after: int | None = None
     fail_on_open: bool = False
+    #: Seconds a send of audio after the end of speech takes to stop when
+    #: cancelled, having hung until then; None for no hang.
+    slow_stop_after_end: float | None = None
     streams: list[FakeSttStream] = field(default_factory=list)
 
     async def open(self, sample_rate: int) -> SpeechToTextStream:
@@ -157,6 +170,9 @@ class RecordingIO:
     async def set_volume(self, level: int) -> None:
         self.steps.append("set_volume")
         self.volume = level
+
+    async def interrupted(self) -> None:
+        self.steps.append("interrupted")
 
 
 def make_deps(

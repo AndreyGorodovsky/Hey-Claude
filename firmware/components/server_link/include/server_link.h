@@ -121,6 +121,10 @@ esp_err_t server_link_start(const server_link_config_t *cfg);
  * Blocks like server_link_send_audio(). */
 esp_err_t server_link_send_utterance_start(uint8_t volume);
 
+/* Tells the server the person interrupted the turn, with the button. Blocks
+ * like server_link_send_audio(). */
+esp_err_t server_link_send_cancel(void);
+
 /* Sends `count` samples of request audio as one binary frame. Blocks while
  * the network takes them: normally not at all, but for several seconds when
  * the network stalls (server_link.c, SEND_MS). Returns ESP_ERR_INVALID_STATE when
@@ -128,8 +132,9 @@ esp_err_t server_link_send_utterance_start(uint8_t volume);
 esp_err_t server_link_send_audio(const int16_t *samples, size_t count);
 
 /* Closes the connection on purpose; it is then opened again like any lost
- * one. This is how the device abandons a turn: the protocol has no message
- * for it, and the server cancels the turn when the connection closes.
+ * one. This is how the device abandons a turn by itself: the protocol's
+ * `cancel` is for the person's choice only, and the server cancels the turn
+ * when the connection closes.
  * Followed by SERVER_LINK_DOWN with SERVER_LINK_DOWN_DROPPED. Does nothing when there is
  * no connection. */
 void server_link_drop(void);

@@ -49,6 +49,17 @@
  * this pin. */
 #define BOARD_BOOT_BUTTON   GPIO_NUM_0
 
+/* Controls added to the breadboard in stage 8, read by the controls
+ * component. Each connects its pin to ground when closed, against the chip's
+ * internal pull-up resistor, which holds the pin high while open: a low
+ * reading means closed.
+ *   BUTTON   a momentary push button: pressed interrupts a turn
+ *   SWITCH   a three-leg slide switch, middle leg to ground and one outer leg
+ *            to this pin; the other outer leg is not connected. Reserved for
+ *            continuous conversation, which is planned and not yet built */
+#define BOARD_BUTTON        GPIO_NUM_1
+#define BOARD_SWITCH        GPIO_NUM_2
+
 /* Panel geometry, in the controller's native portrait orientation: 142
  * visible columns by 428 rows. The controller's memory is 168 columns wide,
  * so the visible columns start part-way across it, with 12 unused columns

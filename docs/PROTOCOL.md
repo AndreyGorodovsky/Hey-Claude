@@ -91,6 +91,7 @@ and the wake-word model.
 | `reply_end` | Server | The turn is over | Device finishes playing what it holds, then enters `IDLE` |
 | `error` | Server | The turn was abandoned | Device stops playback, discards unplayed audio, shows `ERROR` briefly, then enters `IDLE` |
 | `volume` | Server | The request asked for a change of volume; after `stop_capture` and before the `reply_start` of the reply that confirms it | Device plays at the new level from that reply on, and keeps it |
+| `cancel` | Device | The person pressed the device's button during a turn: while capturing, thinking or speaking | Server ends the turn and sends `reply_end`, if the turn has not already ended (see Interrupting a turn) |
 
 ### Fields
 
@@ -102,6 +103,7 @@ and the wake-word model.
 {"type": "reply_end"}
 {"type": "error", "code": "llm_failed", "message": "The assistant failed to answer."}
 {"type": "volume", "level": 9}
+{"type": "cancel"}
 ```
 
 ### Volume
@@ -122,6 +124,41 @@ and types allows: a device that states no `volume`, or one that is not a
 whole number, is answered by the model whatever it says, because it could
 not act on the answer. A device ignores a `volume` whose level is off the
 scale.
+
+### Interrupting a turn
+
+The person can end a turn early by pressing the device's button; speech
+does not interrupt. The device stops capturing and playing at once,
+discards the audio it holds, shows `IDLE`, and sends `cancel`. It then
+waits for the turn's end, `reply_end` or `error`, whichever comes, and
+drops any audio that arrives meanwhile. Only once that end has arrived
+does it act on the wake word again, since the server accepts a new
+request only when no turn is running (rule 1).
+
+The server answers `cancel` with `reply_end` when a turn is running and
+its end has not yet been sent: it stops speech-to-text, Claude and the
+synthesiser, and sends no more audio. Audio sent before the cancel was
+read is ahead of `reply_end` on the connection, so everything before
+`reply_end` belongs to the interrupted turn. When the turn has already
+ended, or none is running, `cancel` is ignored: the end it waits for is
+already on its way, or has arrived. A turn therefore always ends exactly
+once, whether or not it was interrupted.
+
+An interrupted turn stays in the conversation if it had reached Claude:
+the request, and the reply as far as its audio had begun to be sent,
+followed by `[interrupted]`. The server cannot know how much of that the
+person heard, since the device holds up to two seconds of it. A turn
+interrupted while capturing, or a volume request, adds nothing.
+
+A device that has not received the turn's end within 3 s of sending
+`cancel` closes the connection (rule 6), and so does one that could not
+send `cancel` within as long again, as when the network stalls. Either way
+it shows no failure: the person has already dismissed the turn.
+
+`cancel` is an addition within version 1, which the rule on unknown types
+allows. A server older than it ignores the message and the turn runs on;
+the device, waiting 3 s for an end that comes later or not at all, closes
+the connection, which cancels the turn.
 
 ### Error codes
 
@@ -163,15 +200,18 @@ Variations:
 | A change of volume | `stop_capture`, `volume`, then the confirmation as a reply: `reply_start`, audio, `reply_end`. Without `volume` when the level does not change |
 | A service failed before any reply audio | `error`, with or without a `stop_capture` before it |
 | A service failed part-way through the reply | `stop_capture`, `reply_start`, some audio, then `error`. No `reply_end` |
+| Interrupted by the person | The turn's messages as far as it got, then from the device `cancel`, and from the server `reply_end`. Without `stop_capture` if the turn was still capturing |
 
 Every turn ends with exactly one of `reply_end` and `error`.
 
 ## Rules
 
-1. **One turn at a time, and a turn cannot be interrupted.** The server
-   accepts `utterance_start` only when no turn is running. One that arrives
-   during a turn is ignored: it gets no answer and the running turn carries
-   on. The device, for its part, acts on the wake word only in `IDLE`.
+1. **One turn at a time.** The server accepts `utterance_start` only when
+   no turn is running. One that arrives during a turn is ignored: it gets
+   no answer and the running turn carries on. The device, for its part,
+   acts on the wake word only in `IDLE`, and after a `cancel` only once the
+   turn's end has arrived. The one way to end a turn early without closing
+   the connection is `cancel` (Interrupting a turn).
 2. **`reply_end` means all audio has been sent, not that it has been
    played.** The device still holds up to two seconds of audio when
    `reply_end` arrives. The server is ready for a new turn at once; the
@@ -186,11 +226,11 @@ Every turn ends with exactly one of `reply_end` and `error`.
 5. **A message the server cannot understand is ignored.** It is logged on
    the server and not answered.
 6. **When the device is in doubt, it closes the connection.** The device has
-   no message for "I gave up". On its own timeout, a playback fault, or a
-   message it did not expect in its state, it closes the WebSocket and
-   connects again. The server cancels the running turn when the connection
-   closes, and a cancelled turn is not added to the conversation. This is
-   the only way a turn ends early.
+   no message for "I gave up": `cancel` is the person's choice, not the
+   device's. On its own timeout, a playback fault, or a message it did not
+   expect in its state, it closes the WebSocket and connects again. The
+   server cancels the running turn when the connection closes, and a turn
+   cancelled that way is not added to the conversation.
 
 ## Pacing of reply audio
 
@@ -225,6 +265,7 @@ The device, for its part:
 | First reply audio, from `stop_capture` | 30 s | Server: `error` with `llm_failed` or `tts_failed`, whichever it was waiting on |
 | Wait in `THINKING` | 40 s from `stop_capture` | Device: closes the connection (rule 6) |
 | Silence inside a reply | 40 s with nothing to play | Device: closes the connection (rule 6) |
+| The turn's end after `cancel` | 3 s from sending `cancel` | Device: closes the connection (rule 6) |
 | Keepalive, server | Ping every 20 s; 20 s for the pong | Server: drops a connection that does not answer |
 | Keepalive, device | Ping every 10 s; 20 s for the pong | Device: treats the connection as lost |
 
