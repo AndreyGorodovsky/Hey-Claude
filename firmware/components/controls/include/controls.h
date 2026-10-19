@@ -3,15 +3,18 @@
  * board.h).
  *
  * The button interrupts a turn: pressed while the device listens, thinks or
- * speaks, it ends the turn and returns the device to IDLE. The switch is
- * reserved for continuous conversation, which is planned and not yet built;
- * for now its position is only reported.
+ * speaks, it ends the turn and returns the device to IDLE. The switch's
+ * position is read by the state machine as the continuous conversation
+ * setting (state_machine.c).
  *
  * A press is announced as CONTROLS_EVENT / CONTROLS_BUTTON_PRESSED on the
  * default event loop, the moment the button goes down, once its contacts
  * have settled. Holding it announces nothing more, and a new press counts
- * only after a release. Like the wake-word component, this one only reports:
- * what a press means in each state belongs to the state machine.
+ * only after a release. A move of the switch, once settled, is announced as
+ * CONTROLS_SWITCH_CHANGED, again on every poll until the event loop takes
+ * it; its new position is read with controls_get().
+ * Like the wake-word component, this one only reports: what a press or a
+ * position means belongs to the state machine.
  *
  * Threading: controls_start() is called once at boot. controls_get() may be
  * called from any task.
@@ -31,9 +34,10 @@ ESP_EVENT_DECLARE_BASE(CONTROLS_EVENT);
 
 enum {
     CONTROLS_BUTTON_PRESSED,    /* no event data */
+    CONTROLS_SWITCH_CHANGED,    /* no event data; controls_get() has the position */
 };
 
-/* How the controls stand, for the console */
+/* How the controls stand, for the state machine and the console */
 typedef struct {
     bool button_down;           /* the button is held now */
     bool switch_closed;         /* the switch connects its pin to ground: the
@@ -47,8 +51,8 @@ typedef struct {
  * only once it has been let go and pressed again. */
 esp_err_t controls_start(void);
 
-/* How the controls stand. Before controls_start() has succeeded, all false
- * and zero. */
+/* How the controls stand. Before controls_start() has succeeded, or if it
+ * failed, all false and zero. */
 void controls_get(controls_state_t *out);
 
 #ifdef __cplusplus

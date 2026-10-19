@@ -134,7 +134,7 @@ fitted.
 | Momentary push button, two legs | One leg | GPIO 1 | Pressed, interrupts a turn |
 | | Other leg | Ground rail | |
 | Three-leg slide switch | Middle leg | Ground rail | The common |
-| | One outer leg | GPIO 2 | Reserved for continuous conversation, not yet built |
+| | One outer leg | GPIO 2 | Toward this leg, closed: continuous conversation |
 | | Other outer leg | Not connected | |
 
 GPIO 26–37 are reserved by the flash and PSRAM and must not be used. GPIO 0, 3,
@@ -271,12 +271,22 @@ with the device idle is normal. Every test on the device notes it
 The push button interrupts a turn. Pressed while the device listens,
 thinks or speaks, it stops at once and returns to `idle`; the server keeps
 the request and the reply as far as it was sent, so a follow-up question
-can refer to it. Speech does not interrupt. The `controls` command shows
-how the button and the switch stand, for checking their wiring:
+can refer to it. Speech does not interrupt.
+
+The slide switch turns on continuous conversation. With it toward the
+connected leg, the device listens again after each reply, with the chime
+and without the wake word, and the screen shows "Continuous" in its top
+right corner while it waits or listens. The conversation ends, and the
+device returns to `idle`, when nothing is said for 5 s, on the button, on
+an error, with the switch moved back, or after ten follow-ups in a row. A
+move during a reply takes effect at that reply's end.
+
+The `controls` command shows how the button and the switch stand, for
+checking their wiring, and whether continuous conversation is on:
 
 ```
-controls                  the button and the switch, and the presses
-                          counted since boot
+controls                  the button and the switch, the presses counted
+                          since boot, and the mode in effect
 ```
 
 A false-accept measurement is `wake reset`, then hours of background sound

@@ -13,6 +13,7 @@
 #include "controls_cmd.h"
 
 #include <stdio.h>
+#include "app_state.h"
 #include "controls.h"
 #include "esp_check.h"
 #include "esp_console.h"
@@ -26,6 +27,11 @@ static int cmd_controls(int argc, char **argv)
     printf("button: %s\n", s.button_down ? "pressed" : "up");
     printf("switch: %s\n", s.switch_closed ? "closed (toward the connected leg)"
                                            : "open (toward the free leg)");
+    /* The mode in effect, as the state machine has recorded it: what the
+     * switch means is its decision, not this command's */
+    app_state_event_t st;
+    app_state_get(&st);
+    printf("continuous conversation: %s\n", st.continuous ? "on" : "off");
     printf("presses since boot: %lu", (unsigned long)s.presses);
     if (s.lost > 0) {
         printf(", %lu not announced", (unsigned long)s.lost);

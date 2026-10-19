@@ -528,7 +528,11 @@ esp_err_t display_preview(app_state_t state, const char *detail, uint32_t second
     if (!s_ready) {
         return ESP_ERR_INVALID_STATE;
     }
-    app_state_event_t st = { .state = state };
+    /* The mode as it is now, so that the preview shows the screen as the
+     * device would */
+    app_state_event_t st;
+    app_state_get(&st);
+    st.state = state;
     strlcpy(st.detail, detail ? detail : "", sizeof(st.detail));
     taskENTER_CRITICAL(&s_handover_lock);
     s_preview_req = st;

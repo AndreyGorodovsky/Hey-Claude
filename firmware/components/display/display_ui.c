@@ -7,12 +7,14 @@
  * its own between the two, built by its entry in the table below: setup
  * mode (the setup component) shows there the hotspot to join, its password,
  * the page to open, and the minutes left. The text is centred
- * vertically whether it has one line or two. Only the animation area moves,
+ * vertically whether it has one line or two. While continuous conversation
+ * is on, a small mark in the top right corner says so, on the screens where
+ * it matters: waiting and listening. Only the animation area moves,
  * so each frame redraws a rectangle of at most 142 x 142 rather than the
  * whole screen (KNOWN-ISSUES R3).
  *
- * The animations are placeholders, to be refined in stage 8. Each is built
- * from LVGL objects (circles are rectangles with fully rounded corners) and
+ * The animations are placeholders, kept as they are (settled in stage 8).
+ * Each is built from LVGL objects (circles are rectangles with fully rounded corners) and
  * LVGL animations: an animation moves one number, such as an opacity or a
  * height, between two values over a set time, calling a function with each
  * new value; LVGL redraws whatever that changed. Deleting an object stops
@@ -24,6 +26,7 @@
 #include "display_priv.h"
 
 #include <stdbool.h>
+#include <string.h>
 #include "esp_timer.h"
 
 #define ICON_SIZE       SCREEN_H    /* square animation area on the left */
@@ -39,6 +42,15 @@
 #define COLOR_ERROR     0xE5484D
 
 static lv_obj_t *s_state_scr, *s_icon, *s_title, *s_detail;
+/* The continuous conversation mark, hidden unless shown */
+static lv_obj_t *s_mode_mark;
+/* The state and detail the view was last built for, so that a change of
+ * the mode alone does not build it again; and a request to build it again
+ * all the same */
+static bool s_drawn_valid;
+static bool s_redraw;
+static app_state_t s_drawn_state;
+static char s_drawn_detail[APP_STATE_DETAIL_MAX];
 /* The column a state's own lines go in, between title and detail */
 static lv_obj_t *s_lines;
 /* The setup screen's details, and whether they have arrived */
@@ -236,16 +248,17 @@ static const struct {
     void (*build)(void);
     void (*lines)(lv_obj_t *box);   /* NULL for none */
     int brightness;
+    bool marks_mode;    /* shows the continuous conversation mark when on */
 } s_views[APP_STATE_COUNT] = {
-    [APP_STATE_BOOT]       = { "Hey Claude",   "Starting",          build_boot,       NULL,              100 },
-    [APP_STATE_SETUP]      = { "Setup needed", "",                  build_setup,      build_setup_lines, 100 },
-    [APP_STATE_CONNECTING] = { "Connecting",   "",                  build_connecting, NULL,              100 },
+    [APP_STATE_BOOT]       = { "Hey Claude",   "Starting",          build_boot,       NULL,              100, false },
+    [APP_STATE_SETUP]      = { "Setup needed", "",                  build_setup,      build_setup_lines, 100, false },
+    [APP_STATE_CONNECTING] = { "Connecting",   "",                  build_connecting, NULL,              100, false },
     /* Dimmed while waiting for the wake word, which is most of the time */
-    [APP_STATE_IDLE]       = { "Ready",        "Say the wake word", build_idle,       NULL,              25 },
-    [APP_STATE_CAPTURING]  = { "Listening",    "",                  build_capturing,  NULL,              100 },
-    [APP_STATE_THINKING]   = { "Thinking",     "",                  build_thinking,   NULL,              100 },
-    [APP_STATE_SPEAKING]   = { "Speaking",     "",                  build_speaking,   NULL,              100 },
-    [APP_STATE_ERROR]      = { "Error",        "",                  build_error,      NULL,              100 },
+    [APP_STATE_IDLE]       = { "Ready",        "Say the wake word", build_idle,       NULL,              25,  true },
+    [APP_STATE_CAPTURING]  = { "Listening",    "",                  build_capturing,  NULL,              100, true },
+    [APP_STATE_THINKING]   = { "Thinking",     "",                  build_thinking,   NULL,              100, false },
+    [APP_STATE_SPEAKING]   = { "Speaking",     "",                  build_speaking,   NULL,              100, false },
+    [APP_STATE_ERROR]      = { "Error",        "",                  build_error,      NULL,              100, false },
 };
 
 /* ---- Screens ------------------------------------------------------------ */
@@ -295,6 +308,15 @@ static void build_state_screen(void)
     lv_obj_set_width(s_detail, TEXT_W);
     /* Text too long for one line ends in "..." instead of wrapping */
     lv_label_set_long_mode(s_detail, LV_LABEL_LONG_MODE_DOTS);
+
+    /* The continuous conversation mark: LVGL's "loop" symbol, which its
+     * built-in fonts carry alongside the letters, and a word, in the corner
+     * that the centred text never reaches. It does not move, so it costs no
+     * redrawing once drawn. */
+    s_mode_mark = label(s_state_scr, &lv_font_montserrat_14, COLOR_ACCENT);
+    lv_label_set_text(s_mode_mark, LV_SYMBOL_LOOP " Continuous");
+    lv_obj_align(s_mode_mark, LV_ALIGN_TOP_RIGHT, -8, 6);
+    lv_obj_set_hidden(s_mode_mark, true);
 }
 
 /* A 1-pixel frame, one colour per edge, so a missing edge is identifiable:
@@ -355,6 +377,19 @@ void ui_show_state(const app_state_event_t *st)
     if (st->state >= APP_STATE_COUNT || s_views[st->state].build == NULL) {
         return;
     }
+    /* Only the mark changes when only the mode has: rebuilding the view
+     * would restart its animation for no visible reason, for instance on
+     * the SPEAKING screen when the switch is moved during a reply */
+    lv_obj_set_hidden(s_mode_mark, !(st->continuous && s_views[st->state].marks_mode));
+    if (s_drawn_valid && !s_redraw && st->state == s_drawn_state
+            && strcmp(st->detail, s_drawn_detail) == 0) {
+        return;
+    }
+    s_drawn_valid = true;
+    s_redraw = false;
+    s_drawn_state = st->state;
+    strlcpy(s_drawn_detail, st->detail, sizeof(s_drawn_detail));
+
     lv_obj_clean(s_icon);   /* deletes the old animation's objects */
     s_views[st->state].build();
     lv_label_set_text(s_title, s_views[st->state].title);
@@ -379,6 +414,9 @@ void ui_set_setup(const display_setup_t *setup)
 {
     s_setup = *setup;
     s_has_setup = true;
+    /* The setup view's lines are built from these, so it must be built
+     * again even though its state and detail have not changed */
+    s_redraw = true;
 }
 
 int ui_brightness(app_state_t state)

@@ -546,6 +546,8 @@ The record:
 | 2026-10-18 | Same bench, the stage 8 part C firmware with the interrupt built, server running. Once a minute for 7 min, connected and idle, no turns | 53.5 °C, rising to 55.5 °C |
 | 2026-10-18 | Same bench, the part C firmware as corrected after review, on for 39 to 42 min. Before, halfway through and after six spoken turns in two and a half minutes, two of them interrupted with the button and three with a search, the longest reply 15 s | 56.5 °C at all three readings |
 | 2026-10-18 | Same bench and firmware, no reset. Once a minute for 7 min through the interrupt test: nine spoken turns in three minutes, four interrupted by the button, then idle | 55.5 to 56.5 °C, 56.5 °C during the turns |
+| 2026-10-19 | Same bench, the stage 8 part D firmware (continuous conversation), on for 18 to 30 min. Every three minutes through eight spoken turns in four minutes, four of them follow-ups and three with a search, then idle | 55.5 °C at all five readings |
+| 2026-10-19 | Same bench, the part D firmware as corrected after review. Within half a minute of flashing, idle; three minutes later, between five spoken turns, three of them follow-ups and one interrupted by the button; and three minutes after that, idle, two minutes after the last reply | 52.5, 56.5, 55.5 °C |
 
 The readings during replies were taken at playback levels of 40 % and
 60 %, but for the last, of 2026-10-07, at the present 100 %.
@@ -699,6 +701,15 @@ at low effort, Claude Code 2.1.296, a home internet connection.
   seen; once in one run, it is not taken as a change. The news question
   was not answered: no site with the day's stories could be read. No list
   of sources removed.
+- After the tool updated itself to 2.1.303, found on 2026-10-19 during the
+  stage 8 part D test, measured with the bench script the same day, on
+  the server's machine, same model and effort: eleven questions, all
+  answered. Five plain ones: first text after 1.74 to 2.81 s, median
+  1.95 s, the whole reply in about 3.3 to 4.3 s. Six that could search:
+  first text after 1.75 to 2.69 s, median 1.88 s; the five that searched
+  or read a page each opened with "Let me check." and were whole in 8.9
+  to 19.0 s. This time the news question was answered. The part D turns
+  had run on it without fault before the bench.
 
 ## Resolved
 
@@ -783,9 +794,21 @@ at low effort, Claude Code 2.1.296, a home internet connection.
   before any audio has arrived is tried once more, with a warning in the
   log. A failure part-way through a sentence cannot be retried without
   repeating words and still ends the turn; the log now says which of the
-  two happened.
-- **Wake word required for every request.** The device does not remain open for
-  follow-up questions. This is intended behaviour, not a defect.
+  two happened. The retry was seen to act on 2026-10-19, on the first turn
+  of the part D test, after the server had been idle for 18 minutes: the
+  reply played in full.
+- **Wake word required for every request, unless the switch is closed.**
+  With the switch open, the device does not remain open for follow-up
+  questions. Closed, it listens again after each reply, up to ten
+  follow-ups in a row (ARCHITECTURE.md, State machine).
+- **Continuous conversation can be kept going by speech not meant for the
+  device.** In continuous conversation, any speech in the room during a
+  follow-up's capture, a television or people talking to each other, is
+  sent to the server and answered, and the loop goes on. The device
+  cannot tell who is speaking. It ends when nothing is said for 5 s, and
+  after ten follow-ups in a row at most. On 2026-10-19 the one follow-up
+  left silent ended by itself, the reply's echo not taken for speech; not
+  tried with a television on.
 - **Conversation resets at 04:00 local time.** A conversation that spans the
   rollover loses its earlier context. The hour was chosen to make this rare.
 - **Earlier days' conversations are deleted, but not at the rollover

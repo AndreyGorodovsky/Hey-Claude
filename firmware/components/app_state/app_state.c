@@ -46,7 +46,7 @@ static const char *const s_names[APP_STATE_COUNT] = {
 };
 
 static SemaphoreHandle_t s_lock;
-/* The current state and detail, written only while holding s_lock */
+/* The current state, detail and mode, written only while holding s_lock */
 static app_state_event_t s_current;
 
 esp_err_t app_state_init(void)
@@ -56,7 +56,26 @@ esp_err_t app_state_init(void)
     ESP_RETURN_ON_FALSE(s_lock != NULL, ESP_ERR_NO_MEM, TAG, "mutex");
     s_current.state = APP_STATE_BOOT;
     s_current.detail[0] = '\0';
+    s_current.continuous = false;
     return ESP_OK;
+}
+
+/* Announces `next` and makes it current, unless it is what is current
+ * already. Called with s_lock held. */
+static esp_err_t announce(const app_state_event_t *next)
+{
+    if (next->state == s_current.state && strcmp(next->detail, s_current.detail) == 0
+            && next->continuous == s_current.continuous) {
+        return ESP_OK;
+    }
+    esp_err_t err = esp_event_post(APP_STATE_EVENT, APP_STATE_CHANGED, next, sizeof(*next),
+                                   pdMS_TO_TICKS(POST_TIMEOUT_MS));
+    /* Stored only once announced: a state nobody heard about would make a
+     * retry look like a repeat, and the display would never catch up */
+    if (err == ESP_OK) {
+        s_current = *next;
+    }
+    return err;
 }
 
 esp_err_t app_state_set(app_state_t state, const char *detail)
@@ -71,19 +90,23 @@ esp_err_t app_state_set(app_state_t state, const char *detail)
      * with a NUL, which is what makes cutting long text safe */
     strlcpy(next.detail, has_detail && detail ? detail : "", sizeof(next.detail));
 
-    esp_err_t err = ESP_OK;
     xSemaphoreTake(s_lock, portMAX_DELAY);
-    if (next.state != s_current.state || strcmp(next.detail, s_current.detail) != 0) {
-        err = esp_event_post(APP_STATE_EVENT, APP_STATE_CHANGED, &next, sizeof(next),
-                             pdMS_TO_TICKS(POST_TIMEOUT_MS));
-        /* Stored only once announced: a state nobody heard about would make
-         * a retry look like a repeat, and the display would never catch up */
-        if (err == ESP_OK) {
-            s_current = next;
-        }
-    }
+    next.continuous = s_current.continuous;     /* not this function's to change */
+    esp_err_t err = announce(&next);
     xSemaphoreGive(s_lock);
     ESP_RETURN_ON_ERROR(err, TAG, "announcing %s", s_names[state]);
+    return ESP_OK;
+}
+
+esp_err_t app_state_set_continuous(bool on)
+{
+    ESP_RETURN_ON_FALSE(s_lock != NULL, ESP_ERR_INVALID_STATE, TAG, "not initialised");
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    app_state_event_t next = s_current;
+    next.continuous = on;
+    esp_err_t err = announce(&next);
+    xSemaphoreGive(s_lock);
+    ESP_RETURN_ON_ERROR(err, TAG, "announcing the mode");
     return ESP_OK;
 }
 
@@ -93,7 +116,7 @@ void app_state_get(app_state_event_t *out)
         *out = (app_state_event_t){ .state = APP_STATE_BOOT };
         return;
     }
-    /* Under the lock, so the state and its detail are copied as a pair */
+    /* Under the lock, so the state, detail and mode are copied together */
     xSemaphoreTake(s_lock, portMAX_DELAY);
     *out = s_current;
     xSemaphoreGive(s_lock);

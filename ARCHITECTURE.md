@@ -31,13 +31,13 @@ made during the feasibility review and are binding unless explicitly revisited.
 | `audio` | Microphone capture and amplifier playback over I2S: plain 16-bit samples in and out, no buffering or tasks of its own |
 | `audio_ring` | The microphone's only reader: a capture task filling a ring buffer of the last 2 s, from which every listener reads at its own position |
 | `wakeword` | On-device wake-word detection with a microWakeWord model; announces detections and decides nothing else |
-| `app_state` | The device state and its detail text: stored, and announced on change. Decides no transitions |
+| `app_state` | The device state, its detail text, and whether continuous conversation is on: stored, and announced on change. Decides no transitions |
 | `state_machine` | The state machine: the one place that decides what the device does next, and the only writer of the state. Also runs the request upload, and keeps the playback volume in a file of its own, `volume.c` |
 | `server_link` | The WebSocket connection to the server: finds it by mDNS, connects, authenticates, reconnects with backoff, and turns the server's messages into reports |
 | `player` | Reply playback: a buffer for 4 s of reply audio and the task that plays it, at the playback level, through a limiter |
 | `protocol` | The protocol's numbers as the firmware uses them, in one header. A test on the server side holds it to the server's own |
 | `display` | The NV3007 panel, its backlight, and what is drawn for each state, from a single task that is the only user of LVGL |
-| `controls` | The push button and the slide switch on the breadboard: reads both, settles their contact bounce, and announces a press of the button; decides nothing |
+| `controls` | The push button and the slide switch on the breadboard: reads both, settles their contact bounce, and announces a press of the button and each move of the switch; decides nothing |
 | `board` | The verified pin map and panel geometry, the single source of both |
 
 Settings are loaded once at boot into a read-only structure. Edits change only
@@ -55,8 +55,9 @@ default event loop, and the display follows them without being called.
 `wakeword` announces each detection as `WAKEWORD_DETECTED`, carrying the
 position in the audio stream where the phrase ended. `controls` announces
 each press of the button as `CONTROLS_BUTTON_PRESSED`, the moment the
-button goes down; the switch it only reports when asked, since nothing
-acts on it yet.
+button goes down, and each move of the switch as `CONTROLS_SWITCH_CHANGED`.
+A move is a level and not an event, so one the event loop has no room for
+is announced again on every poll, 10 ms apart, until it goes.
 `app_state` has exactly one writer on each kind of boot. In normal
 operation it is the state machine, `state_machine`: the boot sequence sets
 the first states and then hands over. On a boot that runs setup mode the
@@ -172,7 +173,7 @@ needs no change to the flash layout. Flash runs in QIO mode at 80 MHz; PSRAM is 
 | `ERROR` | At boot, the third brownout in a row | Error indicator, "Power supply too weak" |
 | `CONNECTING` | Boot complete | Connecting indicator |
 | `IDLE` | Server session ready | Waiting for wake word |
-| `CAPTURING` | Wake word detected while `IDLE` | Listening |
+| `CAPTURING` | Wake word detected while `IDLE`, or a reply played in full in continuous conversation | Listening |
 | `THINKING` | Server sends `stop_capture` | Waiting for response |
 | `SPEAKING` | The first sound of the reply reaches the speaker | Playing |
 | `ERROR` | A failed turn, a lost connection, or a device that cannot hear or speak | Error indicator |
@@ -204,6 +205,19 @@ does not answer, the device closes the connection quietly. A press during
 the chime only stops it, since no request has been sent; one in the last
 seconds of a reply, after `reply_end`, only stops the playback; one at any
 other time does nothing.
+
+**Continuous conversation.** With the slide switch closed, a reply that has
+played to its end is followed by the chime and a new request, as after the
+wake word, so that a conversation goes on without it. The switch is the
+setting; nothing is stored. Its position is read when a reply ends, so a
+move during a reply takes effect at that reply's end. The device returns
+to `IDLE` when nothing is said within the server's 5 s wait for the first
+word (the server ends the turn with `reply_end` and no reply), on any
+failure, on the button, including a press that cuts the end of a reply
+short, with the switch open, when the connection is lost, and after ten
+follow-ups in a row, so that the wake word is heard again now and then.
+The screen marks the mode on `IDLE` and `CAPTURING`. Nothing changes in
+the protocol: to the server a follow-up is a request like any other.
 
 ### Setup mode
 
@@ -527,9 +541,13 @@ contents of the panel at power-on are never visible, then fades in. It dims
 to 25 % in `IDLE`. No noise was heard from the audio path at 25 % duty
 (2026-09-29).
 
-The state animations are placeholders, refined in stage 8. Each state's
-title, default detail text, animation and brightness are kept together in
-one table in `display_ui.c`.
+The state animations are placeholders, kept as they are (settled in stage
+8). Each state's title, default detail text, animation, brightness, and
+whether it shows the continuous conversation mark are kept together in one
+table in `display_ui.c`. The mark, a loop symbol and "Continuous" in the
+top right corner, is shown on `IDLE` and `CAPTURING` while the mode is on.
+A change of the mode alone only shows or hides it, so that moving the
+switch does not restart the animation on the screen.
 
 ## Protocol
 
@@ -921,6 +939,8 @@ deferred.
 | Ring buffer shared by position | One queue per listener | Listeners never take audio from each other, and a past position (the wake word's end) can be replayed |
 | Component versions locked (`dependencies.lock` committed, wake-word libraries pinned exactly) | Version ranges | A newer library can break the build or shift the model's scores without any change in the repository |
 | A turn interrupted only with a button | Barge-in, interrupting by speaking | With no echo cancellation the device would interrupt itself |
+| Continuous conversation chosen by a switch, read when a reply ends | A setting stored in NVS, or turned on by voice | The position is visible and changed by hand, and nothing has to be stored or kept in step |
+| At most ten follow-ups in a row | No limit, ending only on silence | Bounds what a television or other people talking can keep going without the wake word, every capture of which is sent to the server |
 | `error` ends a turn and keeps the connection | Reconnecting after every error | A failed service does not make the connection unhealthy; reconnecting would only add delay |
 | Newer connection replaces the older | Refusing a second connection | A device back from a power cut must not be locked out by its own dead connection |
 | Device tokens in the server's environment | A table in the database | Keeps credentials apart from the transcripts |

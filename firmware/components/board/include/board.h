@@ -55,8 +55,8 @@
  * reading means closed.
  *   BUTTON   a momentary push button: pressed interrupts a turn
  *   SWITCH   a three-leg slide switch, middle leg to ground and one outer leg
- *            to this pin; the other outer leg is not connected. Reserved for
- *            continuous conversation, which is planned and not yet built */
+ *            to this pin; the other outer leg is not connected. Read by the
+ *            state machine as the continuous conversation setting */
 #define BOARD_BUTTON        GPIO_NUM_1
 #define BOARD_SWITCH        GPIO_NUM_2
 

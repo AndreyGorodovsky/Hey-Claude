@@ -10,8 +10,8 @@
  *
  * Most messages are put in the queue directly by the part that has
  * something to report: the link, the player and the upload each call a
- * function here, from their own tasks. Wake-word events and button presses
- * are the exception. They are announced on the default event loop, as
+ * function here, from their own tasks. Wake-word events and the controls
+ * (the button and the switch) are the exception. They are announced on the default event loop, as
  * wake-word events were before this component existed and as the `wake`
  * console command also expects, so handlers registered here copy them into
  * the queue.
@@ -46,7 +46,8 @@
  *   PLAYING      SPEAKING     The reply is playing and more may come.
  *                             `reply_end`: to DRAINING.
  *   DRAINING     SPEAKING     The server has sent everything; the rest is
- *                             playing out. Last sample played: to IDLE.
+ *                             playing out. Last sample played: to IDLE,
+ *                             or to CHIME in continuous conversation.
  *   CANCELLING   IDLE         The person pressed the button; capture and
  *                             playback have stopped and `cancel` is on its
  *                             way. The turn's end from the server: to IDLE.
@@ -75,10 +76,26 @@
  * connection quietly; the screen then shows CONNECTING, which is a fact
  * about the connection and not about the turn.
  *
+ * Continuous conversation. With the switch closed, a reply that has played
+ * to its end is followed by the chime and a new request, as if the wake
+ * word had been heard, so that a conversation goes on without it. The
+ * switch is the setting, read in one place (continuous_wanted). When it
+ * moves, the position is passed on to app_state for the screen's mark
+ * (show_mode); what decides is its position when a reply ends, so a move
+ * during a reply takes effect at that reply's end. The loop ends, and
+ * the device rests in IDLE, when nothing is said (the server ends the turn
+ * with `reply_end` and no reply), on any failure, on the button, with the
+ * switch opened, or when the connection is lost: everything that ends a
+ * turn short of a reply played in full. It also ends after MAX_FOLLOW_UPS
+ * follow-ups in a row, so that the wake word is heard again now and then.
+ * Nothing new in the protocol: to the server a follow-up is a request like
+ * any other.
+ *
  * The playback volume (volume.h) passes through here too. A new level from
  * the server or the console arrives as a message like everything else, so
- * that this task is the level's one writer, and the level is stored only in
- * IDLE, where writing to flash cannot interrupt a reply.
+ * that this task is the level's one writer, and the level is stored only
+ * when the turn is over (in IDLE, or at the end of a reply before a
+ * follow-up), where writing to flash cannot interrupt a reply.
  *
  * When the device gives up on a turn by itself (a deadline passed, the
  * reply stopped arriving, something arrived that makes no sense), it closes
@@ -124,6 +141,11 @@ static const char *TAG = "state_machine";
  * of a second; after this long the request starts without waiting further.
  * A guard against a missing report, like the one above. */
 #define CHIME_LIMIT_MS        1000
+/* Most follow-ups in a row in continuous conversation; after that the wake
+ * word is needed again. Not a time but a count. It bounds what a television
+ * or other people talking can keep going on their own: each capture that
+ * yields a reply leads to another, and every one is sent to the server. */
+#define MAX_FOLLOW_UPS        10
 
 /* Longest the task waits for a report before it checks in with the task
  * watchdog (see state_machine_task). The assertion holds it well inside the
@@ -231,6 +253,7 @@ typedef enum {
     EV_UPLOAD,          /* value: an upload_report_t */
     EV_VOLUME,          /* from the console; value: a level already on the scale */
     EV_BUTTON,          /* the button was pressed */
+    EV_SWITCH,          /* the switch moved; its position is asked of controls_get() */
 } ev_kind_t;
 
 typedef struct {
@@ -272,9 +295,14 @@ static TickType_t s_deadline;
 /* After a reply, detections are ignored until this tick */
 static bool s_quiet_set;
 static TickType_t s_quiet_until;
-/* Where in the microphone's stream the wake word ended (an audio_ring
- * position), kept to log how long after it the request began */
-static uint32_t s_wake_pos;
+/* Where in the microphone's stream the wake word, or the reply before a
+ * follow-up, ended (an audio_ring position), kept to log how long after it
+ * the request began */
+static uint32_t s_request_from;
+/* Follow-ups since the wake word: 0 for the request the wake word started,
+ * then 1, 2 and so on for each request that followed a reply in continuous
+ * conversation */
+static unsigned s_follow_ups;
 
 /* ---- Building blocks ---- */
 
@@ -347,6 +375,29 @@ static void restart_deadline(uint32_t ms)
     s_deadline_set = true;
 }
 
+/* Whether continuous conversation is wanted: the switch is closed. The one
+ * place the setting is read, so that a second source for it, should one
+ * ever come, has one place to join. */
+static bool continuous_wanted(void)
+{
+    controls_state_t controls;
+    controls_get(&controls);
+    return controls.switch_closed;
+}
+
+/* Tells app_state whether continuous conversation is on, for the screen's
+ * mark. Called at start and whenever the switch moves; the controls
+ * component repeats a move until it has been announced, so none is
+ * missed. */
+static void show_mode(void)
+{
+    /* Announces nothing when the mode is what app_state already has */
+    esp_err_t err = app_state_set_continuous(continuous_wanted());
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "mode not announced: %s", esp_err_to_name(err));
+    }
+}
+
 /* Moves to a phase and shows it. The only place the device state is set.
  * `deadline_ms` is how long the phase may last, NO_DEADLINE, or
  * SAME_DEADLINE to keep the one already running. */
@@ -409,21 +460,30 @@ static why_t restart_why(esp_reset_reason_t reason)
     }
 }
 
+/* Whether the device can take a new request: it can hear, speak and reach
+ * the server. What rest() shows as IDLE, and what a follow-up in
+ * continuous conversation needs too. */
+static bool may_take_request(void)
+{
+    /* Whether it can hear is asked of the wake-word component each time,
+     * not kept here: it is the one that knows, and a copy could be left
+     * wrong by a lost announcement */
+    return wakeword_listening() && s_speaker_ok && s_link_up;
+}
+
 /* Goes to the phase the device belongs in when no turn is running and no
  * failure is being shown. The one place that order of precedence is
  * written down. */
 static void rest(void)
 {
-    if (!wakeword_listening()) {
+    if (may_take_request()) {
+        enter(PH_IDLE, WHY_NONE, NO_DEADLINE);
+    } else if (!wakeword_listening()) {
         /* Not IDLE: the screen must not say "waiting for the wake word"
-         * on a device that cannot hear one. Asked of the wake-word
-         * component each time, not kept here: it is the one that knows,
-         * and a copy could be left wrong by a lost announcement. */
+         * on a device that cannot hear one */
         enter(PH_FAULT, WHY_MICROPHONE, NO_DEADLINE);
     } else if (!s_speaker_ok) {
         enter(PH_FAULT, WHY_SPEAKER, NO_DEADLINE);
-    } else if (s_link_up) {
-        enter(PH_IDLE, WHY_NONE, NO_DEADLINE);
     } else {
         enter(PH_CONNECTING, s_attempt_why, NO_DEADLINE);
     }
@@ -468,6 +528,21 @@ static void out_of_step(const char *what)
 
 /* ---- What each message does ---- */
 
+/* Begins a request: the chime, and the request after it. `from_pos` is
+ * where in the microphone's stream the wake word or the reply ended;
+ * `follow_ups` is as s_follow_ups. */
+static void start_chime(uint32_t from_pos, unsigned follow_ups)
+{
+    s_request_from = from_pos;
+    s_follow_ups = follow_ups;
+    /* The sound first, the request after it: the person hears that the
+     * device is listening and then speaks, and the microphone's copy of the
+     * sound never reaches speech recognition. The player reports when the
+     * sound is over; begin_request() follows. */
+    player_chime();
+    enter(PH_CHIME, WHY_NONE, CHIME_LIMIT_MS);
+}
+
 static void on_wake(uint32_t end_pos)
 {
     if (s_phase != PH_IDLE) {
@@ -480,13 +555,7 @@ static void on_wake(uint32_t end_pos)
         return;
     }
     s_quiet_set = false;
-    s_wake_pos = end_pos;
-    /* The sound first, the request after it: the person hears that the
-     * wake word worked and then speaks, and the microphone's copy of the
-     * sound never reaches speech recognition. The player reports when the
-     * sound is over; begin_request() follows. */
-    player_chime();
-    enter(PH_CHIME, WHY_NONE, CHIME_LIMIT_MS);
+    start_chime(end_pos, 0);
 }
 
 /* Starts sending the request, from this moment in the microphone's stream.
@@ -498,8 +567,9 @@ static void begin_request(void)
      * last note. That pause is what keeps the note's tail out of the
      * request: shortening it changes what speech recognition hears. */
     uint32_t now = audio_ring_now();
-    ESP_LOGI(TAG, "request begins %lu ms after the wake word",
-             (unsigned long)((now - s_wake_pos) * 1000u / PROTO_CAPTURE_RATE_HZ));
+    ESP_LOGI(TAG, "request begins %lu ms after the %s",
+             (unsigned long)((now - s_request_from) * 1000u / PROTO_CAPTURE_RATE_HZ),
+             s_follow_ups > 0 ? "reply" : "wake word");
     /* From now until the turn ends, reply audio is let through to the
      * player. Before the upload starts, so that nothing can arrive first. */
     atomic_store(&s_reply_wanted, true);
@@ -651,13 +721,38 @@ static void on_link(server_link_report_t what, uint32_t value)
     }
 }
 
-/* The turn is over and went well */
-static void turn_done(void)
+/* The bookkeeping of a turn that is over and went well; the caller then
+ * decides where the device goes */
+static void end_turn(void)
 {
     atomic_store(&s_reply_wanted, false);
     s_quiet_until = xTaskGetTickCount() + pdMS_TO_TICKS(QUIET_AFTER_REPLY_MS);
     s_quiet_set = true;
-    rest();
+}
+
+/* A reply has played to its end: the one moment continuous conversation
+ * goes on. A reply cut short by the button, or whose end the player never
+ * reported, rests instead. */
+static void reply_heard(void)
+{
+    end_turn();
+    /* The switch as it stands at the reply's end (see the top of this
+     * file) */
+    if (!continuous_wanted() || !may_take_request()) {
+        rest();
+    } else if (s_follow_ups >= MAX_FOLLOW_UPS) {
+        ESP_LOGI(TAG, "continuous conversation: %u follow-ups in a row; "
+                 "the wake word is needed again", s_follow_ups);
+        rest();
+    } else {
+        ESP_LOGI(TAG, "continuous conversation: listening again (%u of %u)",
+                 s_follow_ups + 1, MAX_FOLLOW_UPS);
+        /* A level changed by this turn is stored now, as entering IDLE
+         * would have done: nothing is playing, and the chime has not
+         * begun */
+        volume_store();
+        start_chime(audio_ring_now(), s_follow_ups + 1);
+    }
 }
 
 static void on_player(player_report_t what, uint32_t value)
@@ -673,7 +768,7 @@ static void on_player(player_report_t what, uint32_t value)
         break;
     case PLAYER_FINISHED:
         if (s_phase == PH_DRAINING) {
-            turn_done();
+            reply_heard();
         }
         break;
     case PLAYER_CHIME_DONE:
@@ -731,7 +826,8 @@ static void on_button(void)
         /* The server has ended the turn already; only the sound is left */
         ESP_LOGI(TAG, "button: end of the reply skipped");
         player_abort();
-        turn_done();
+        end_turn();
+        rest();
         break;
     default:
         ESP_LOGI(TAG, "button: nothing to interrupt");
@@ -801,6 +897,11 @@ static void handle(const ev_t *ev)
     case EV_BUTTON:
         on_button();
         break;
+    case EV_SWITCH:
+        /* Only the mark changes now; the position decides at the end of
+         * the next reply */
+        show_mode();
+        break;
     }
 }
 
@@ -831,7 +932,8 @@ static void on_deadline(void)
          * report, the reply is over. */
         ESP_LOGW(TAG, "no word from the player that the reply finished");
         player_abort();
-        turn_done();
+        end_turn();
+        rest();
         break;
     default:
         break;
@@ -934,7 +1036,11 @@ static void on_wakeword_event(void *arg, esp_event_base_t base, int32_t id, void
 /* Runs in the default event loop's task */
 static void on_controls_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
-    enqueue(EV_BUTTON, 0, 0);
+    if (id == CONTROLS_BUTTON_PRESSED) {
+        enqueue(EV_BUTTON, 0, 0);
+    } else if (id == CONTROLS_SWITCH_CHANGED) {
+        enqueue(EV_SWITCH, 0, 0);
+    }
 }
 
 /* Runs in the console's task */
@@ -985,8 +1091,8 @@ esp_err_t state_machine_start(const state_machine_config_t *cfg)
     ESP_RETURN_ON_ERROR(upload_init(on_upload_report), TAG, "upload");
     ESP_RETURN_ON_ERROR(esp_event_handler_register(WAKEWORD_EVENT, ESP_EVENT_ANY_ID,
                                                    on_wakeword_event, NULL), TAG, "wake");
-    ESP_RETURN_ON_ERROR(esp_event_handler_register(CONTROLS_EVENT, CONTROLS_BUTTON_PRESSED,
-                                                   on_controls_event, NULL), TAG, "button");
+    ESP_RETURN_ON_ERROR(esp_event_handler_register(CONTROLS_EVENT, ESP_EVENT_ANY_ID,
+                                                   on_controls_event, NULL), TAG, "controls");
 
     /* Shows where the device stands from the start: CONNECTING, with the
      * reason for the restart if nobody asked for it, or the fault if it
@@ -995,7 +1101,10 @@ esp_err_t state_machine_start(const state_machine_config_t *cfg)
      * wake-word component inside rest(), after the handler above was
      * registered: detection started earlier in the boot sequence and may
      * have found the microphone silent before the handler existed, and an
-     * announcement made from now on waits in the queue for the task. */
+     * announcement made from now on waits in the queue for the task. The
+     * mark for continuous conversation first, as the switch stands at
+     * boot; later moves arrive as EV_SWITCH. */
+    show_mode();
     rest();
     BaseType_t made = xTaskCreatePinnedToCore(state_machine_task, "state_machine", TASK_STACK, NULL,
                                               TASK_PRIO, NULL, TASK_CORE);

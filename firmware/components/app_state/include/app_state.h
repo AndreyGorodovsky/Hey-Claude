@@ -2,11 +2,14 @@
  * The device's state: what it is doing right now, as the user sees it.
  *
  * One value from the state machine in ARCHITECTURE.md, plus, for SETUP,
- * ERROR and CONNECTING, a short detail text saying why. This component only
- * stores the state and announces changes; it does not decide them.
+ * ERROR and CONNECTING, a short detail text saying why, and whether
+ * continuous conversation is on: the device then listens again after each
+ * reply, and the screen marks it. This component only stores the state and
+ * announces changes; it does not decide them.
  *
  * One writer. Transitions belong to the state machine, the state_machine component:
- * it alone calls app_state_set(), and other components (wake-word
+ * it alone calls app_state_set() and app_state_set_continuous(), and other
+ * components (wake-word
  * detection, the server connection, the player) report what happened to
  * it, never set states themselves. Otherwise two tasks setting states at
  * the same moment would leave the screen on whichever came last. The one
@@ -57,6 +60,7 @@ enum {
 typedef struct {
     app_state_t state;
     char detail[APP_STATE_DETAIL_MAX];  /* empty string when none was given */
+    bool continuous;    /* continuous conversation is on; false until set */
 } app_state_event_t;
 
 /* Sets the state to APP_STATE_BOOT. Call once, after the default event loop
@@ -70,7 +74,13 @@ esp_err_t app_state_init(void);
  * was, so a retry is not mistaken for a repeat. */
 esp_err_t app_state_set(app_state_t state, const char *detail);
 
-/* Copies the current state and its detail into `out`. Before
+/* Records whether continuous conversation is on, and announces a change as
+ * APP_STATE_CHANGED like a change of state, with the state as it is. Same
+ * rules as app_state_set(): one writer, the state machine; nothing announced
+ * when nothing changed; left as it was if the announcement fails. */
+esp_err_t app_state_set_continuous(bool on);
+
+/* Copies the current state, its detail and the mode into `out`. Before
  * app_state_init(), reports BOOT. */
 void app_state_get(app_state_event_t *out);
 

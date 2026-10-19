@@ -46,6 +46,11 @@ typedef struct {
 static contact_t s_button = { .pin = BOARD_BUTTON };
 static contact_t s_switch = { .pin = BOARD_SWITCH };
 static esp_timer_handle_t s_timer;
+/* A move of the switch not yet announced. A position is a level, not an
+ * event: announcing it late is still right, so a move the event loop had no
+ * room for is announced again on every poll until it goes. esp_timer task
+ * only. */
+static bool s_switch_pending;
 
 /* What controls_get() reports. Written in the esp_timer task and read from
  * any, so guarded by a spinlock, the FreeRTOS lock for data shared between
@@ -82,7 +87,10 @@ static bool contact_update(contact_t *c)
 static void poll(void *arg)
 {
     bool pressed = contact_update(&s_button) && s_button.settled;
-    contact_update(&s_switch);
+    bool moved = contact_update(&s_switch);
+    if (moved) {
+        s_switch_pending = true;
+    }
 
     bool lost = false;
     if (pressed) {
@@ -103,12 +111,29 @@ static void poll(void *arg)
     }
     taskEXIT_CRITICAL(&s_lock);
 
+    /* Announced only once the new position is stored above, since whoever
+     * hears of the move reads it with controls_get(), possibly at once from
+     * the other core */
+    bool move_waits = false;
+    if (s_switch_pending) {
+        s_switch_pending =
+            esp_event_post(CONTROLS_EVENT, CONTROLS_SWITCH_CHANGED, NULL, 0, 0) != ESP_OK;
+        /* Said once per move, not on every retry */
+        move_waits = moved && s_switch_pending;
+    }
+
     /* Logged after the lock is let go: printing takes time, and nothing
      * else may wait on the lock meanwhile */
     if (lost) {
         ESP_LOGW(TAG, "button press not announced: event queue full");
     } else if (pressed) {
         ESP_LOGI(TAG, "button pressed");
+    }
+    if (move_waits) {
+        ESP_LOGW(TAG, "switch move not announced yet: event queue full; retrying");
+    }
+    if (moved) {
+        ESP_LOGI(TAG, "switch %s", s_switch.settled ? "closed" : "open");
     }
 }
 
@@ -148,12 +173,24 @@ esp_err_t controls_start(void)
     taskEXIT_CRITICAL(&s_lock);
 
     const esp_timer_create_args_t args = { .callback = poll, .name = "controls" };
-    ESP_RETURN_ON_ERROR(esp_timer_create(&args, &s_timer), TAG, "timer");
-    /* esp_timer counts in microseconds */
-    esp_err_t err = esp_timer_start_periodic(s_timer, POLL_MS * 1000);
+    esp_err_t err = esp_timer_create(&args, &s_timer);
+    if (err == ESP_OK) {
+        /* esp_timer counts in microseconds */
+        err = esp_timer_start_periodic(s_timer, POLL_MS * 1000);
+        if (err != ESP_OK) {
+            esp_timer_delete(s_timer);
+        }
+    }
     if (err != ESP_OK) {
-        esp_timer_delete(s_timer);
+        /* Without the timer nothing would ever update the positions read
+         * above. Reported as open instead, as before controls_start(): a
+         * switch frozen closed would hold continuous conversation on for
+         * good, while open leaves the wake word to start every request. */
         s_timer = NULL;
+        taskENTER_CRITICAL(&s_lock);
+        s_state = (controls_state_t){ 0 };
+        taskEXIT_CRITICAL(&s_lock);
+        ESP_LOGE(TAG, "timer: %s", esp_err_to_name(err));
     }
     return err;
 }
