@@ -118,8 +118,8 @@ during a reply, which the server-drop tests already cover.
 1. The multi-hour false-accept run (Before release).
 2. Obtain a multimeter for the continuity checks before the circuit is
    soldered (R9).
-3. Run `python -m server.tools.claude_cli_bench` for the Claude Code
-   version now installed (Environment, R21).
+3. Bench the Claude Code version now installed (Environment;
+   README.md, Updating Claude Code).
 
 ## Environment
 

@@ -14,6 +14,8 @@ device is doing at each moment.
 > that speaker well; its false detections are not yet measured on the
 > device. See [STATUS.md](STATUS.md) for where the project stands.
 
+To build one, start with [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md).
+
 ## How it works
 
 ```
@@ -197,7 +199,7 @@ reboot
 | `wifi_pass` | 8-63 characters, or 64 hexadecimal digits. Unset for an open network. |
 | `server_url` | Optional. Empty means the server is discovered on the local network. Otherwise its address and port, as `192.168.1.20:8765` or `ws://192.168.1.20:8765`. |
 | `device_id` | Optional. Defaults to `hc-` plus the last six hex digits of the MAC address. Letters, digits and `-`. |
-| `device_token` | Credential for the server, used from stage 6: 24 to 64 characters, the same value as this device's entry in the server's `DEVICE_TOKENS`. |
+| `device_token` | Credential for the server: 24 to 64 characters, the same value as this device's entry in the server's `DEVICE_TOKENS`. |
 
 Values containing spaces go in double quotes. Inside a value, a backslash is
 written `\\` and a double quote `\"`. `config show` never prints the password
@@ -263,9 +265,8 @@ mem                       free memory, and each task's unused stack
 
 `link` tells "the device cannot find the server" from "the server does not
 answer" when the screen shows `connecting` or `error`. `temp` reads the
-chip's own sensor, which runs hotter than the chip's surface; about 55 °C
-with the device idle is normal. Every test on the device notes it
-(KNOWN-ISSUES R20).
+chip's own sensor, which runs hotter than the chip's surface; about 56 °C
+is normal, and a reading above 60 °C is worth noting (KNOWN-ISSUES R20).
 
 The push button interrupts a turn. Pressed while the device listens,
 thinks or speaks, it stops at once and returns to `idle`; the server keeps
@@ -332,12 +333,8 @@ check." and follows some seconds later. Read R21 of
 assistant, and `CLAUDE_FETCH_DOMAINS` limits what it may read. With
 `LLM_BACKEND=api` in `server/.env` the server calls Anthropic's API with
 `ANTHROPIC_API_KEY` instead; the assistant then has no access to the
-internet and says so. After the Claude Code tool updates itself, check
-that it still works:
-
-```sh
-server/.venv/Scripts/python -m server.tools.claude_cli_bench
-```
+internet and says so. Claude Code updates itself; see Updating Claude
+Code below.
 
 The server's tests need no keys and no network:
 
@@ -358,9 +355,56 @@ long each stage of the turn took and saves the reply as a WAV file. Several
 files make several turns of one conversation, and `--discover` finds the
 server by mDNS, as a device does.
 
-## Repository layout
+## Updating Claude Code
 
-Directories are created as the corresponding stage begins.
+Claude Code updates itself in the background, and the server depends on
+its command-line options and on the shape of what it prints, either of
+which an update can change (KNOWN-ISSUES R21). A broken update shows as
+every turn failing with `llm_failed`, the server's log giving the tool's
+own complaint.
+
+**After an update.** `claude --version` gives the version installed; the
+server also logs it at its first turn. Then, from the repository root:
+
+```sh
+server/.venv/Scripts/python -m server.tools.claude_cli_bench
+```
+
+It takes about a minute and puts fixed questions to the tool through the
+server's own client, with no device, speech service or API key. The
+update is good when every question is answered, the plain ones' first
+text comes after about 2 to 3 s, and those that search open with "Let me
+check.". A run stopped by the lock-down check names the tools the process
+should not have had. A version that passes is recorded in the Claude Code
+row of [CLAUDE.md](CLAUDE.md), Pinned versions, and in STATUS.md's
+Environment.
+
+**If it fails.** Go back to the last version that passed, and stop the
+tool updating itself until the server is changed to suit the new one:
+
+```sh
+claude install 2.1.303
+claude --version
+```
+
+To hold that version, add `DISABLE_AUTOUPDATER` to the `env` section of
+the Claude Code settings in the user's profile, `~/.claude/settings.json`:
+
+```json
+{
+  "env": {
+    "DISABLE_AUTOUPDATER": "1"
+  }
+}
+```
+
+`claude doctor` then shows auto-updates as disabled. This holds Claude
+Code for everything else on that login too. Removing the line lets it
+update again, and `claude update` updates it by hand meanwhile.
+
+**To update on purpose**, run `claude update`, then the bench as above.
+
+## Repository layout
 
 ```
 firmware/          ESP-IDF application for the ESP32-S3
@@ -394,6 +438,7 @@ docs/              Protocol reference and supporting material
 | [KNOWN-ISSUES.md](KNOWN-ISSUES.md) | All | Open risks, defects, caveats |
 | [SECRETS.md](SECRETS.md) | All | Pre-commit checklist for sensitive material |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | All | Every message, rule and time limit between device and server |
+| [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) | All | From the parts to the first spoken answer, in order |
 | [docs/BRINGUP.md](docs/BRINGUP.md) | All | Breadboard assembly and electrical verification |
 | [CLAUDE.md](CLAUDE.md) | AI assistants | Project rules and conventions |
 
