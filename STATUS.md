@@ -6,12 +6,14 @@ the device: volume by voice (A), settings entered from a phone through a
 hotspot of the device's own (B), interrupting a reply with a button (C),
 and continuous conversation, chosen with a switch (D). The refined
 animations first planned were dropped on 2026-10-18. The steps are under
-Stage 8 plan below. What remains is the Before release list.
+Stage 8 plan below. Of the Before release list, only the multi-hour
+false-accept run remains.
 
 Stage 7, latency and robustness, closed on 2026-10-15. Its one remaining
-test, WiFi lost and restored, is under Before release.
+test, WiFi lost and restored, was made on 2026-10-26 with the device idle
+(Before release).
 
-**Last updated:** 2026-10-19
+**Last updated:** 2026-10-26
 
 ## Where the project stands
 
@@ -426,7 +428,7 @@ word.
 | D2. In continuous mode, after a reply has played in full, the chime and then capture, as after the wake word. A volume confirmation continues the conversation too | Done on 2026-10-19: only a reply the player reports played to its end continues, and only when the device could take the wake word (`may_take_request()`, which `rest()` uses too) |
 | D3. Back to `IDLE` when nothing is said within the server's 5 s wait for the first word, after an error, on the button, with the switch back in its first position, or on a lost connection. No change to the protocol | Done on 2026-10-19, as planned, and also after ten follow-ups in a row (`MAX_FOLLOW_UPS`), added after the review, and when the button cuts the end of a reply short |
 | D4. Whether the screen shows the mode: proposed, a small fixed mark on the `IDLE` and listening screens, leaving the animations as they are. To decide | Decided on 2026-10-19: shown. Done: a loop symbol and "Continuous" in orange in the top right corner of `IDLE` and `CAPTURING`, carried as a field of `app_state`. The `controls` command shows the mode in effect |
-| D5. Tested on the device, with the chip's temperature (R20): a conversation of several turns, leaving it by silence, the switch changed during a reply, the button during a follow-up capture, and whether noise in the room or the end of a reply keeps the loop going | Done on 2026-10-19, before and after the review's corrections; the figures are below. The cap of ten was not reached on the device |
+| D5. Tested on the device, with the chip's temperature (R20): a conversation of several turns, leaving it by silence, the switch changed during a reply, the button during a follow-up capture, and whether noise in the room or the end of a reply keeps the loop going | Done on 2026-10-19, before and after the review's corrections; the figures are below. The cap of ten was reached on the device on 2026-10-26 (Before release) |
 | D6. Reviewed by both agents, corrected, documented, committed | Done on 2026-10-19 |
 
 **Part D on the device, 2026-10-19.** Breadboard, USB-powered, the server
@@ -527,7 +529,7 @@ transcript. They stay listed in KNOWN-ISSUES R19.
 
 | Step | State |
 | --- | --- |
-| B1. WiFi lost and restored in each of `IDLE`, `CAPTURING`, `THINKING` and `SPEAKING`, on the bench; what is found is corrected | Put off on 2026-10-08: the WiFi could not be switched off for the test. Listed under Before release. The server-drop tests of B2 exercise the same recovery from the moment the connection is lost, but not the loss of WiFi itself or the wait for it to return |
+| B1. WiFi lost and restored in each of `IDLE`, `CAPTURING`, `THINKING` and `SPEAKING`, on the bench; what is found is corrected | Put off on 2026-10-08: the WiFi could not be switched off for the test. Listed under Before release, and made there on 2026-10-26 with the device idle; the other phases were dropped that day as not needed. The server-drop tests of B2 exercise the same recovery from the moment the connection is lost, but not the loss of WiFi itself or the wait for it to return |
 | B2. The server stopped in each phase of a turn | Done on the bench on 2026-10-08, a person speaking, the server's process killed by a script watching its log: 2.1 s into a request, 0.4 s and 7.4 s after a request ended with the device waiting for the reply, and 3.5 s into a spoken reply. Each time the device showed the loss within about 30 ms, held `ERROR` for 4 s, rested on `CONNECTING`, and was back in `IDLE` by itself 12.7 to 21 s after the loss, within 2 to 3 s of the server being up again. The reply that was cut stopped within about 100 ms, and cleanly as heard. A request spoken after the first loss was answered. Nothing needed correcting |
 | B3. Watchdogs: a hung task resets the device; the capture, player and state-machine tasks are watched; the reason for the reset is shown after it | Done. A watched task that is silent for 5 s restarts the chip, with a core dump; after a restart nobody asked for, the line under `CONNECTING` names the cause until the first attempt to reach the server has ended. Seen on the bench on 2026-10-08, twice, with a test build that could hang the state-machine task on command, not kept: the watchdog named the task and restarted the chip 5 to 8 s after the hang, the core dump was saved, the boot log gave "task watchdog" as the reset reason, the state read "connecting, Restarted: watchdog", and the device was back in `IDLE` 5 and 10 s after the restart. Over about 70 minutes of ordinary use before that, with thirteen turns and four lost connections, the watchdog did not fire. The capture and player tasks were not hung on purpose |
 | B4. Brownout guard: the cause shown at boot, and repeated brownouts ending in `ERROR` with the amplifier off instead of a loop of resets | Done, and seen on the bench on 2026-10-08 with a test build that counted its next three boots as brownouts, not kept: the first two started normally with the state reading "connecting, Restarted: supply dipped"; the third stopped at "error, Power supply too weak" with no attempt to connect; a restart from the console cleared it and the device returned to `IDLE`. No real brownout was caused, so what the chip's memory keeps through one is taken from its documentation, not seen. At the third brownout in a row, each within 60 s of the boot before it, the device does not join WiFi or play anything and shows `ERROR`, "Power supply too weak", until it is powered off and on or restarted from the console. The count is kept in memory that survives a restart but not a loss of power; nothing is written to flash |
@@ -624,7 +626,7 @@ first spoken test, and was reviewed by both agents by itself.
 | 3. Firmware: state machine | Done and seen working through every state of a turn |
 | 4. Firmware: upload | Done and seen working: two requests in a synthetic voice were transcribed word for word |
 | 5. Firmware: playback | Done and seen working: replies of 0.6 s and 33 s played to their end, and were heard. At 40 % and then 60 % of the server's level they were too quiet; the audio is now played as sent, at 100 %, which was heard and is better, though a little quiet with the voice now in use |
-| 6. Firmware: failure paths | Done. Seen working: a server killed and restarted, a second connection under the device's identifier, a refused token, and a server `error` in the middle of a turn. Not yet seen: the device's own deadlines, an incompatible version; put off until after stage 8 (Before release) |
+| 6. Firmware: failure paths | Done. Seen working: a server killed and restarted, a second connection under the device's identifier, a refused token, and a server `error` in the middle of a turn. The device's own deadlines and an incompatible version were seen on 2026-10-26, against a stand-in server that misbehaved on purpose (Before release) |
 | 7. Measurements | Done: memory, stack headroom, chip temperature, pacing, the wait for a reply, the long run, taken as made: nine spoken turns in a row over four and a half minutes on 2026-10-06, shorter than the ten minutes planned, and about twenty more turns over several sittings the next day, accepted together in its place, and the supply check, measured on 2026-10-07 with the USB power meter: about 0.582 A at 4.822 V for 10 s of full-scale tone, and about 0.2 A at 4.918 V through a spoken reply of 66.7 s at the full level, with no reset in either (R2) |
 | 8. Firmware: chime | Done and heard, added on 2026-10-07 after the first spoken test: two notes when the wake word is heard, and the request starts when they end |
 
@@ -740,7 +742,7 @@ conditions it was taken under. The record is kept in R20 of
 | 4 | Wake word | Done, with a deviation (see below) | microWakeWord integrated with a continuous ring buffer; detection drives the state transition. Custom phrase trained and thresholds tuned against a multi-hour false-accept run. |
 | 5 | Server v1 | Done | WebSocket server, device authentication, day-scoped conversation store, and the speech-to-text, Claude and text-to-speech chain, with the reply synthesised sentence by sentence. Validated end to end by a desktop client script with no device involved. |
 | 6 | Integration | Done | Device WebSocket client and mDNS lookup, streaming upload during capture, server-driven endpointing, streaming playback, real state machine, and error, timeout and reconnect paths, all as [docs/PROTOCOL.md](docs/PROTOCOL.md) describes. First end-to-end conversation. |
-| 7 | Latency and robustness | Done, with WiFi lost and restored put off to Before release | Measured end-to-end latency against the budget, with the inexpensive ways of shortening it taken; the end-of-speech silence tuned; WiFi and server-drop recovery, watchdogs, brownout guard. The budget itself need not be met (see Stage 7 plan). |
+| 7 | Latency and robustness | Done, with WiFi lost and restored made on 2026-10-26 (Before release) | Measured end-to-end latency against the budget, with the inexpensive ways of shortening it taken; the end-of-speech silence tuned; WiFi and server-drop recovery, watchdogs, brownout guard. The budget itself need not be met (see Stage 7 plan). |
 | 8 | Polish | Done | Volume control by voice, provisioning through a hotspot web page, interrupting a reply with a button, and continuous conversation chosen with a switch. The animations stay as they are, and over-the-air updates are not adopted (see Stage 8 plan). |
 
 Stage 0 is hardware only and produces no code. Peripherals cannot be
@@ -772,6 +774,9 @@ trained on, to show 90 %. False detections are not measured on the
 device at all: the cutoff is the training notebook's starting value and
 has not been tuned. The false-accept run is recommended before any
 release, and after any further training run, since it is made per model.
+A counted detection test was made by the same speaker before release and
+worked well; its scores were not kept. No further training run is
+planned, decided on 2026-10-26.
 The open items are in R1 of [KNOWN-ISSUES.md](KNOWN-ISSUES.md); how to
 make the run is in [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md).
 
@@ -797,7 +802,8 @@ the repository.
 
 ## Next steps
 
-1. Every stage is done: work through the Before release list below.
+1. Every stage is done. Of the Before release list below, the
+   multi-hour false-accept run remains, left open on 2026-10-26.
 2. Obtain a multimeter for the continuity checks before the circuit is
    soldered (R9).
 
@@ -809,12 +815,48 @@ comes up then.
 
 | Item | From | Detail |
 | --- | --- | --- |
-| Multi-hour false-accept run, and the cutoff tuned with it | Stage 4 | Made on the model that is released, after any further training run. KNOWN-ISSUES R1; how to make it is in [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md) |
-| Counted detection test | Stage 4 | 10 tries at each distance, in a quiet room, with scores noted; by more than one speaker if others will use the device. KNOWN-ISSUES R1 |
-| Failure paths not yet seen on the device | Stage 6 | The device's own deadlines (15 s of capture, 40 s of waiting, 40 s of a stalled reply) and a server speaking an incompatible protocol version. Written and reviewed, never triggered on the bench. To be done after stage 8 |
-| WiFi lost and restored | Stage 7 | With the device idle, and a few seconds into a spoken reply: the router or its radio switched off and on. Expected: the device shows the loss, keeps trying, and returns to `IDLE` by itself. Put off because the WiFi could not be switched off on the day |
-| The cap on continuous conversation | Stage 8 | Ten follow-ups in a row should end in `IDLE`, with the log saying so. Built and reviewed, not reached on the device |
-| A further training run, if wanted | Stage 4 | For other speakers, and for "hey cloud". The notebook's limits to deal with first are in KNOWN-ISSUES R16 |
+| Multi-hour false-accept run, and the cutoff tuned with it | Stage 4 | Open. Made on the model that is released, run 3's. KNOWN-ISSUES R1; how to make it is in [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md) |
+| Counted detection test | Stage 4 | Done before release by the speaker the model was trained on, and worked well; the scores were not kept. KNOWN-ISSUES R1 |
+| Failure paths not yet seen on the device | Stage 6 | Done on 2026-10-26; all four passed (below) |
+| WiFi lost and restored | Stage 7 | Done on 2026-10-26 with the device idle, and passed (below). The same test a few seconds into a spoken reply was dropped that day as not needed: the server-drop tests of stage 7 (B2) cover a reply cut by a lost connection |
+| The cap on continuous conversation | Stage 8 | Done on 2026-10-26, and passed (below) |
+| A further training run, if wanted | Stage 4 | Not wanted, decided on 2026-10-26. The device is released with run 3's model; other speakers and "hey cloud" remain as R1 describes |
+
+**On the device, 2026-10-26.** Measured on the breadboard, USB-powered,
+the stage 8 firmware, the server on the same LAN reaching Claude through
+Claude Code. Chip temperatures are in R20 of
+[KNOWN-ISSUES.md](KNOWN-ISSUES.md).
+
+- *WiFi lost and restored, idle.* The router was switched off for about
+  3.5 min, most of it the router booting. The device saw the loss at
+  once, held `ERROR` ("Lost the server connection") for 4 s, then rested
+  on `CONNECTING`, retrying the WiFi at growing intervals of up to 30 s.
+  It rejoined the WiFi 3 min 28 s after the loss, found the server by
+  mDNS 0.7 s later, and was in `IDLE` within a second, untouched.
+- *The device's own deadlines.* Against a stand-in server, a short script
+  outside the repository that accepts the connection and then misbehaves
+  on purpose, reached through the `server_url` setting, which was
+  cleared afterwards. With no `stop_capture`, capture ended 15.0 s after
+  it began. With `stop_capture` and nothing after it, the device gave up
+  40.0 s later. With 1 s of tone as a reply and then silence, it gave up
+  40.0 s after the last audio, with "Reply stopped arriving". Each time
+  it showed `ERROR` ("Server did not answer" for the first two), closed
+  the connection, reconnected within 1.5 s and was in `IDLE` 4 s after the
+  error. The tone stuttered, because the stand-in sent it at barely real
+  time with none of the real server's 2 s lead; that is the stand-in's
+  doing.
+- *An incompatible protocol version.* A `ready` stating version 2 was
+  refused, the log naming both versions, and the device rested on
+  `CONNECTING` with "Server and device versions differ", trying again
+  about every 31 s and refusing each time.
+- *The cap on continuous conversation.* With the switch closed, eleven
+  spoken turns in five minutes: the wake word, then ten follow-ups. After
+  the tenth reply the device returned to `IDLE`, the log reading
+  "continuous conversation: 10 follow-ups in a row; the wake word is
+  needed again". Each follow-up's request began 210 to 225 ms after the
+  reply ended. The first three replies each used a search and fell
+  silent for 6.1, 9.7 and 8.2 s about a second in, the pattern R21
+  describes; the other eight played without a gap of more than 10 ms.
 
 ## Open decisions
 

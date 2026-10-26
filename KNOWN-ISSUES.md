@@ -48,7 +48,10 @@ remain open.
 
 - The detection target is not established. The device test was 7 tries
   at each distance, by the speaker the model was trained on, with the
-  room conditions not noted: too few to show 90 %.
+  room conditions not noted: too few to show 90 %. A counted test, 10
+  tries at each distance in a quiet room, was made later by the same
+  speaker before release and worked well, but its scores were not kept,
+  so the figure is still unrecorded, and holds for that speaker only.
 - The false-detection target has not been measured on the device. Stage 4
   closed without the multi-hour false-accept run, so the cutoff is the
   training notebook's starting value, not a tuned one. The run is
@@ -60,6 +63,9 @@ remain open.
 - "Hey cloud" can trigger, and did once in the device test. It scores
   above any usable cutoff in the real-voice test, so the remedy is more
   recordings of it in a further run, not a higher cutoff.
+
+No further run is planned, decided on 2026-10-26: the device is released
+with run 3's model, and the last two points stand.
 
 Each run's results are recorded in one place, the run history in
 [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md).
@@ -548,6 +554,9 @@ The record:
 | 2026-10-18 | Same bench and firmware, no reset. Once a minute for 7 min through the interrupt test: nine spoken turns in three minutes, four interrupted by the button, then idle | 55.5 to 56.5 °C, 56.5 °C during the turns |
 | 2026-10-19 | Same bench, the stage 8 part D firmware (continuous conversation), on for 18 to 30 min. Every three minutes through eight spoken turns in four minutes, four of them follow-ups and three with a search, then idle | 55.5 °C at all five readings |
 | 2026-10-19 | Same bench, the part D firmware as corrected after review. Within half a minute of flashing, idle; three minutes later, between five spoken turns, three of them follow-ups and one interrupted by the button; and three minutes after that, idle, two minutes after the last reply | 52.5, 56.5, 55.5 °C |
+| 2026-10-26 | Same bench, the stage 8 firmware, read every 20 s from 20 s after a restart. Connected and idle for 4 min; then the router switched off for 3.5 min, the radio searching for it; then connected again | 49.5 °C rising to 52.5 °C while idle; falling to 38.5 °C within 3 min of the router going off; 45.5 °C at the reconnection. Seen in passing, not a controlled comparison, but a first sign of the radio's share of the heat |
+| 2026-10-26 | Same bench, no reset, read every 20 s for 6 min through the deadline tests against a stand-in server: 15 s of capture, 40 s of waiting and 40 s of a stalled reply, each ending in `ERROR`, then refused connections over a protocol mismatch | 53.5 to 54.5 °C |
+| 2026-10-26 | Same bench, after a restart, read every 20 s: idle for 2 min, then eleven spoken turns in five minutes in continuous conversation, ten of them follow-ups and three with a search | 54.5 °C idle; 55.5 to 57.5 °C through the turns |
 
 The readings during replies were taken at playback levels of 40 % and
 60 %, but for the last, of 2026-10-07, at the present 100 %.
