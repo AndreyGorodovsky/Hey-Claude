@@ -1,8 +1,7 @@
 # Device protocol
 
 The reference for everything that passes between a device and the server.
-Both sides are built: the server's in stage 5, the device's in stage 6.
-Each keeps the protocol's numbers in one file, `server/protocol.py` and
+Each side keeps the protocol's numbers in one file, `server/protocol.py` and
 `firmware/components/protocol/include/protocol.h`, and a test on the
 server side reads both and fails if they disagree or if a limit that must
 outlast another does not.
@@ -279,8 +278,8 @@ so that the server's `error` arrives first when a service fails:
   waits 40 s;
 - inside a reply, the longest silence the server's services allow is 39 s
   (24 s from Claude, then 5 s to reach the synthesiser and 10 s of silence
-  from it), and the device allows 40 s. The first of these was 20 s until
-  stage 7 and cannot be raised further.
+  from it), and the device allows 40 s. The 24 s cannot be raised
+  further.
 
 "Silence from Claude" is silence in the text of the reply, whatever else
 the server may be receiving meanwhile. With Claude reached through
