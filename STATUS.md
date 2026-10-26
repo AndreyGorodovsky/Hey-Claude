@@ -119,7 +119,7 @@ during a reply, which the server-drop tests already cover.
 2. Obtain a multimeter for the continuity checks before the circuit is
    soldered (R9).
 3. Bench the Claude Code version now installed (Environment;
-   README.md, Updating Claude Code).
+   docs/OPERATING.md, Updating Claude Code).
 
 ## Environment
 

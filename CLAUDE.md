@@ -37,7 +37,7 @@ For each stage or change:
 | esp-tflite-micro, esp-nn, esp-micro-speech-features | 1.3.3~1, 1.1.2, 1.2.3 | Exact: the wake-word cutoff depends on their arithmetic |
 | Python | 3.11+ | |
 | Claude model | `claude-opus-5` | |
-| Claude Code | 2.1.303 last benched, not pinned | Default backend; after an update follow README.md, Updating Claude Code |
+| Claude Code | 2.1.303 last benched, not pinned | Default backend; after an update follow docs/OPERATING.md, Updating Claude Code |
 
 ## Environment
 

@@ -1,7 +1,8 @@
 # Getting started
 
 From the parts on the bench to the first spoken answer, in order. Each
-step links to the part of [README.md](../README.md) that holds the detail.
+step links to where the detail is: [README.md](../README.md) for the
+hardware, [OPERATING.md](OPERATING.md) for the rest.
 
 ## What is needed
 
@@ -21,7 +22,7 @@ step links to the part of [README.md](../README.md) that holds the detail.
    gives it. [docs/BRINGUP.md](BRINGUP.md) checks each peripheral in turn.
 
 2. **Set up the server** as in
-   [Running the server](../README.md#running-the-server): create the
+   [Running the server](OPERATING.md#running-the-server): create the
    virtual environment, copy `server/.env.example` to `server/.env`, and
    fill in `DEEPGRAM_API_KEY` and `TIMEZONE`.
 
@@ -44,7 +45,7 @@ step links to the part of [README.md](../README.md) that holds the detail.
 
 4. **Flash the firmware** from an ESP-IDF v5.5 PowerShell, in `firmware/`,
    with the board's **UART** port connected
-   ([Building and setting up the device](../README.md#building-and-setting-up-the-device)):
+   ([Flashing the firmware](OPERATING.md#flashing-the-firmware)):
 
    ```sh
    idf.py -p PORT flash monitor
