@@ -1,7 +1,7 @@
 # Bring-up test programs
 
-Standalone ESP-IDF programs used during stage 0 to exercise each peripheral
-once it is wired. Each is its own project and uses the pinout in
+Standalone ESP-IDF programs that exercise each peripheral as it is wired
+([docs/BRINGUP.md](../../../docs/BRINGUP.md)). Each is its own project and uses the pinout in
 [../../../README.md](../../../README.md). None is part of the device firmware.
 
 | Program | Peripheral | What it does | Healthy output |
