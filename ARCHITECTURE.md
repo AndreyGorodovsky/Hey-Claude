@@ -1,564 +1,411 @@
 # Architecture
 
-Design reference for the Hey Claude voice assistant. This describes the
-intended system; which parts are built is tracked by stage in
-[STATUS.md](STATUS.md). Decisions recorded here were
-made during the feasibility review and are binding unless explicitly revisited.
+How the Hey Claude voice assistant is designed, and why. Its parts are all
+built; what has been measured is in [STATUS.md](STATUS.md), and the open
+risks in [KNOWN-ISSUES.md](KNOWN-ISSUES.md). The decisions recorded here
+are binding unless explicitly revisited.
 
-## Design principles
+## Overview
+
+```
+   ┌──────────────── ESP32-S3 device ────────────────┐      ┌──── LAN server ────┐
+   │                                                 │      │                    │
+   │  INMP441 mic ──► wake-word model ──► capture ───┼─────►│ speech-to-text     │
+   │                                                 │  WS  │        ▼           │
+   │  NV3007 display ◄── state machine               │      │ Claude             │
+   │                                                 │      │        ▼           │
+   │  speaker ◄── MAX98357A amp ◄── playback ◄───────┼──────┤ text-to-speech     │
+   └─────────────────────────────────────────────────┘      └────────────────────┘
+```
+
+The device listens for the wake word, streams the request, and plays the
+reply. The server decides everything else: when the request has ended,
+what the conversation holds, and what Claude says.
+
+**One turn, start to finish:**
+
+1. The wake word fires on the device. It plays a chime, then sends
+   `utterance_start` and streams 20 ms audio frames.
+2. The server transcribes as audio arrives (Deepgram), decides that the
+   speaker has finished, and sends `stop_capture`.
+3. The request joins the day's conversation and goes to Claude, by
+   default through the Claude Code tool, which can search the web.
+4. Claude's reply is cut into sentences as it streams; each is
+   synthesised (Deepgram) and sent as audio at most 2 s ahead of playback.
+5. The device plays the audio as it arrives, and `reply_end` closes the
+   turn. With the switch closed, it then listens again without the wake
+   word.
+
+**Design principles**
 
 1. **The device is stateless.** It holds no conversation history and no
-   credentials beyond its own identity. Any device can be reflashed or replaced
-   without data loss.
-2. **The server owns all judgement.** End-of-speech detection, conversation
-   grouping and error recovery are server-side. Firmware executes a state
-   machine and nothing more.
+   credentials beyond its own identity, so it can be reflashed or replaced
+   without loss.
+2. **The server owns all judgement.** End-of-speech detection, the
+   conversation and error recovery are on the server; the firmware runs a
+   state machine.
 3. **Stream everything.** Audio moves in both directions while it is still
-   being produced. A request/response design cannot reach acceptable latency
-   and cannot be retrofitted cheaply.
+   being produced. A request-and-response design cannot reach acceptable
+   latency and cannot be retrofitted cheaply.
 4. **No secrets in firmware.** API keys exist only on the server.
 
 ## Device
 
-### Firmware structure
+### Components
 
 | Component | Responsibility |
 | --- | --- |
-| `main` | Startup order, boot banner, the brownout guard, serial console and its commands: settings, audio, display and wake-word tests, and read-outs of the state, the server connection, memory and chip temperature |
-| `app_config` | Settings stored in NVS: loading the running configuration, validating and storing edits, all of a set or none. No user interface of its own |
-| `net` | WiFi station: joining, reconnecting with backoff, readable failure reasons, and giving up on settings that have never worked |
-| `setup` | Setup mode: a hotspot of the device's own with a settings page and a captive-portal DNS, entered by restarting into it; the BOOT button that opens it |
-| `audio` | Microphone capture and amplifier playback over I2S: plain 16-bit samples in and out, no buffering or tasks of its own |
-| `audio_ring` | The microphone's only reader: a capture task filling a ring buffer of the last 2 s, from which every listener reads at its own position |
-| `wakeword` | On-device wake-word detection with a microWakeWord model; announces detections and decides nothing else |
-| `app_state` | The device state, its detail text, and whether continuous conversation is on: stored, and announced on change. Decides no transitions |
-| `state_machine` | The state machine: the one place that decides what the device does next, and the only writer of the state. Also runs the request upload, and keeps the playback volume in a file of its own, `volume.c` |
-| `server_link` | The WebSocket connection to the server: finds it by mDNS, connects, authenticates, reconnects with backoff, and turns the server's messages into reports |
-| `player` | Reply playback: a buffer for 4 s of reply audio and the task that plays it, at the playback level, through a limiter |
-| `protocol` | The protocol's numbers as the firmware uses them, in one header. A test on the server side holds it to the server's own |
-| `display` | The NV3007 panel, its backlight, and what is drawn for each state, from a single task that is the only user of LVGL |
-| `controls` | The push button and the slide switch on the breadboard: reads both, settles their contact bounce, and announces a press of the button and each move of the switch; decides nothing |
-| `board` | The verified pin map and panel geometry, the single source of both |
+| `main` | Start-up order, boot banner, the brownout guard, and the serial console with its commands |
+| `app_config` | Settings in NVS: loads the running configuration, checks and stores edits, all of a set or none |
+| `net` | WiFi: joining, reconnecting with backoff, readable failure reasons, giving up on settings that have never worked |
+| `setup` | Setup mode: a hotspot with a settings page and captive-portal DNS; the BOOT button that opens it |
+| `audio` | Microphone capture and amplifier playback over I2S: plain 16-bit samples, no buffering or tasks of its own |
+| `audio_ring` | The microphone's only reader: a capture task filling a 2 s ring buffer, read by every listener at its own position |
+| `wakeword` | Wake-word detection; announces detections and decides nothing |
+| `app_state` | The device state, its detail text and the continuous-conversation mark: stored, and announced on change |
+| `state_machine` | Decides what the device does next and is the only writer of the state; also runs the request upload and keeps the volume (`volume.c`) |
+| `server_link` | The WebSocket connection: finds the server by mDNS, connects, authenticates, reconnects, and turns messages into reports |
+| `player` | Reply playback: a 4 s buffer and the task that plays it, at the playback level, through a limiter |
+| `protocol` | The protocol's numbers, in one header, held to the server's by a test |
+| `display` | The panel, its backlight and each state's screen, from the one task that uses LVGL |
+| `controls` | The button and the switch: reads both, settles contact bounce, announces presses and moves |
+| `board` | The verified pin map and panel geometry |
 
-Settings are loaded once at boot into a read-only structure. Edits change only
-what is stored and apply after a reboot, so no running code has to cope with a
-setting changing underneath it. `app_config` knows nothing about the console
-or the setup page, which both store through `app_config_store()`: every value
-is checked first, and nothing is written unless all pass.
+**How they talk.**
 
-`net` keeps no connection state for other components to query. Consumers
-subscribe to the standard `IP_EVENT_STA_GOT_IP` and
-`WIFI_EVENT_STA_DISCONNECTED` events on the default event loop.
+- **Events on the default event loop**, for news with several listeners:
+  WiFi up and down (`IP_EVENT_STA_GOT_IP`, `WIFI_EVENT_STA_DISCONNECTED`),
+  `APP_STATE_CHANGED` (the display follows it), `WAKEWORD_DETECTED` with
+  the position where the phrase ended, `WAKEWORD_LISTENING` when the
+  microphone or model stops or resumes, `CONTROLS_BUTTON_PRESSED` the
+  moment the button goes down, and `CONTROLS_SWITCH_CHANGED`. A switch
+  move is a level, so one the loop has no room for is announced again
+  every 10 ms until it goes.
+- **Direct calls** for reports with one receiver: `server_link` and
+  `player` call a function given to them at start, so a report cannot be
+  lost or reordered. Neither knows `state_machine`; the boot sequence
+  joins them. Reply audio passes through `state_machine` on its way to
+  `player`, and only while a turn is under way, so the tail of an
+  abandoned turn never reaches the speaker.
+- **One writer of the state.** Components that detect something report
+  it and never set the state. The state machine writes it in normal
+  operation, setup mode's loop on a setup boot; the console can only
+  read it (`display preview` draws a state's screen without setting it).
+- **Settings** are loaded once at boot into a read-only structure; edits
+  apply after a reboot, so no running code sees a setting change under
+  it. The console and the setup page both store through
+  `app_config_store()`, which checks every value and writes all or none.
+- **Whether the device can hear** has one owner, `wakeword`, which
+  answers `wakeword_listening()`. The state machine asks it each time it
+  chooses what to show and keeps no copy, so `IDLE` is never shown on a
+  device that cannot hear.
 
-`app_state` announces changes the same way, as `APP_STATE_CHANGED` on the
-default event loop, and the display follows them without being called.
-`wakeword` announces each detection as `WAKEWORD_DETECTED`, carrying the
-position in the audio stream where the phrase ended. `controls` announces
-each press of the button as `CONTROLS_BUTTON_PRESSED`, the moment the
-button goes down, and each move of the switch as `CONTROLS_SWITCH_CHANGED`.
-A move is a level and not an event, so one the event loop has no room for
-is announced again on every poll, 10 ms apart, until it goes.
-`app_state` has exactly one writer on each kind of boot. In normal
-operation it is the state machine, `state_machine`: the boot sequence sets
-the first states and then hands over. On a boot that runs setup mode the
-state machine is never started, and setup mode's loop is the writer. Components that detect
-something (the wake word, a server message, a lost connection) report it
-and never set states themselves; otherwise two tasks setting states at once
-would leave the screen on whichever came last. The console can read the
-state but not set it. To look at a state's screen without bringing the
-state about, the console's `display preview` draws any state for a few
-seconds; it changes what is drawn and leaves the state alone.
+### State machine
 
-`server_link` and `player` report to the state machine by calling a function
-given to them at start, and `server_link` hands reply audio on the same way. They
-do not use the event loop for this: each report has one receiver, and a
-call cannot be lost on the way or arrive out of order. Neither component
-knows of `state_machine`; the boot sequence joins the three. Wake-word detection
-keeps its events, which the `wake` console command also relies on, and the
-button's presses arrive the same way.
+The eight states are what a person needs to see:
 
-Reply audio passes through `state_machine` on its way to `player`, and is let
-through only while a turn is under way. Audio arriving at any other time,
-such as the tail of a turn the device has already given up, never reaches
-the speaker.
+| State | Entered when | Screen |
+| --- | --- | --- |
+| `BOOT` | Power on | Splash |
+| `SETUP` | A setup-mode boot (see Setup mode) | The reason, and how to reach the settings page |
+| `CONNECTING` | Boot complete, or a lost connection after its error | Why the last attempt failed |
+| `IDLE` | Server session ready | Waiting for the wake word |
+| `CAPTURING` | Wake word in `IDLE`, or a reply played in full in continuous conversation | Listening |
+| `THINKING` | `stop_capture` | Waiting for the reply |
+| `SPEAKING` | The reply's first sound reaches the speaker | Playing |
+| `ERROR` | A failed turn, a lost connection, a device that cannot hear or speak, or the third brownout in a row | The reason |
 
-`state_machine` handles everything in one task, from one queue, one report at a
-time, so no two decisions overlap and its variables need no lock. It never
-waits on the network: everything the device sends during a turn is sent by
-the upload task. Time limits use the same queue: the task waits for the
-next report only until the current deadline, and a wait that runs out is
-the deadline passing.
+The state machine works in finer steps, its phases, each shown as one of
+these: waiting for a reply and holding its first audio both show
+`THINKING`; playing and playing out show `SPEAKING`; a failure shown
+briefly and a fault that stays both show `ERROR`. Every reason's wording
+is in one table in `state_machine`, sized to the panel's detail line; the
+sentence in a server `error` goes to the log.
 
-The eight device states are chosen for what a person needs to see. The
-state machine needs finer steps, so it keeps its own, the phase, and shows
-each phase as one of the states: waiting for a reply and holding its first
-audio both show `THINKING`; playing and playing out both show `SPEAKING`;
-a failure shown for a few seconds and a fault that stays both show
-`ERROR`. The wording for every reason is in one table in `state_machine`, sized to
-the panel's detail line.
+It runs in one task, from one queue, one report at a time, so no two
+decisions overlap and nothing needs a lock. It never waits on the network:
+everything sent during a turn is sent by the upload task. A deadline is
+the queue's wait running out.
 
-The state machine also learns when the device can no longer hear.
-Whether it can is one fact with one owner, `wakeword`, which answers
-`wakeword_listening()`. It announces `WAKEWORD_LISTENING` when the
-microphone's audio stops or resumes, or the model fails; the announcement
-says only that the answer has changed, and the state machine asks for the
-answer each time it chooses what to show, keeping no copy that a lost
-announcement could leave wrong. The boot sequence reports whether playback
-started. A device that cannot hear or speak shows `ERROR` with the reason
-and stays there, so the screen never shows `IDLE` on a device that cannot
-hear.
+**After `ERROR`.** A server `error` ends one turn and keeps the
+connection: `ERROR` for 4 s, then `IDLE`. A lost connection: `ERROR`, then
+`CONNECTING` with backoff. A device that cannot hear or speak stays on
+`ERROR`. A device the server refuses restarts into setup mode, since
+retrying cannot fix it.
 
-Every boot logs the firmware version, flash size, free internal RAM and PSRAM,
-and the reset reason. Brownout and power-glitch resets are logged as errors,
-which makes a supply fault visible without instruments (R2, R9). A crash is
-written to a core-dump partition and can be read after the reboot with
-`idf.py coredump-info`.
+**The device gives up on a turn by itself** after 15 s of capture with no
+`stop_capture`, 40 s of `THINKING` with no reply, 40 s of a reply with no
+audio arriving, a message that does not fit its phase, or a request that
+lost audio on the way out (the network stalled longer than the ring
+holds). It closes the connection, which is how the server learns of it,
+shows `ERROR` for 4 s, and reconnects. Each limit outlasts the server's own
+for the same wait, so the server's `error` arrives first
+([docs/PROTOCOL.md](docs/PROTOCOL.md), Time limits). After a reply, wake
+words are ignored for 0.7 s, so the reply's echo cannot start a request.
 
-**Recovering by itself.** Three things restart the chip without anyone
-asking: a crash, a watchdog, and the brownout detector. After any of them
-the line under `CONNECTING` names the cause, "Restarted: crash",
-"Restarted: watchdog" or "Restarted: supply dipped", until the first
-attempt to reach the server has ended one way or the other: a few seconds
-on a working network, and as long as there is no WiFi otherwise. The
-wording is in the state machine's one table, with every other reason.
+**Interrupting with the button.** A press while listening, thinking or
+speaking stops capture and playback at once, shows `IDLE` and sends
+`cancel`. Until the server answers with the turn's end, normally within a
+quarter of a second, a phase that looks like `IDLE` does not take the wake
+word. Nothing about an interrupted turn is shown as a failure: if the
+server does not answer, the connection is closed quietly. A press during
+the chime only stops it; one after `reply_end` only stops the playback;
+one at any other time does nothing.
 
-The task watchdog is ESP-IDF's timer that expects tasks to check in. Its
-limit is 5 s and a timeout is treated as a crash: a core dump, then a
-restart. It watches each core's idle task, which catches a task that hogs a
-core, and three of the firmware's own tasks, which catches one of them
-stuck: capture, the player and the state machine. Those are the tasks
-without which the device cannot hear, speak or decide, and whose longest
-wait is the firmware's own to bound; each asserts, when the firmware is
-built, that its longest wait is well inside the limit. The tasks that wait
-on the network or run mostly library code (wake-word detection, upload, the
-link, the WebSocket client) are not watched: the state machine's deadlines
-cover what they do, and wake-word detection reports its own failure.
-Seen on the bench on 2026-10-08, twice, with a test build that hung the
-state-machine task on command: the chip restarted 5 to 8 s later with a
-core dump, and the device was back in `IDLE` 5 and 10 s after that.
+**Continuous conversation.** With the switch closed, a reply played to
+its end is followed by the chime and a new request. The switch is the
+setting, read when a reply ends; nothing is stored. The device returns to
+`IDLE` when nothing is said within the server's 5 s wait, on any failure,
+on the button, with the switch open, on a lost connection, and after ten
+follow-ups in a row. The screen marks the mode on `IDLE` and `CAPTURING`.
+To the server a follow-up is an ordinary request.
 
-The brownout guard keeps a device on a supply too weak for it from
-restarting for ever. It counts brownouts that follow one another within
-60 s of each boot; at the third, the boot sequence stops before WiFi and
-the state machine, and the device rests on `ERROR`, "Power supply too
-weak", with its console working, until it is powered off and on or
-restarted from the console. The count lives in RTC memory, which survives a
-restart and not a loss of power; nothing is written to flash, and it is
-neither history nor a credential. The guard is asked after the display,
-microphone and wake word have started, so it covers a supply that fails
-when the radio or the amplifier comes on, not one too weak to reach that
-point. Seen on the bench on 2026-10-08 with a test build that counted
-ordinary restarts as brownouts; not seen with a real brownout (R2).
+### Setup mode
+
+Settings can be entered from a phone. Setup mode is a way of starting up:
+whatever wants it notes a reason in RTC memory, which survives a restart,
+and restarts the chip; the boot sequence then starts setup mode instead of
+the state machine, the server link and WiFi, and leaves it by restarting
+again. Nothing running ever has to be stopped.
+
+| Way in | Shown as | Closes by itself |
+| --- | --- | --- |
+| No WiFi network or token stored | "WiFi not set up", "Device token not set up" | No |
+| `setup` on the console | "Asked for at the console" | After 5 min |
+| BOOT held 3 s | "BOOT button held" | After 5 min |
+| Never-connected WiFi settings refused 5 times in a row | "WiFi password refused" | No |
+| The same, network not found in 10 min | "WiFi network not found" | No |
+| The server refuses the device | "Server refused this device" | No |
+
+Setup for missing or failed settings has no deadline, since going back to
+them would only fail again. Holding BOOT leaves setup mode at any time.
+
+1. The device scans for networks in range, so the page can offer them;
+   the scan comes first because an access point cannot change channel
+   under a joined phone.
+2. It becomes an access point, "Hey-Claude-" and four characters of its
+   MAC, with WPA2 and a random 8-character password made for each entry
+   and never stored. The name, password and page address are on screen.
+3. A captive-portal DNS answers every name with the device's address, so
+   a phone checking for the internet is sent to the page.
+4. The page asks for the WiFi network and password, the token and,
+   optionally, the server address, and shows the device identifier. The
+   stored password and token are never sent back: empty fields keep them.
+5. A save is checked by the console's rules, stored all or none, and the
+   device restarts. The WiFi password is not tried first, since that would
+   move the access point to the network's channel, away from the phone.
+
+`net` keeps a checksum of the WiFi settings that last connected, in an NVS
+namespace of its own. Settings that have connected are never given up:
+their network is only away. The hotspot and DNS were ported from the
+author's earlier project.
+
+### Recovering by itself
+
+Three things restart the chip unasked: a crash, the task watchdog and the
+brownout detector. Afterwards the line under `CONNECTING` names the cause,
+"Restarted: crash", "watchdog" or "supply dipped", until the first attempt
+to reach the server has ended. Every boot logs the firmware version, flash
+size, free memory and reset reason; brownouts are logged as errors, so a
+supply fault shows without instruments. A crash leaves a core dump, read
+with `idf.py coredump-info`.
+
+- **Task watchdog:** 5 s, treated as a crash. It watches each core's idle
+  task, which catches a task hogging a core, and the three tasks without
+  which the device cannot hear, speak or decide: capture, the player and
+  the state machine. Each asserts at build time that its longest wait is
+  well inside the limit. Tasks that wait on the network or run library
+  code are not watched; the state machine's deadlines cover them.
+- **Brownout guard:** at the third brownout in a row, each within 60 s of
+  the boot before it, the boot stops before WiFi and the state machine and
+  rests on `ERROR`, "Power supply too weak", with the console working,
+  until power is cycled or the console restarts it. The count is in RTC
+  memory, which survives a restart but not a power cut. The guard is asked
+  after the display, microphone and wake word have started, so it covers
+  a supply that fails when the radio or amplifier comes on.
+
+Both were tested with test builds that hung a task or counted ordinary
+restarts as brownouts; a real brownout has not been seen (R2).
+
+### Task and core allocation
+
+| Core | Tasks | Why |
+| --- | --- | --- |
+| 0 | WiFi and lwIP, WebSocket client, link, state machine, upload, display | Network jitter is tolerable for rendering |
+| 1 | Capture, wake word, player | Audio isolated from WiFi interrupt load, the likeliest cause of I2S underruns |
+
+This table is the one place task priorities are recorded; code refers
+here. Higher runs first.
+
+| Task | Priority | Core | Notes | Watched |
+| --- | --- | --- | --- | --- |
+| WiFi driver | 23 | 0 | ESP-IDF's | No |
+| `esp_timer` | 22 | 0 | ESP-IDF's; short callbacks: WiFi retry and give-up, the BOOT button's watch, the button and switch every 10 ms | No |
+| Default event loop | 20 | 0 | ESP-IDF's; also runs `net`'s handlers, which may write NVS or restart. Stack 3584 bytes, raised from 2304 (measured: 308 never used) | No |
+| Capture | 12 | 1 | Reads the microphone into the ring; must never fall 75 ms behind | Yes |
+| Player | 10 | 1 | Feeds the amplifier; above the wake word so a model run cannot delay the speaker | Yes |
+| Audio test tasks | 10 | 1 | Console `audio` commands, short-lived | No |
+| Wake word | 8 | 1 | Every 30 ms; reports its own failure | No |
+| WebSocket client | 7 | 0 | The component's task; receives reply audio | No |
+| Upload | 6 | 0 | Sends request frames while capturing; a send can block for seconds | No |
+| State machine | 5 | 0 | Each event well under a millisecond, except storing a changed volume, done only in `IDLE` | Yes |
+| Link | 5 | 0 | Looks up, connects, waits for the connection to end | No |
+| Display | 4 | 0 | LVGL drawing; sleeps between frames | No |
+| Web server | 5 | either | Setup mode only | No |
+| Captive DNS | 4 | either | Setup mode only | No |
+| Console | 2 | either | ESP-IDF's REPL | No |
+| `main` | 1 | 0 | Start-up, then ends; on a setup boot runs setup mode's loop | No |
+| Idle, one per core | 0 | each | FreeRTOS's | Yes |
+
+The audio set-up runs briefly on core 1, so that the I2S interrupts are
+placed there.
+
+### Memory
+
+| Buffer | Where | Why |
+| --- | --- | --- |
+| Audio ring (64 KB, 2 s) | PSRAM | Large, latency-tolerant |
+| LVGL frame buffer (~121 KB) | PSRAM | Too large for internal SRAM; DMA sends it from PSRAM at no measurable cost |
+| Wake-word tensor arena (~28 KB, 25.5 KB used) | Internal SRAM | Runs continuously; PSRAM latency would cost frames |
+| Wake-word model copy (~60 KB) | PSRAM | Read-only weights, copied from flash at boot for alignment |
+| Reply buffer (384 KB) | PSRAM | 4 s at the highest rate the amplifier takes; a 24 kHz reply uses half |
+| Chime samples (6.7 KB) | PSRAM | Computed at boot, copied into the reply buffer when played |
+| WebSocket client buffers (2 x 4 KB) | Internal SRAM | The component's own |
+| Network queues | Internal SRAM | Touched from interrupt context |
+
+Measured with `mem`, connected and after several turns: about 100 KB of
+internal RAM free, about 56 KB at its lowest, 7.7 MB of PSRAM free, and at
+least 1.3 KB of every task's stack never used.
+
+### Audio
+
+**Capture.** The INMP441 on I2S0 at 16 kHz, 16-bit mono, the rate both
+the wake-word model and speech-to-text expect, so nothing is resampled.
+
+- The microphone sends 24-bit samples; the top 16 bits are kept.
+- It runs from boot and never stops: it powers down when its clock stops
+  and takes about 2 s to settle after.
+- With `L/R` grounded it uses the left slot. The controller reads both
+  slots and keeps the left: its "mono" mode delivered both, interleaved
+  with zeros, on this chip.
+- Audio not read within about 75 ms is dropped by the driver.
+
+**The ring.** The capture task in `audio_ring`, the microphone's only
+reader, copies each 15 ms chunk into a 2 s ring in PSRAM. Every listener
+(wake word, upload, `audio loop`) reads at its own position; one more than
+2 s behind skips forward and is told how much it missed. A listener can
+start at a position noted earlier, which is how the upload begins exactly
+where the chime ended. A mutex guards the ring; capture waits about a
+millisecond at most.
+
+**Upload.** When a request starts, the upload task reads from where the
+chime ended, sends the frames already waiting at once, then one 20 ms
+frame as each is captured, until `stop_capture`. If any of the request's
+audio is no longer in the ring when it comes to read it, the request is
+given up rather than sent with a hole in it.
+
+**Chime.** Two 70 ms notes, 660 then 880 Hz, faded over 8 ms, at 30 % of
+full scale, computed at start by `player` (`chime.c`) and played through
+the reply path. The screen changes with the sound, and the request starts
+when it is over: the person has a signal to wait for, and the chime never
+reaches speech recognition; words spoken during it are lost. The request
+begins 220 ms after the wake word: 140 ms of notes, about 20 ms for the
+amplifier to wake, and silence written after the last note to push it out
+of the driver, which also keeps its tail out of the request. If the chime
+cannot play, or no report comes within 1 s, the request starts anyway.
+
+**Playback.** The MAX98357A on I2S1, 16-bit mono, at the rate in
+`reply_start`, 24 kHz for replies. `player` holds up to 4 s between the
+network, which delivers in bursts, and the amplifier, which takes audio at
+a fixed speed; the server sends at most 2 s ahead (Reply pipeline). A
+chunk that does not fit ends the reply and the connection. Playback starts
+once 80 ms is waiting, and stops within about 100 ms. The amplifier's `SD`
+pin is held low except during playback, which avoids its switch-on click;
+high, it selects the left slot.
+
+**Volume.** Levels 1 to 10, 3 dB apart, set by voice (Volume requests,
+under Server) or the console's `volume`. Level 8, the default, plays the
+audio as sent; level 10 is +6 dB, which the voice has room for (it peaks
+about 9 dB under full scale); level 1 is -21 dB. A limiter (`gain.c`)
+turns the level down the moment a sample would pass 1 dB under full scale,
+then back up over about 100 ms. The level is read at the start of each
+reply or chime, and the chime follows it down to a floor of -9 dB.
+
+The level is kept in NVS in its own namespace, `volume`, apart from the
+settings: it is the one value that changes while the device runs. A level
+from the server reaches the player as it arrives, before the confirmation
+that follows it. Writing flash pauses the audio tasks for milliseconds, so
+a changed level is stored only in `IDLE`.
+
+**WiFi power saving is off.** The radio's sleep holds data back for up to
+100 ms each way, heard as gaps; the device is mains-powered.
+
+### Wake word
+
+Detection runs on core 1 with a microWakeWord model, TensorFlow Lite for
+Microcontrollers and ESPHome's port of its feature front end. Every 10 ms
+the front end turns the latest 30 ms of audio into 40 frequency-band
+values, evening out steady noise and loudness; every third slice the model
+gives the probability that the phrase has just ended. The last five are
+averaged, and a detection fires when the average passes the cutoff; then,
+and at start-up, the detector waits a second.
+
+The model is two files in `firmware/components/wakeword/models/`: the
+network and a manifest of its training settings. The build takes the
+cutoff, averaging window, step and memory size from the manifest, their
+only source. The model in use is `hey_claude_run3`, trained for this
+project ([docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md)); its
+name, printed at boot and by `wake`, ties each test to its run. The
+component versions are pinned exactly, because the scores depend on their
+arithmetic.
+
+Measured on this model's shape: about 2.1 ms a run on average, 4.9 ms at
+most, every 30 ms (about 8 % of core 1), with 25.5 KB of working memory and
+a 61 KB model copy.
+
+### Display
+
+LVGL 9 drives the NV3007 over SPI2 at 80 MHz, the highest SPI2 supports,
+on its dedicated pins GPIO 10-12. The panel is write-only and has no
+tearing-effect output, so drawing cannot follow its refresh (R13). The
+initialisation is LVGL's `lv_nv3007` sequence.
+
+- **Landscape, 428 x 142,** by the controller's own address mode, so
+  rotation costs nothing. Its memory is 168 columns wide for the 142
+  visible; in LVGL's `ROTATION_270`, drawing is offset by 14 rows.
+- **One full-screen buffer** (121,552 bytes) in PSRAM, in the panel's byte
+  order (`RGB565_SWAPPED`). Only changed rectangles are redrawn, and DMA
+  sends each from PSRAM. A full frame takes 12.5 ms (measured); the state
+  animations change a 142 x 142 region, about 4 ms.
+- **The backlight** is PWM at 25 kHz, above hearing. It stays off until
+  the first frame is drawn, then fades in, and dims to 25 % in `IDLE`.
+- **The screens** are placeholders, kept as they are. Each state's title,
+  detail text, animation, brightness and continuous-conversation mark are
+  in one table in `display_ui.c`. Changing the mode alone shows or hides
+  the mark without restarting the animation.
 
 ### Flash layout
 
 | Partition | Offset | Size | Purpose |
 | --- | --- | --- | --- |
-| `nvs` | 0x9000 | 24 KB | Settings (namespace `config`), the volume (`volume`), and which WiFi settings have worked (`net`) |
+| `nvs` | 0x9000 | 24 KB | Settings (`config`), the volume (`volume`), WiFi settings that have worked (`net`) |
 | `otadata`, `phy_init` | 0xF000 | 12 KB | OTA slot selection, RF calibration |
 | `ota_0`, `ota_1` | 0x20000 | 4 MB each | Two application slots |
 | `coredump` | 0x820000 | 64 KB | Last crash |
 | unallocated | 0x830000 | ~7.8 MB | Reserved |
 
-The layout is OTA-ready from the start. Over-the-air updates are not
-adopted, and the device is flashed over USB; adopting them later
-needs no change to the flash layout. Flash runs in QIO mode at 80 MHz; PSRAM is octal at 80 MHz.
-
-### State machine
-
-| State | Trigger to enter | Display animation |
-| --- | --- | --- |
-| `BOOT` | Power on | Splash |
-| `SETUP` | Setup mode, on a boot of its own (see Setup mode) | Setup needed, the reason, and how to reach the settings page |
-| `ERROR` | At boot, the third brownout in a row | Error indicator, "Power supply too weak" |
-| `CONNECTING` | Boot complete | Connecting indicator |
-| `IDLE` | Server session ready | Waiting for wake word |
-| `CAPTURING` | Wake word detected while `IDLE`, or a reply played in full in continuous conversation | Listening |
-| `THINKING` | Server sends `stop_capture` | Waiting for response |
-| `SPEAKING` | The first sound of the reply reaches the speaker | Playing |
-| `ERROR` | A failed turn, a lost connection, or a device that cannot hear or speak | Error indicator |
-
-What follows `ERROR` depends on its cause. After an `error` message from
-the server, which ends one turn and leaves the connection open, the device
-shows `ERROR` briefly and returns to `IDLE`. After a lost connection it
-returns to `CONNECTING` after a backoff. `SETUP` belongs to setup mode,
-which the state machine never runs alongside (see Setup mode). Every other
-transition is driven
-either by local audio events or by server messages. `SETUP` and `ERROR`
-carry a short detail text naming the cause, and `CONNECTING` carries one
-saying why the last attempt failed; no other state has one. The
-wording is the device's own, chosen by cause and sized for the panel; the
-sentence in the server's `error` message goes to the log.
-
-A device whose identifier and token the server refuses restarts into setup
-mode: retrying cannot fix that.
-
-**Interrupting with the button.** A press while the device listens,
-thinks or speaks ends the turn. The device stops capture and playback at
-once, shows `IDLE`, and sends the server `cancel` (docs/PROTOCOL.md,
-Interrupting a turn). Until the server answers with the turn's end, the
-state machine is in a phase of its own that looks like `IDLE` but does not
-take the wake word, since the server would ignore a new request while the
-old turn runs; the answer normally comes within a quarter of a second.
-Nothing about an interrupted turn is shown as a failure: if the server
-does not answer, the device closes the connection quietly. A press during
-the chime only stops it, since no request has been sent; one in the last
-seconds of a reply, after `reply_end`, only stops the playback; one at any
-other time does nothing.
-
-**Continuous conversation.** With the slide switch closed, a reply that has
-played to its end is followed by the chime and a new request, as after the
-wake word, so that a conversation goes on without it. The switch is the
-setting; nothing is stored. Its position is read when a reply ends, so a
-move during a reply takes effect at that reply's end. The device returns
-to `IDLE` when nothing is said within the server's 5 s wait for the first
-word (the server ends the turn with `reply_end` and no reply), on any
-failure, on the button, including a press that cuts the end of a reply
-short, with the switch open, when the connection is lost, and after ten
-follow-ups in a row, so that the wake word is heard again now and then.
-The screen marks the mode on `IDLE` and `CAPTURING`. Nothing changes in
-the protocol: to the server a follow-up is a request like any other.
-
-### Setup mode
-
-Setup mode lets the settings be entered from a phone, without a USB cable.
-It is a way of starting up, not something switched on while the device
-runs: whatever wants it notes a reason in RTC memory, which survives a
-restart, and restarts the chip. The boot sequence then starts setup mode
-instead of the state machine, the server link and WiFi, and setup mode
-ends in a restart too. Nothing running ever has to be stopped, and every
-way out leaves the chip as a fresh start does.
-
-| Way in | Shown as | Deadline |
-| --- | --- | --- |
-| No WiFi network or no device token stored | "WiFi not set up", "Device token not set up" | None |
-| The `setup` console command | "Asked for at the console" | 5 min |
-| BOOT button held 3 s | "BOOT button held" | 5 min |
-| WiFi settings that have never connected: 5 refusals of the password in a row | "WiFi password refused" | None |
-| The same, with no connection in 10 min | "WiFi network not found" | None |
-| The server refuses the device's identifier and token | "Server refused this device" | None |
-
-Setup entered on purpose closes by itself after 5 minutes with nothing
-saved, and the screen counts the minutes down. Setup entered because the
-settings are missing or failed has no deadline: going back to them would
-only fail again, and come back here with a new hotspot password. Holding
-BOOT again leaves setup mode at any time.
-
-The device becomes a WiFi access point named "Hey-Claude-" and four
-characters of its MAC address, protected by WPA2 with a random 8-character
-password made for each entry. The name, the password and the page's
-address are on the screen; the password is never stored in flash. A
-captive-portal DNS answers every name with the device's own address, so
-that a phone, checking whether the network reaches the internet, is sent
-to the settings page and opens it by itself. Before the hotspot starts,
-the device scans for the networks in range, which the page offers to tap.
-The scan has to come first: the access point cannot change channel under
-a phone that has joined it.
-
-The page asks for the WiFi network, its password, the device token and,
-optionally, the server's address, and shows the device identifier the
-server must know. The stored password and token are never sent back: their
-fields are empty, and empty keeps what is stored; a box marks an open
-network. A save is checked by the same rules as the console and stored all
-or nothing, and the device restarts. The WiFi password is not tried before
-it is kept: trying it would move the access point to the network's
-channel, away from the phone. Settings that never work bring the device
-back to setup instead.
-
-Whether WiFi settings have ever worked is known to `net`, which keeps a
-checksum of the network name and password that last connected in an NVS
-namespace of its own, `net`. Settings that have connected before are never
-given up: their network is only away, a router restarting or switched off,
-and is waited for.
-
-The hotspot and its DNS were first built for the author's earlier project,
-and ported.
-
-The device gives up on a turn by itself in four cases: 15 s of capture
-with no `stop_capture`, 40 s of `THINKING` with no reply, 40 s of a reply
-under way with no audio arriving, and a message that does not fit the
-state it is in. A fifth case is a request that has lost some of its audio
-on the way out: the network stalled for longer than the microphone's ring
-buffer holds, so the request would reach the server with a hole in it. In
-each it closes the connection, which is how the server
-learns of it (docs/PROTOCOL.md, rule 6), shows `ERROR` for 4 s, and
-reconnects. Each of the three times is longer than the server's own limit
-for the same wait, so that the server's `error` arrives first; the figures
-are in [docs/PROTOCOL.md](docs/PROTOCOL.md). After a reply, wake-word
-detections are ignored for 0.7 s, so that the reply's last echoes cannot
-start a request.
-
-`CAPTURING` opens with a chime: two short rising notes that say
-the wake word was heard. The screen changes with the sound, and the
-request starts when the sound is over, so the device is not yet listening
-while it plays. That order is deliberate. The person has a signal to wait
-for before speaking, and the microphone's copy of the sound never reaches
-speech recognition. The cost is that words spoken during the sound are
-not sent. Measured on the breadboard on 2026-10-07, over five spoken
-turns: the request began 220 ms after the end of the wake word each time.
-If the sound cannot be played, the request starts all the same.
-
-Losing a working connection is shown as `ERROR` with the reason for a few
-seconds. While there is no server, the screen rests on `CONNECTING`, with
-the reason the last attempt failed under it; a failed attempt changes that
-line and nothing else.
-
-### Task and core allocation
-
-| Core | Tasks | Rationale |
-| --- | --- | --- |
-| 0 | WiFi and lwIP, WebSocket client, connection upkeep, state machine, request upload, display and LVGL | Network stack jitter is tolerable for rendering |
-| 1 | Audio capture, wake-word inference, reply playback | Hard real-time work isolated from WiFi interrupt load |
-
-Isolating the audio chain from the WiFi stack is deliberate: I2S DMA underruns
-produce audible artefacts, and WiFi driver interrupt latency is the most likely
-cause of them.
-
-Task priorities decide which ready task a core runs first; higher runs first.
-This table is the single place that records them, so that code comments
-refer here instead of quoting each other's numbers. The last column says
-which tasks the task watchdog watches (see Recovering by itself); a task
-added later is watched if the device cannot work without it and its
-longest wait is the firmware's own to bound.
-
-| Task | Priority | Core | Notes | Watched |
-| --- | --- | --- | --- | --- |
-| WiFi driver | 23 | 0 | ESP-IDF's; must keep up with the radio | No |
-| `esp_timer` | 22 | 0 | ESP-IDF's; runs software timer callbacks, which must be short: the WiFi retry and give-up timers, the BOOT button's watch, which may restart the chip, and the button and switch's watch, every 10 ms | No |
-| Default event loop | 20 | 0 | ESP-IDF's; delivers WiFi, state and wake-word events, and runs `net`'s handlers, which may write to NVS or restart the chip. Its stack is raised to 3584 bytes from 2304, which had 308 never used after an ordinary start (measured 2026-10-15) | No |
-| Capture | 12 | 1 | Reads the microphone into the ring; must never fall 75 ms behind | Yes |
-| Audio test tasks | 10 | 1 | Console `audio` commands, short-lived | No |
-| Player | 10 | 1 | Writes reply audio to the amplifier, which paces it; above the wake word so that a model run cannot delay the speaker | Yes |
-| Wake word | 8 | 1 | Features and model every 30 ms; sleeps between | No: it reports its own failure, and stops itself if the model fails |
-| WebSocket client | 7 | 0 | The component's own task, one per connection; receives reply audio and hands it to the player | No: it waits on the network |
-| Upload | 6 | 0 | Reads the ring and sends request frames while capturing; sleeps otherwise | No: a send can block for seconds |
-| State machine | 5 | 0 | Acts on one event at a time, each in well under a millisecond, except storing a changed volume, which writes to flash and is done only in `IDLE` | Yes |
-| Link | 5 | 0 | Looks the server up, connects, and waits for the connection to end | No: it waits on the network |
-| Display | 4 | 0 | LVGL drawing and animation; sleeps between frames | No |
-| Web server | 5 | either | Setup mode only: ESP-IDF's HTTP server, serving the settings page one request at a time | No: it waits on the network |
-| Captive DNS | 4 | either | Setup mode only: answers every name with the device's address | No: it waits on the network |
-| Console | 2 | either | ESP-IDF's REPL; typing must not stall animation or audio | No |
-| `main` | 1 | 0 | Runs the start-up sequence, then ends; in setup mode it runs setup mode's loop until the restart | No |
-| Idle, one per core | 0 | each | FreeRTOS's; runs when nothing else can | Yes: starved for 5 s means a task is hogging the core |
-
-The audio set-up in `audio_init()` runs briefly on core 1 at the caller's
-priority, so that the I2S interrupts are placed on core 1.
-
-### Memory placement
-
-| Buffer | Location | Reason |
-| --- | --- | --- |
-| Audio ring buffer (64 KB, 2 s) | PSRAM | Large, latency-tolerant |
-| LVGL frame buffer (~121 KB) | PSRAM | Too large for internal SRAM. DMA sends it to the panel directly from PSRAM, at no measurable cost (see Display) |
-| Wake-word tensor arena (~28 KB allocated, 25.5 KB used) | Internal SRAM | Inference runs continuously; PSRAM latency would cost frames |
-| Wake-word model copy (~60 KB) | PSRAM | Read-only weights, read through the cache; copied from flash at boot for alignment |
-| Reply buffer (384 KB) | PSRAM | 4 s of reply audio at the highest rate the amplifier accepts; a reply at 24 kHz uses half |
-| Chime samples (6.7 KB) | PSRAM | Computed once at boot and copied into the reply buffer when played; never handed to DMA |
-| WebSocket client buffers (2 x 4 KB) | Internal SRAM | Allocated by the component for each connection |
-| Network TX/RX queues | Internal SRAM | Touched from interrupt context |
-
-Measured on 2026-10-06 with the `mem` console command, on the breadboard,
-connected to the server, after two replies and a lost and restored
-connection: 100 KB of internal RAM free, 56 KB at the lowest since boot,
-and 7.7 MB of PSRAM free. Every task had at least 1.5 KB of its stack
-never used; the tightest were the link task (1580 bytes left of 4096), the
-state machine (1924 of 4096) and the player (1968 of 4096). Not measured:
-the upload task at the moment a send fails, when the WebSocket client's
-error handling runs on its stack, which is why that stack is larger.
-
-### Audio path
-
-- **Capture:** INMP441 on I2S0, 16 kHz, 16-bit mono. The microphone emits
-  24-bit frames; the top 16 bits are taken. 16 kHz mono is what both the
-  wake-word model and the speech-to-text service expect, so no resampling
-  occurs anywhere in the chain.
-- The microphone runs continuously from boot. It powers down whenever its
-  clock stops, and its output then takes about 2 s to settle after the clock
-  restarts, so stopping it between recordings would spoil the start of each
-  one. Callers pull samples with a blocking read; audio not read within about
-  75 ms is dropped by the driver.
-- The controller reads both I2S slots and keeps the left one. Its "mono" mode,
-  documented as reading one slot, delivered both slots at 32 bits on this
-  chip, interleaving every sample with a zero.
-- **Playback:** MAX98357A on I2S1, 16-bit mono, at the rate given when each
-  playback starts: 24 kHz for replies, which is announced by the server in
-  `reply_start`. Playback runs at a higher rate than capture because
-  synthesised speech benefits from it and the amplifier sits on an
-  independent I2S controller.
-- The amplifier `SD` pin is held low except during playback, to suppress the
-  switching click produced when the output stage engages. Driven high from a
-  3.3 V GPIO, it selects the left I2S slot, so playback samples are written to
-  the left slot, or to both.
-- The microphone, with `L/R` tied to ground, transmits in the left slot only.
-  The right slot reads zero.
-
-The ESP32-S3 has two independent I2S controllers, so capture and playback never
-contend. The I2S interrupt handlers run on core 1 with the rest of the audio
-chain: ESP-IDF places an interrupt on the core that sets it up, so the audio
-set-up runs in a short-lived task there.
-
-The `audio` component allows one reader of the microphone at a time. That
-reader is the capture task in `audio_ring`, on core 1, which copies every
-15 ms chunk into a 2 s ring buffer in PSRAM. Every listener reads from the
-ring at its own position: wake-word detection, the `audio loop` test, and
-from stage 6 the upload. A listener more than 2 s behind skips forward and
-is told how many samples it missed. A listener can also start at a
-position noted earlier, which is how the upload begins exactly where the
-chime ended. A mutex guards the ring; copies are short, so the capture task waits
-about a millisecond at most, against the 75 ms the microphone driver
-allows.
-
-**Request upload.** When a request starts, the upload task begins reading
-the ring at the position where the chime ended, which is
-slightly in the past by the time the task has woken. Those first frames go
-out at once; after that it sends one 20 ms frame as each is captured,
-until the server's `stop_capture`. If the audio the request starts with,
-or any later part of it, is no longer in the ring when the task comes to
-read it, the request is given up: the device does not send a request with
-a hole in it, as it does not play a reply with one.
-
-**Chime.** Two notes of 70 ms, 660 Hz and then 880 Hz, each
-faded in and out over 8 ms so that it does not click, at 30 % of full
-scale. `player` computes them at start, so the repository holds no audio
-file, and plays them through the same path as a reply: the amplifier has
-one user at a time, and that user is the player. What the chime sounds
-like is in one file of its own, `chime.c`. A reply that begins meanwhile
-replaces the sound. The player reports when the sound has left the
-speaker, and the state machine starts the request on that report, or
-after 1 s if none comes.
-
-The 220 ms between the wake word and the request is 140 ms of notes and
-about 80 ms around them. Of the 80 ms, about 20 ms is the amplifier
-waking before the first note, and most of the rest is the silence written
-after the last one, to push it out of the driver's buffers before the
-amplifier is switched off; these two parts are from the code's own
-figures, not measured apart. The silence after the last note is also what
-keeps the note's tail out of the request, so shortening it to save time
-changes what speech recognition hears.
-
-**Reply playback.** `player` holds reply audio between the network, which
-delivers it in bursts, and the amplifier, which takes it at a fixed speed.
-Its buffer has room for 4 s. The server sends at most 2 s ahead of
-playback (see Reply pipeline); the rest is margin for a stall on the
-network. A chunk that does not fit ends the reply and the connection: the
-device does not play a reply with a hole in it. Playback starts once
-80 ms is waiting, so that the first chunks arriving unevenly cause no gap
-in the first word, and can be stopped within about 100 ms for error
-paths.
-
-**Volume.** The playback volume is a level from 1 to 10, set by voice
-("louder", "volume five"; see Volume requests, under Server) or with the
-console's `volume`. Each level is 3 dB from the next. Level 8, the default,
-plays reply audio exactly as the server sends it, as every stage before 8
-did; 40 % and 60 % of that had been tried and found too quiet. Level 10 is
-+6 dB, a boost the audio has room for: the voice in use peaks about 9 dB
-under full scale. Level 1 is -21 dB. A limiter in the player (`gain.c`)
-keeps a boosted peak from clipping: when a sample would pass a ceiling
-1 dB under full scale it turns the level down at once by exactly enough,
-then lets it back up over about 100 ms. The level is read once at the
-start of each reply or chime. The chime follows the volume down to a floor
-of -9 dB, so that it is heard at every level before the device listens.
-
-The level is kept in NVS, in a namespace of its own, `volume`, apart from
-the settings: it is the one value that changes while the device runs and
-takes effect at once, and erasing the settings does not reset it. A level
-from the server reaches the player in the WebSocket client's task as soon
-as it arrives, so that it is in place before the reply that confirms it,
-by the order of the messages. Writing to flash pauses the chip's use of
-flash and PSRAM, and the audio tasks with it, for milliseconds and
-occasionally tens of them, so a changed level is stored only when the
-device is in `IDLE`, never during a reply.
-
-**WiFi power saving is off.** By default the radio sleeps between the
-router's beacons and can hold data back for up to 100 ms each way, which
-is heard as gaps and can stall a send long enough to lose the connection.
-The device is mains-powered, so the saving is not needed.
-
-### Wake word
-
-Detection runs entirely on the device, on core 1, using a microWakeWord
-model with TensorFlow Lite for Microcontrollers and ESPHome's port of its
-audio feature frontend. Every 10 ms the frontend turns the latest 30 ms of
-audio into 40 frequency-band values, evening out steady noise and loudness
-on the way; every third slice the model runs on the new slices and gives
-the probability that the phrase has just ended. The last five
-probabilities are averaged, and a detection fires when the average exceeds
-the cutoff. After a detection, and at start-up, the detector waits a second
-before it can fire again.
-
-The model is two files in `firmware/components/wakeword/models/`: the
-network and a manifest of the settings it was trained with. The phrase is
-"Hey Claude", trained for this project in Google Colab
-([docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md)); each training
-run's model keeps its run in its name, which the boot log and `wake`
-command print. Only the built model is kept there; the stock "Hey Jarvis"
-model used to bring the pipeline up, and earlier training runs, remain in
-git history. The build reads
-the cutoff, averaging window, step and memory size from the manifest, so it
-is their only source. The component versions are pinned exactly, because
-the scores, and so the cutoff, depend on their arithmetic.
-
-Measured on 2026-10-01 with the stock `hey_jarvis` model, on the
-breadboard, USB-powered, with WiFi connected: one run of the model takes
-2.2 ms on average and 5.7 ms at most, every 30 ms, about 8 % of core 1; the
-model uses 22,492 bytes of working memory. In a 10-minute run with the
-display cycling through every state, no audio was lost. The second "Hey
-Claude" model, `hey_claude_run2`, takes 2.1 ms on average and 4.9 ms at
-most, and uses 25,548 bytes of working memory and a 60,896-byte model copy
-(measured 2026-10-02 on the breadboard, USB-powered, over a one-minute idle
-run). The built model, `hey_claude_run3`, has the same shape, and its boot
-log shows the same working memory and model copy (2026-10-04); its timing
-was not measured again.
-
-### Display
-
-LVGL 9 (9.6.0 when stage 3 was built, fetched from the ESP Component
-Registry) drives the NV3007 panel over SPI2 at 80 MHz, the highest clock SPI2
-supports; GPIO 10-12 are its dedicated pins, which that speed requires. The
-panel is write-only, with no MISO line, and has no tearing-effect (TE)
-output, so drawing cannot be synchronised with the panel's own refresh
-(KNOWN-ISSUES R13). The initialisation sequence is LVGL's `lv_nv3007`
-driver sequence, which works on this module as verified during stage 0.
-
-The panel is used in landscape, 428 x 142, by setting the controller's
-address mode so that it swaps rows and columns itself; rotation costs no
-processor time. The controller's memory is 168 columns wide for the 142
-visible, with 12 unused on one side and 14 on the other. In the orientation
-used (LVGL's `ROTATION_270`), drawing is offset by 14 rows, measured with a
-test pattern.
-
-LVGL draws into one full-screen buffer (121,552 bytes) in PSRAM, in the
-panel's byte order (`RGB565_SWAPPED`), so no conversion pass precedes each
-transfer. It redraws only the rectangles that changed, and DMA sends each one
-straight from PSRAM. A full frame takes 12.5 ms at 80 MHz, against a
-theoretical 12.2 ms, and 98.7 ms at 10 MHz (measured 2026-09-29 with
-`display test`, on the breadboard). The state animations change only a
-142 x 142 region at the left, which takes about 4 ms to send.
-
-The backlight is dimmed by PWM from the LEDC peripheral at 25 kHz, above
-hearing. It stays off until the first frame has been drawn, so the random
-contents of the panel at power-on are never visible, then fades in. It dims
-to 25 % in `IDLE`. No noise was heard from the audio path at 25 % duty
-(2026-09-29).
-
-The state animations are placeholders, kept as they are (settled in stage
-8). Each state's title, default detail text, animation, brightness, and
-whether it shows the continuous conversation mark are kept together in one
-table in `display_ui.c`. The mark, a loop symbol and "Continuous" in the
-top right corner, is shown on `IDLE` and `CAPTURING` while the mode is on.
-A change of the mode alone only shows or hides it, so that moving the
-switch does not restart the animation on the screen.
+Over-the-air updates are not adopted; the device is flashed over USB, and
+the two slots keep OTA open without a layout change. Flash runs in QIO
+mode at 80 MHz; PSRAM is octal at 80 MHz.
 
 ## Protocol
 
-This section is an overview. The reference, with every rule, limit and
-close code, is [docs/PROTOCOL.md](docs/PROTOCOL.md).
+An overview; the reference, with every rule, limit and close code, is
+[docs/PROTOCOL.md](docs/PROTOCOL.md).
 
-A single bidirectional WebSocket per device, opened at boot and held open.
-Control messages are JSON text frames; audio travels as binary frames of raw
-little-endian signed 16-bit PCM.
-
-### Connection
+One WebSocket per device, opened at boot and held open. Control messages
+are JSON text frames; audio is binary frames of little-endian signed
+16-bit PCM.
 
 ```
 GET /v1/stream
@@ -566,391 +413,269 @@ Authorization: Bearer <device_token>
 X-Device-Id: <device_id>
 ```
 
-The token is a shared secret that proves the device is the one its
-identifier names. Without it, anything on the network could spend the
-server's API credit and continue a device's conversation. The server checks
-it before accepting the connection, then sends `ready`. A device has at
-most one connection; a newer one replaces an older one.
+The token proves the device is the one its identifier names, so nothing
+else on the network can spend the server's credit or continue a device's
+conversation. The server checks it, then sends `ready`. A newer connection
+for an identifier replaces the older one.
 
-### Server discovery
-
-The device finds the server by mDNS service discovery on the local network,
-so the server machine's address can change without reconfiguring the device.
-The server advertises a service; the device looks it up each time it
-connects. The optional `server_url` setting overrides discovery with a fixed
-address or hostname. The server advertises one address, the one on
-the machine's default route, since a machine often has others (virtual
-adapters, VPNs) that a device cannot reach.
-
-### Message sequence
+**Discovery.** The server advertises itself by mDNS, with the one address
+on its machine's default route; the device looks it up at every connect,
+so the server's address can change. The `server_url` setting overrides
+the lookup.
 
 | Direction | Message | Meaning |
 | --- | --- | --- |
-| Device to server | `utterance_start` | Wake word fired; PCM frames follow |
-| Device to server | *binary* | 20 ms frames, 16 kHz mono |
-| Server to device | `stop_capture` | Speaker has finished; stop sending audio |
-| Server to device | `reply_start` | Audio follows, with format and sample rate |
-| Server to device | *binary* | Reply audio, in chunks of at most 40 ms |
-| Server to device | `reply_end` | All reply audio has been sent; return to `IDLE` once it has played |
-| Server to device | `error` | The turn was abandoned, with a code and message. The connection stays open |
-| Device to server | `cancel` | The person pressed the button; the server ends the turn with `reply_end` |
+| Device → server | `utterance_start` | Wake word fired; 20 ms frames of 16 kHz mono follow |
+| Server → device | `stop_capture` | The speaker has finished |
+| Server → device | `reply_start` | Audio follows, with its format and rate |
+| Server → device | *binary* | Reply audio, chunks of at most 40 ms |
+| Server → device | `reply_end` | The turn is over once the audio has played |
+| Server → device | `error` | The turn was abandoned; the connection stays open |
+| Server → device | `volume` | Play at this level from now on |
+| Device → server | `cancel` | The button was pressed; answered with `reply_end` |
 
-The server accepts `utterance_start` only when no turn is running and
-ignores one that arrives during a turn; the device acts on the wake word
-only in `IDLE`. A request cannot be interrupted by a second one, or by
-speech: only the button ends a turn early, and every turn still ends with
-exactly one `reply_end` or `error`. When nothing is said after the wake
-word, the server sends `stop_capture` and then `reply_end`, with no reply.
-
-The server pings every 20 s for keepalive. It ends a capture after 13 s. A
-device-side hard cap of 15 s guards against a server that never sends
-`stop_capture`; when it is reached, or whenever the device is in doubt, the
-device closes the connection, which cancels the turn on the server.
+A request is taken only when no turn is running, and every turn ends with
+exactly one `reply_end` or `error`. When nothing is said, the server sends
+`stop_capture` and then `reply_end` with no reply. The server pings every
+20 s and ends a capture after 13 s.
 
 ## Server
 
-Python 3.11+, asyncio throughout. FastAPI provides the WebSocket endpoint and
-health checks.
+Python 3.11+, asyncio throughout, FastAPI for the WebSocket endpoint.
 
 ```
 server/
   protocol.py     Message shapes and constants of the device protocol
   transport/      WebSocket endpoint, device auth, one connection per device,
-                  framing of reply audio
-  pipeline/       One turn from request to reply; sentence splitting;
-                  volume requests
-  stt/            Speech-to-text adapter interface and implementations
-  llm/            Two Claude clients behind one interface: one runs the
-                  Claude Code tool, the default; one calls the API
-  tts/            Text-to-speech adapter interface and implementations
-  conversation/   Day-scoped conversation store
+                  framing and pacing of reply audio
+  pipeline/       One turn from request to reply; sentences; volume requests
+  stt/            Speech-to-text interface and Deepgram implementation
+  llm/            Two Claude clients behind one interface: Claude Code
+                  (the default) and the API
+  tts/            Text-to-speech interface and Deepgram implementation
+  conversation/   The day's conversations, in SQLite
   discovery.py    mDNS advertisement
-  spoken.py       Numbers as spoken, for the volume's phrases and the prompt
-  config.py       Environment-driven configuration
-  tools/          Desktop client that stands in for the device
-  tests/          Tests, run with stand-ins for the three services
+  spoken.py       Numbers as spoken, for the volume and the prompt
+  config.py       Configuration from the environment
+  tools/          Desktop client, Claude Code bench
+  tests/          Tests with stand-ins for the three services
 ```
 
-A turn is one task in `pipeline/`. It decides what happens and in what
-order, and reports each step (capture done, reply audio, reply done,
-failed, interrupted) to the connection, which alone knows how a step is put
-on the wire. Everything of one turn on the connection's side is held in
-one object, so that a new turn starts clean. A turn that completed is
-added to the conversation whole. One the person interrupted is told to
-stop by the connection and handles that itself: it tells the device at
-once, before its work has finished stopping, and is added with its reply
-as far as the reply's audio had begun to be sent, followed by
+**A turn** is one task in `pipeline/`. It decides what happens and reports
+each step (capture done, reply audio, reply done, failed, interrupted) to
+the connection, which alone knows how a step goes on the wire. Everything
+of one turn on the connection's side is one object, so the next starts
+clean. A completed turn is added to the conversation whole. An interrupted
+one tells the device at once, before its work has finished stopping, and
+is added with its reply as far as its audio had begun to be sent, then
 `[interrupted]`, which the system prompt explains. A turn whose device
-disconnects is cancelled and not added at all. Either way the stored
-history alternates between the person and the assistant.
+disconnects is cancelled and not added. The stored history always
+alternates between the person and the assistant.
 
-**Volume requests.** A request that is only about the volume ("louder",
-"too loud", "turn it down a notch", "volume five", "maximum volume") is
-recognised from its transcript by `pipeline/volume.py` and answered
-without the model: the device is sent its new level and the synthesiser
-says "Volume six." The device states its level with each request, so the
-server keeps no volume of its own. Such a turn is not added to the
-conversation. The phrases are built from one table for each direction, so
-that what turns the volume up can always be said, mirrored, to turn it
-down. A request the phrases miss goes to the model, whose system prompt
-says how the volume is changed and forbids it to claim it changed it.
-A request may hold several commands, as people repeat or correct
-themselves ("volume three, volume three", "louder, volume nine"): it is
-cut into clauses at the punctuation speech-to-text writes, a clause may
-hold a run of commands, and they are applied in order. The reply is
-worded from what happened as they were applied: the final level, a step
-that met the end of the scale, a level off the scale that was ignored.
-The log gives the commands as understood ("+1 =9"), and the words heard
-only when transcripts are logged.
+**Device tokens** are one setting, `DEVICE_TOKENS`, mapping each
+identifier to its token, compared in constant time.
 
-Device tokens are configured on the server as one setting, `DEVICE_TOKENS`,
-mapping each device identifier to its token, and compared in constant time.
+**Volume requests.** A request only about the volume ("louder", "too
+loud", "volume five", "maximum volume") is recognised from its transcript
+by `pipeline/volume.py` and answered without the model: the device is sent
+its new level and the synthesiser says, for example, "Volume six." The
+device states its level with each request, so the server keeps none. Such
+turns are not added to the conversation.
+
+- The phrases are built from one table per direction, so whatever turns
+  the volume up can be said, mirrored, to turn it down.
+- A request may hold several commands ("volume three, volume three",
+  "louder, volume nine"): it is cut into clauses at the transcript's
+  punctuation and the commands are applied in order. The reply says what
+  happened: the final level, a step that met the end of the scale, a
+  level off the scale that was ignored.
+- A phrasing the table misses goes to the model, whose prompt says how
+  the volume is changed and forbids it to claim it changed it.
+- The log gives the commands as understood ("+1 =9"), and the words only
+  when transcripts are logged.
 
 ### Speech services
 
-Deepgram is the default for both directions, behind adapter interfaces, so
-that either side can be replaced by writing one class. There is no setting
-that selects a provider yet, since there is only one. Deepgram is reached
-directly, over its WebSocket and HTTP interfaces, without its SDK: the
-server uses three event types and one request, and the SDK's interface has
-changed across major versions.
+Deepgram for both directions, reached directly over its WebSocket and
+HTTP interfaces, without its SDK, whose interface has changed across major
+versions; each side sits behind an interface, so a provider is replaced by
+writing one class. Alternatives on record: ElevenLabs Flash for voice
+quality; faster-whisper with Piper for a fully local pipeline.
 
-The end of a request is decided from Deepgram's events: silence of a set
-length after speech (400 ms by default), or its second signal based on word
-timings, which still works over background noise. Silence before any speech
-does not end a request; if no word is recognised within 5 s, the turn ends
-with no reply.
+- **End of a request:** 400 ms of silence after speech, or Deepgram's
+  second signal from word timings, which works over background noise. One
+  service for both transcript and endpointing keeps them in agreement and
+  needs no separate voice-activity detector. With no word within 5 s, the
+  turn ends with no reply. Longer silences are not dependable on the
+  microphone's audio (R18).
+- **Transcript:** punctuation and capitals, so Claude reads sentences;
+  numbers stay as words. Deepgram's fuller formatting held the end of
+  speech back after a number, so it is not used.
+- **Synthesis:** voice `aura-2-luna-en`. A failure to connect gets a
+  second try, each cut at half the 5 s allowed, one limit over both; a
+  sentence whose request fails before any audio arrives is tried once more.
 
-The transcript has punctuation and capitals, so that Claude reads
-sentences, and numbers stay as words. The service's fuller formatting,
-which writes numbers, dates and prices as figures, was used until stage
-8 and dropped: after a number it held the end of speech back in case more
-digits followed (KNOWN-ISSUES, Resolved).
+### Conversation and caching
 
-Speech-to-text was chosen for its streaming utterance-end events, which supply
-the end-of-speech signal directly. A separate voice-activity detector would
-otherwise be required; using one service for both transcript and endpointing
-keeps the two in agreement and avoids adding a third vendor to the latency
-path.
+Conversations are keyed by device and chat date and kept in SQLite, so a
+server restart loses nothing. The date advances at **04:00 local time**,
+so a late conversation is not split. Only the current day is kept: the
+first exchange of a new day deletes the earlier ones.
 
-The silence that ends a request stays at 400 ms. A setting of 1 s was
-tried on the device on 2026-10-08, to allow a pause in mid-sentence, and
-made the ending erratic: over six requests spoken by a person, one in
-three ended on the silence signal, 1 to 1.5 s after the speaker stopped,
-and the rest only on the word-timing signal, 2 to 4 s after. The service's
-silence signal is not dependable at that length on the microphone's audio.
-A longer silence would have to be measured by the server itself from the
-service's word timings; that was considered and not built (KNOWN-ISSUES
-R18).
+The whole day's history is sent every turn, so **prompt caching** keeps
+cost and time to first text flat through the day. The system prompt holds
+nothing that varies and comes first; cache breakpoints sit at its end and
+at the end of the new request, so each turn reads everything before it
+from the cache. Caching starts once the prompt passes the model's minimum,
+after a few exchanges (measured: from the third). A day of speech stays
+far below the context window.
 
-The synthesiser is given a second try at connecting, by the HTTP library,
-which retries only a failure to connect, when nothing has yet been sent.
-Each try is cut short at half the time allowed for reaching a service, and
-one limit of 5 s runs over everything up to the start of the response.
+### Claude
 
-Documented alternatives: ElevenLabs Flash for higher voice quality;
-faster-whisper with Piper for a fully local pipeline requiring no accounts.
-
-### Conversation model
-
-Conversations are keyed by device identifier and chat date, and persisted in
-SQLite so that a server restart does not lose context. The chat date advances
-at **04:00 local time** rather than at midnight, so that a conversation held
-late at night is not split partway through. Only the current day is kept:
-the first exchange stored on a new chat date deletes every earlier day's
-conversations.
-
-History is resent on every turn, which makes **prompt caching** the mechanism
-that keeps cost and time-to-first-token flat across a day rather than growing
-with each exchange. The system prompt is held stable and placed first, with
-nothing that varies in it. Cache breakpoints sit at the end of the system
-prompt and at the end of the new request, so each turn reads everything
-before it from the cache and writes only what the last turn added. Caching
-starts once the prompt reaches the model's minimum cacheable length, which a
-day's conversation passes after a few exchanges.
-
-Measured on 2026-10-06 with `claude-opus-5`, in a five-turn conversation of
-synthetic test requests: the first two requests, of 468 and 486 input
-tokens, were not cached; the third wrote 538 tokens to the cache, and the
-next reply read those 538 from it.
-
-Context length is not a constraint. A full day of spoken exchanges stays far
-below the model's context window.
-
-### Claude configuration
-
-| Setting | Value | Reason |
+| Setting | Value | Why |
 | --- | --- | --- |
 | Model | `claude-opus-5` | |
-| Thinking | Adaptive | Default on this model; disabling it introduces documented failure modes |
-| Effort | Low | Conversational replies are not reasoning-intensive, and effort is the primary latency lever |
-| Streaming | Enabled | Required to begin synthesis before the reply completes |
-| Fallbacks | Server-side, default routing | Handles refusal stop reasons without a maintained model list |
-| Output ceiling | 8000 tokens | Stops a runaway reply from being synthesised for minutes |
-| Timeout | 24 s of silence on the stream | The SDK's default tolerates ten minutes, which would hold a device in `THINKING` as long |
+| Thinking | Adaptive | This model's default; disabling it has documented failure modes |
+| Effort | Low | Spoken replies need little reasoning, and effort is the main latency lever |
+| Streaming | On | Synthesis starts before the reply is complete |
+| Fallbacks | Server-side, default routing | Handles refusals without a maintained model list |
+| Output ceiling | 8000 tokens | Stops a runaway reply being spoken for minutes |
+| Silence limit | 24 s with no text | The SDK's default of ten minutes would hold a device in `THINKING` as long |
 
-The system prompt constrains replies to spoken form: no markdown, no lists, no
-headings, and short answers by default. Text shaped for a screen reads badly
-when synthesised. It also tells the model that its input is a transcript
-that may contain misheard words, and that it has no clock and no access to
-the internet. That is the prompt for the API; with Claude Code, described
-next and the default, the last part differs.
-
-If the model declines a request and says nothing, the server speaks a fixed
-sentence in its place. A declined request is not added to the conversation.
+The system prompt keeps replies speakable: no markdown, lists or
+headings, short by default. It says the input is a transcript that may
+hold misheard words. Through the API it adds that the assistant has no
+clock and no internet; through Claude Code that part differs. A request
+the model declines in silence is answered with a fixed sentence and not
+added to the conversation.
 
 ### Claude through Claude Code
 
-The default way to Claude since 2026-10-12, after a run of three hours
-on the device; the API, described above, is chosen instead with the
-server setting `LLM_BACKEND=api`, and has no access to the web. In place
-of the API and its key, the server runs the Claude Code command-line
-tool, `claude -p`, which
-answers under the login of whoever is signed in to it on the server's
-machine, and which can search the web and read pages. The device has one
-user, who is that account's owner. Everything else is as before: the same
-interface to the pipeline, the same model and effort, replies cut into
-sentences and spoken as they come.
+The default (`LLM_BACKEND=claude_code`). The server runs the Claude Code
+tool, `claude -p`, under the login of whoever is signed in on its machine;
+the device has one user, that account's owner. The assistant can search
+the web and read pages. `LLM_BACKEND=api` uses the API instead, with no
+web access. Everything else is the same: interface, model, effort,
+sentences spoken as they come.
 
-One process is started for each turn and ends with it. It is given the
-system prompt on its command line and, on its standard input, the day's
-earlier exchanges as text followed by the new request, so transcripts are
-not in the machine's process list. It keeps no session of its own: the
-conversation stays in the server's store, in one copy that is deleted with
-the day. The tool caches the prompt itself.
+One process runs per turn. It gets the system prompt on its command line
+and, on standard input, the day's exchanges and the new request, so
+transcripts are not in the process list. It keeps no session: the
+conversation stays in the server's store. The tool caches the prompt
+itself.
 
-The tool is a general agent, here used as a voice, so it is locked down:
+The tool is a general agent used as a voice, so it is locked down:
 
-- **Tools.** Web search and the reading of web pages, and nothing that
-  runs a command or touches a file. Which pages may be read is a setting,
-  `CLAUDE_FETCH_DOMAINS`: any site, which is the default; named sites
-  only, each a permission rule of its own with everything else refused;
-  or none.
-- **Nothing of the signed-in person's set-up.** No settings files, hooks,
-  plugins, skills or instruction files, and no MCP servers, which would
-  otherwise include the account's connectors to mail and files.
-- **Nowhere to look.** It runs in an empty temporary directory.
-- **No credentials.** Its environment is built from a short list of
-  variables to pass on, so the server's API keys and device tokens are not
-  in it.
-- **Checked on every run.** The first line the process prints lists the
-  tools and MCP servers it loaded and its permission mode. A run with
-  anything beyond what was asked for is stopped before it can answer.
+- **Tools:** web search and page reading only, nothing that runs a command
+  or touches a file. Which pages may be read is `CLAUDE_FETCH_DOMAINS`:
+  any site (the default), named hosts only, or none.
+- **None of the signed-in person's set-up:** no settings files, hooks,
+  plugins, skills, instruction files or MCP servers, which would include
+  the account's connectors.
+- **Nowhere to look:** it runs in an empty temporary directory.
+- **No credentials:** its environment is built from a short list, without
+  the server's keys and tokens.
+- **Checked every run:** the tools, MCP servers and permission mode it
+  reports at start are checked, and a run with anything more is stopped
+  before it answers.
 
-What the open web costs in safety is R21 of
-[KNOWN-ISSUES.md](KNOWN-ISSUES.md).
+Because the reply is spoken:
 
-Three things in the client exist because the reply is spoken:
+- The prompt asks for "Let me check." before a search, and the client
+  ends that sentence where the tool reports the end of a text block, so it
+  is spoken before the search rather than with the answer.
+- A closing list of sources, which the search tool asks for, is forbidden
+  by the prompt and removed by the client if it comes, so no web address
+  is read aloud or stored.
+- The 24 s silence limit counts text that can be spoken, not lines the
+  process prints during a search.
 
-- The prompt asks for one short sentence before a search, "Let me check.",
-  and the client ends that sentence where the tool reports the end of a
-  block of text. The pipeline speaks a sentence only when something
-  follows it, and what follows here is the answer, many seconds later.
-- The search tool instructs the model to close with a list of its sources
-  as links. The prompt forbids one, and the client removes one that comes
-  all the same, so that no web address is read aloud or stored.
-- The limit on silence from Claude is counted in text that can be
-  spoken, not in lines printed, since the process prints a line for every
-  step of a search. A reply that says nothing for 24 s is given up with
-  `llm_failed`, which keeps the server's failure ahead of the 40 s a
-  device waits, as [docs/PROTOCOL.md](docs/PROTOCOL.md) requires. The
-  limit was 20 s, for both ways of reaching Claude, and was raised for
-  this one, whose replies pause to search; 24 s is as far as it can go.
-
-Measured on 2026-10-12, with Claude Code 2.1.296. On the server's machine,
-timed from the start of the process: the first text of a plain answer
-after 1.7 to 4.0 s over twenty questions, median 1.9 s, the same with ten
-earlier exchanges as with none; a reply that searched or read a page whole
-after 10 to 26 s. On the device, a person speaking, once "Let me check."
-was made to be spoken before the search: the first sound 3.2 to 3.9 s after the
-end of the request, with or without a search, and the answer to a searched
-question 6.2 s after "Let me check.". The wait for a plain answer is that
-of the API, whose first sound came after 1.8 to 5.0 s on 2026-10-08.
-
-The tool updates itself, and neither its options nor the shape of what it
-prints is a published interface as the API is. After an update,
-`server/tools/claude_cli_bench.py` shows whether both still hold; a
-process that cannot start says why in the server's log.
+The tool updates itself, and its options and output are not a published
+interface; after an update, `server/tools/claude_cli_bench.py` shows
+whether they still hold ([docs/OPERATING.md](docs/OPERATING.md), Updating
+Claude Code). What the open web costs in safety is R21.
 
 ### Reply pipeline
 
-The response stream is split into sentences as it arrives. Each completed
-sentence is synthesised and forwarded immediately, so playback begins while the
-reply is still being generated.
+Three things run at once, each feeding the next: the model writes
+sentences, the synthesiser turns them into audio, and the connection sends
+it in 40 ms chunks.
 
-Three things run at once for a reply, each feeding the next: the model
-writes sentences, the synthesiser turns them into audio, and the
-connection sends the audio in chunks of 40 ms. Sending is paced: the
-server never sends more than 2 s ahead of where playback has reached, so
-that the device needs only a small fixed buffer however long the reply.
-The server has no report of playback. It takes playback to begin with the
-first chunk and to continue for as long as the device has audio; when the
-reply itself pauses and the device runs dry, the count starts again from
-the next chunk. Because sending is slower than synthesis, synthesis runs
-ahead: the next sentence is requested while the current one is being sent,
-unless 5 s of audio is already waiting.
-
-Measured on 2026-10-06: with the desktop client and synthetic speech, a
-62 s reply was delivered over about 60 s and never ran more than 2.05 s
-ahead of playback. On the device, which logs these figures for every
-reply, a reply of 33 s held at most 2.08 s of its 4 s at once and never
-ran dry (KNOWN-ISSUES R17).
+- **Pacing:** the server never sends more than 2 s ahead of playback, so
+  the device needs only a small fixed buffer, whatever the reply's length.
+  It has no report of playback: it assumes playback starts with the first
+  chunk and runs while the device has audio, and restarts its count when
+  the reply itself pauses and the device runs dry (R17).
+- **Synthesis runs ahead** of sending: the next sentence is requested
+  while the current one is sent, unless 5 s of audio is already waiting.
 
 ## Latency budget
 
-Target, from wake word to first audible sound:
+From the end of speech to the first sound:
 
-| Stage | Budget |
+| Step | Budget |
 | --- | --- |
 | Capture and upload, overlapped with speech | ~0 ms |
 | End-of-speech detection | 300-500 ms |
-| Claude time-to-first-token | 600-1200 ms |
-| First sentence synthesis | 300-500 ms |
+| Claude's first text | 600-1200 ms |
+| First sentence synthesised | 300-500 ms |
 | Network and playback start | 100 ms |
 | **Total** | **1.3-2.3 s** |
 
-A non-streaming implementation of the same pipeline lands at 5-9 seconds, which
-is why streaming is a structural requirement rather than an optimisation.
+A non-streaming pipeline lands at 5-9 s, which is why streaming is a
+structural requirement.
 
-Measured on 2026-10-06, server only, with the desktop client on the same
-machine sending synthetic speech over a home internet connection, across
-four turns: the end of speech was detected within 0.1 s of the recording's
-end, Claude's first text came 1.2-1.8 s after that, and the first reply
-audio 2.4-3.5 s after it. The budget's figures from end-of-speech detection
-onward add up to 1.0-1.8 s, so the server is over budget before the device
-is involved. The recordings end in silence, which hides the wait for
-end-of-speech detection.
-
-Measured the same day on the device, on the breadboard, over five short
-questions in a synthetic voice: 2.2 to 3.3 s from the server's
-`stop_capture` to the first sound from the speaker, 2.8 s on average. The
-device's own share of that is about 0.07 s, so the budget's 100 ms for
-network and playback start holds, and the whole overrun is the server's.
-
-**The budget is not met, and that is accepted.** Stage 7 measured where
-the wait goes and took the inexpensive remedies; the wait was judged
-acceptable in use, so the costlier ones were left (KNOWN-ISSUES R19).
-Measured on 2026-10-08, with the server's finer timing log. With the
-desktop client on the server's machine, synthetic speech and a home
-internet connection, over three runs of short questions, twelve turns:
-from the end of speech, Claude's first text came after 0.9 to 4.5 s, its
-first whole sentence 0 to 1.1 s after that, and the first audio 0.3 to
-1.5 s after the sentence, 1.2 to 5.6 s in all. On the device, on the
-breadboard, four turns spoken by a person: 1.8, 2.8, 2.8 and 5.0 s from
-the end of the request to the first sound. Nearly all of the wait, and
-all of its spread, is Claude's time to its first text; one reply that day
-waited 10.7 s for it. The synthesiser's 0.5 to 0.6 s is its own time and
-not the connection's: measured three times each, its first audio came
-0.58 to 0.62 s after the request on a new connection, 0.58 s on one just
-used, and 0.50 to 0.52 s on one opened 8 s earlier, so connections are not
-opened ahead of need.
+**The budget is not met, and that is accepted.** On the device a plain
+answer comes after about 2 to 5 s. The device's own share is about 0.07 s;
+nearly all of the wait, and all of its spread, is Claude's time to its
+first text. The inexpensive remedies were taken, and the rest are listed
+in R19. Opening service connections ahead of need was measured and gained
+nothing, so connections are opened when needed.
 
 ## Deployment
 
-The server runs on the local network during development. Transport is plain
-WebSocket over the LAN, and device tokens are shared secrets. Moving the server
-off the LAN requires TLS and a stronger device credential, and is deliberately
-deferred.
+The server runs on the local network. Transport is plain WebSocket and
+device tokens are shared secrets; moving off the LAN requires TLS and a
+stronger device credential (R8).
 
 ## Decisions and rationale
 
 | Decision | Alternative rejected | Reason |
 | --- | --- | --- |
-| microWakeWord | Espressif WakeNet custom training | Custom phrases require a paid corpus of 500+ speakers |
-| ESP-IDF v5.5.x | v5.3, v6.1-beta1 | v5.3 predates the NV3007 and LVGL reference work; v6.1 is a beta |
-| Server-side endpointing | On-device VAD | Better models, no device CPU cost, keeps firmware simple |
+| microWakeWord | Espressif WakeNet custom training | Custom phrases need a paid corpus of 500+ speakers |
+| ESP-IDF v5.5.x | v5.3, v6.x | v5.3 predates the NV3007 and LVGL work; v6 was a beta |
+| Server-side endpointing | On-device voice-activity detection | Better models, no device CPU, simpler firmware |
 | Server-side history | Device-side history | Survives reboots and WiFi loss, and enables prompt caching |
-| Two I2S controllers | Shared bus | No contention, and different sample rates per direction |
-| Settings entered through the serial console | Credentials compiled in, or flashed from a local file | Nothing sensitive is ever written to disk on the development machine |
-| Settings also entered from a phone, on a hotspot of the device's own | Espressif's provisioning over Bluetooth, with its app | No app to install, and no Bluetooth stack in RAM; the same page as the author's earlier project |
-| Setup mode entered by restarting into it | Switching the running device over to a hotspot | Nothing running has to be stopped, and no half-switched radio is possible |
-| WiFi password saved without being tried | Joining the network before saving | Trying it would move the hotspot to the network's channel, away from the phone; settings that never work bring setup back instead |
-| mDNS server discovery | Fixed server address | The server machine's LAN address changes; a fixed address would need re-entering each time |
-| Server paces the reply, device holds 4 s | Device holds the whole reply | A minute of audio is 3 MB; a fixed small buffer works for a reply of any length |
-| Reconnecting done by `server_link`, not by the WebSocket client | The client's own automatic reconnect | The server may have moved, so every attempt starts again from the lookup; and the rest of the firmware must hear of every loss |
-| The device closes the connection to abandon a turn by itself | A message for "I gave up" | One mechanism covers every case of doubt, and the server already cancels a turn whose connection closes. `cancel` is for the person's choice only, and keeps the connection |
-| `cancel` answered with an ordinary `reply_end` | A message of its own for "cancelled" | Every turn still ends with exactly one of `reply_end` and `error`, and the device already knows what both mean |
-| An interrupted turn kept, as far as it was sent | Forgetting it | The person often interrupts to change direction, and Claude then knows what it had been saying |
-| WiFi power saving off | The default, modem sleep | Mains-powered; the radio's sleep delays streamed audio in both directions |
-| OTA-ready partition layout | Single application slot | Costs nothing in 16 MB, and keeps OTA open without a later layout change |
+| Two I2S controllers | A shared bus | No contention, and a different rate each way |
+| Ring buffer shared by position | One queue per listener | Listeners never take audio from each other, and a past position can be replayed |
 | Streaming transport | Request and response | Fourfold latency difference; cannot be retrofitted cheaply |
-| Ring buffer shared by position | One queue per listener | Listeners never take audio from each other, and a past position (the wake word's end) can be replayed |
-| Component versions locked (`dependencies.lock` committed, wake-word libraries pinned exactly) | Version ranges | A newer library can break the build or shift the model's scores without any change in the repository |
-| A turn interrupted only with a button | Barge-in, interrupting by speaking | With no echo cancellation the device would interrupt itself |
-| Continuous conversation chosen by a switch, read when a reply ends | A setting stored in NVS, or turned on by voice | The position is visible and changed by hand, and nothing has to be stored or kept in step |
-| At most ten follow-ups in a row | No limit, ending only on silence | Bounds what a television or other people talking can keep going without the wake word, every capture of which is sent to the server |
-| `error` ends a turn and keeps the connection | Reconnecting after every error | A failed service does not make the connection unhealthy; reconnecting would only add delay |
-| Newer connection replaces the older | Refusing a second connection | A device back from a power cut must not be locked out by its own dead connection |
-| Device tokens in the server's environment | A table in the database | Keeps credentials apart from the transcripts |
-| Deepgram without its SDK | The Deepgram SDK | The interface used is small and stable; the SDK's has changed across major versions |
-| Only the current day's conversation kept | Keeping every day | Transcripts are personal data and earlier days are never read again |
-| A watchdog timeout restarts the chip | The default, a warning in the log | A device that has stopped deciding cannot report it; a restart brings it back in seconds, and the core dump keeps the evidence |
-| Brownout count in RTC memory | A count in NVS | It need only outlive a restart; nothing is written to flash, and a power cycle starts afresh |
-| End-of-speech silence left at 400 ms | 1 s, to allow a pause in mid-sentence | At 1 s the service's silence signal was not dependable on the microphone's audio, and requests ended 1 to 4 s after the speaker |
-| Connections to the services opened when needed | Opened ahead, when the server starts and a request begins | Measured: a new connection costs the synthesiser's first audio nothing that could be told from the variation |
-| Claude reached through Claude Code by default | The API as the default, Claude Code as an option | Decided on 2026-10-12, after a trial: it answers questions about the present, which the API route cannot, and the wait for a plain answer was acceptable as heard. The API remains, one setting away, for a server with no Claude Code login |
-| Through Claude Code, the day's conversation sent as text with each request | A session kept by the tool and resumed | One copy of the history, in the server's store, deleted with the day; the tool writes no transcript to the profile |
-| Through Claude Code, one process for each turn | A process kept running between turns | A process that lives on gathers a conversation of its own; starting one costs nothing that could be told from the API's own wait |
-| Through Claude Code, pages read from any site by default | Search only; a short list of sites | Measured: search alone did not answer the weather, and a list answered the weather but not the news. The assistant holds one day of conversation and cannot act, so the risk was accepted (R21) |
-| Through Claude Code, silence from Claude counted in spoken text | Counted in lines the process prints | A search prints lines throughout; counted so, a reply could be silent past what a device waits |
-| Silence tolerated from Claude raised to 24 s | 20 s | A reply that searches twice can be silent for longer than 20 s; with the synthesiser's 15 s, 24 s still ends a second before a device gives up |
+| Server paces the reply, device holds 4 s | Device holds the whole reply | A minute of audio is 3 MB; a small fixed buffer works for any length |
+| Settings entered through the console | Compiled in, or flashed from a file | Nothing sensitive is written to disk on the development machine |
+| Settings also entered from a phone, on the device's own hotspot | Espressif's Bluetooth provisioning and app | No app to install, no Bluetooth stack in RAM |
+| Setup mode entered by restarting into it | Switching the running device to a hotspot | Nothing running has to be stopped; no half-switched radio |
+| WiFi password saved without being tried | Joining before saving | Trying would move the hotspot's channel away from the phone; failing settings bring setup back |
+| mDNS discovery | A fixed server address | The server's LAN address changes |
+| Reconnecting done by `server_link` | The WebSocket client's own reconnect | Each attempt starts from the lookup, and the firmware hears of every loss |
+| The device closes the connection to abandon a turn | A message for "I gave up" | One mechanism for every doubt; the server already cancels a turn whose connection closes |
+| `cancel` answered with an ordinary `reply_end` | A "cancelled" message | Every turn still ends with exactly one `reply_end` or `error` |
+| An interrupted turn kept as far as it was sent | Forgetting it | A person often interrupts to change direction, and Claude then knows what it said |
+| Interrupting only with the button | Interrupting by speaking | With no echo cancellation the device would interrupt itself |
+| Continuous conversation by a switch, read when a reply ends | A stored setting, or turned on by voice | Visible, changed by hand, nothing stored |
+| At most ten follow-ups in a row | Ending only on silence | Bounds what a television or other voices can keep going, every capture of which goes to the server |
+| `error` ends a turn and keeps the connection | Reconnecting after every error | A failed service does not make the connection unhealthy |
+| A newer connection replaces the older | Refusing a second one | A device back from a power cut must not be locked out by its own dead connection |
+| Device tokens in the server's environment | A table in the database | Credentials kept apart from transcripts |
+| Deepgram without its SDK | The SDK | The interface used is small and stable; the SDK's has changed across versions |
+| Only the current day kept | Every day kept | Transcripts are personal data and earlier days are never read |
+| WiFi power saving off | Modem sleep, the default | Mains-powered; the radio's sleep delays streamed audio |
+| A watchdog timeout restarts the chip | A warning in the log | A device that has stopped deciding cannot say so; a restart recovers it, and the core dump keeps the evidence |
+| Brownout count in RTC memory | A count in NVS | It need only outlive a restart; nothing written to flash |
+| OTA-ready partition layout | One application slot | Costs nothing in 16 MB, and keeps OTA open |
+| Component versions locked | Version ranges | A newer library can break the build or shift the model's scores with no change here |
+| End-of-speech silence of 400 ms | 1 s, to allow a pause | At 1 s the service's silence signal was not dependable on the microphone's audio |
+| Service connections opened when needed | Opened ahead | Measured: no gain |
+| Claude through Claude Code by default | The API by default | It answers questions about the present, and a plain answer's wait is the same; the API stays one setting away |
+| Through Claude Code, the conversation sent as text each turn | A session kept by the tool | One copy of the history, deleted with the day |
+| Through Claude Code, one process per turn | A long-running process | A living process gathers a conversation of its own; starting one costs nothing measurable |
+| Through Claude Code, any site readable by default | Search only, or a list of sites | Search alone missed the weather; a list missed the news. The assistant holds one day and cannot act, so the risk was accepted (R21) |
+| Silence from Claude counted in spoken text, up to 24 s | Lines printed; 20 s | A search prints lines throughout, and can stay silent past 20 s; 24 s still ends a second before a device gives up |
