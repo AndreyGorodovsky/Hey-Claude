@@ -1,76 +1,65 @@
 # Project rules
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md) before proposing design changes and
-[STATUS.md](STATUS.md) before starting work. This file holds only what those
-documents do not.
+Read [ARCHITECTURE.md](ARCHITECTURE.md) before design changes and
+[STATUS.md](STATUS.md) before starting work.
 
 ## Workflow
 
-Work proceeds in numbered stages listed in [STATUS.md](STATUS.md).
+For each stage or change:
 
-1. **Plan before acting.** Break the stage into steps and get them approved.
-   No implementation begins until the steps are accepted.
-2. **Implement** the approved steps only. Anything discovered mid-stage that
-   falls outside them is recorded in [KNOWN-ISSUES.md](KNOWN-ISSUES.md), not
-   silently fixed.
-3. **Review agents**, defined in [.claude/agents/](.claude/agents/), in this
-   order, after every stage or major feature:
-   1. `code-reviewer` — correctness, memory safety, task and DMA discipline,
-      error paths, resource leaks.
-   2. `challenger` — reads the code cold and argues against anything that is
-      not clean: awkward abstractions, duplicated state, decisions that will
-      hurt later.
-4. **Apply corrections** arising from both agents.
-5. **Documentation pass.** Bring all five documents to the current state.
-   Stale documentation is a stage failure, not a follow-up task.
-6. **Commit.** Push only when explicitly asked.
+1. **Plan** the steps and get them approved before implementing.
+2. **Implement** only the approved steps. Anything else found on the way
+   goes into [KNOWN-ISSUES.md](KNOWN-ISSUES.md), not silently fixed.
+3. **Review** with the agents in `.claude/agents/`, in order:
+   `code-reviewer`, then `challenger`.
+4. **Apply** their corrections.
+5. **Update the documents** to the current state; stale documentation is a
+   failure, not a follow-up.
+6. **Commit.** Push only when asked.
 
 ## Hard constraints
 
-- **No secrets in the repository.** Run the [SECRETS.md](SECRETS.md) checklist
-  before every commit. API keys live on the server only, never in firmware.
-- **No audio, transcripts or conversation logs in the repository.** They are
-  personal data.
-- **The device stays stateless.** No conversation history, no credentials
+- No secrets in the repository: run the [SECRETS.md](SECRETS.md) checklist
+  before every commit. API keys live on the server only.
+- No audio, transcripts or conversation logs in the repository.
+- The device stays stateless: no conversation history, no credentials
   beyond its own identity.
-- **GPIO 26-37 are unusable**; they belong to the flash and the in-package
-  PSRAM of the board's ESP32-S3R8. GPIO 0, 3, 45 and 46 are strapping pins; GPIO 19 and 20 carry native
-  USB.
-- **Do not disable thinking on `claude-opus-5`.** Lower effort instead.
+- GPIO 26-37 are unusable (flash and in-package PSRAM of the ESP32-S3R8).
+  GPIO 0, 3, 45, 46 are strapping pins; GPIO 19, 20 carry native USB.
+- Do not disable thinking on `claude-opus-5`; lower effort instead.
 
 ## Pinned versions
 
 | Component | Version | Note |
 | --- | --- | --- |
-| ESP-IDF | v5.5.x | Not v5.3, which predates the NV3007 and LVGL reference work. Not v6.x, which is a beta or an untested major. |
-| LVGL | 9.6.0 | Ships the NV3007 driver (9.4+). Locked in `firmware/dependencies.lock` |
-| esp-tflite-micro, esp-nn, esp-micro-speech-features | 1.3.3~1, 1.1.2, 1.2.3 | Pinned exactly: the tuned wake-word cutoff depends on their arithmetic |
+| ESP-IDF | v5.5.x | Not v5.3 (predates the NV3007 and LVGL work), not v6.x |
+| LVGL | 9.6.0 | Locked in `firmware/dependencies.lock` |
+| esp-tflite-micro, esp-nn, esp-micro-speech-features | 1.3.3~1, 1.1.2, 1.2.3 | Exact: the wake-word cutoff depends on their arithmetic |
 | Python | 3.11+ | |
 | Claude model | `claude-opus-5` | |
-| Claude Code tool | 2.1.303 last benched, not pinned | For `LLM_BACKEND=claude_code`, the default. The tool updates itself: after an update run `python -m server.tools.claude_cli_bench` (KNOWN-ISSUES R21) |
+| Claude Code | 2.1.303 last benched, not pinned | Default backend; after an update follow README.md, Updating Claude Code |
 
-Confirm `IDF_PATH` points at a v5.5.x checkout before building. Run ESP-IDF
-from PowerShell, never from Git Bash (`MSYSTEM` blocks activation). The board's
-console is UART0, on the CH340 port. When changing
-ESP-IDF versions, also check `IDF_TOOLS_PATH` and `IDF_PYTHON_ENV_PATH` in the
-persisted user environment, not only in the current shell — see R7 in
-[KNOWN-ISSUES.md](KNOWN-ISSUES.md).
+## Environment
+
+- Check `IDF_PATH` is a v5.5.x checkout before building. Run ESP-IDF from
+  PowerShell, never Git Bash (`MSYSTEM` blocks activation). When changing
+  ESP-IDF versions, check the persisted user environment too (R7).
+- The board's console is UART0, on the CH340 port.
 
 ## Conventions
 
-- Documentation is written for a public audience in general language, never
-  addressed to a particular reader.
-- Firmware follows ESP-IDF style; server code follows PEP 8 with type hints.
-- **Firmware is commented thoroughly, for a reader new to embedded work.**
-  Every file opens with what it does and where it fits. Explain hardware and
-  ESP-IDF concepts at first use in each file (NVS, event loop, I2S slots, DMA,
-  PSRAM, strapping pins), the reason behind each non-obvious call, units and
-  magic numbers, and which task or context code runs in. Comments say why, not
-  what the line already says.
-- Server and other code is commented for intent and non-obvious decisions, with
-  docstrings on public functions and classes; less thorough than firmware.
-- Every measured value that replaces an estimate in these documents is marked
-  as measured, with the conditions under which it was taken.
-- **Chip temperature: record only spikes.** Normal operation stays below
-  60 °C. A reading above that, from the `temp` console command, is added to
-  R20 of [KNOWN-ISSUES.md](KNOWN-ISSUES.md) with what the device was doing.
+- Documents are for a public audience and never addressed to one reader.
+  Human documents open with one line on their purpose, use numbered steps
+  for procedures and tables for reference, and describe the present, not
+  history; measured values say they are measured, and under what
+  conditions.
+- Firmware follows ESP-IDF style, the server PEP 8 with type hints.
+- **Firmware is commented for a reader new to embedded work:** each file
+  opens with what it does and where it fits; hardware and ESP-IDF concepts
+  are explained at first use in each file; comments give the reason for
+  non-obvious calls, units and magic numbers, and which task or context
+  runs the code.
+- Server code is commented for intent and non-obvious decisions, with
+  docstrings on public functions and classes.
+- Chip temperature: record only a reading above 60 °C, with what the device
+  was doing, in R20 of KNOWN-ISSUES.md.
