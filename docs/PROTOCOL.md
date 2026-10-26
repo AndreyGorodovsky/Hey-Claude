@@ -283,8 +283,8 @@ so that the server's `error` arrives first when a service fails:
   stage 7 and cannot be raised further.
 
 "Silence from Claude" is silence in the text of the reply, whatever else
-the server may be receiving meanwhile. With the trial that gives the
-assistant access to the web ([ARCHITECTURE.md](../ARCHITECTURE.md), Claude
+the server may be receiving meanwhile. With Claude reached through
+Claude Code, which gives the assistant access to the web ([ARCHITECTURE.md](../ARCHITECTURE.md), Claude
 through Claude Code), a reply can pause for a search after its first
 words; a pause of 24 s ends the turn with `llm_failed` like any other.
 

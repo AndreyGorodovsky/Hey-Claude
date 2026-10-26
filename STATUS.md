@@ -1,891 +1,163 @@
 # Status
 
-**Current stage:** None. Stage 8, polish, the last stage, closed on
-2026-10-19. Its four parts are built, reviewed, corrected and tested on
-the device: volume by voice (A), settings entered from a phone through a
-hotspot of the device's own (B), interrupting a reply with a button (C),
-and continuous conversation, chosen with a switch (D). The refined
-animations first planned were dropped on 2026-10-18. The steps are under
-Stage 8 plan below. Of the Before release list, only the multi-hour
-false-accept run remains.
-
-Stage 7, latency and robustness, closed on 2026-10-15. Its one remaining
-test, WiFi lost and restored, was made on 2026-10-26 with the device idle
-(Before release).
+**Current stage:** none. All eight stages are done, and the device works
+end to end on the breadboard. One item remains before release: the
+multi-hour false-accept run (Before release, below).
 
 **Last updated:** 2026-10-26
 
+The history of each stage, with its step tables, bench sessions and review
+findings, is in the git history of this file.
+
 ## Where the project stands
 
-Feasibility has been reviewed and the approach confirmed. All major technology
-decisions are made and recorded in [ARCHITECTURE.md](ARCHITECTURE.md).
+The hardware is assembled on a breadboard: an ESP32-S3 board with 8 MB of
+PSRAM, an INMP441 microphone, a MAX98357A amplifier and speaker, an NV3007
+panel, and a button and a slide switch. Every peripheral was exercised by
+a test program, kept in `firmware/tools/bringup/`, and the pinout matched
+the plan.
 
-The hardware is assembled on a breadboard and every peripheral has been
-exercised by a test program, kept in `firmware/tools/bringup/`: the microphone captures, the display
-initialises and fills, and the amplifier plays a tone. The pinout matched the
-plan without change.
+The firmware runs a whole conversation:
 
-The firmware boots with all 8 MB of PSRAM, logs a boot banner including the
-reset reason, stores its settings in NVS, and joins WiFi with automatic
-reconnection. Settings are entered through a serial console. The microphone
-records and the amplifier plays: a record-then-play loopback runs cleanly
-from the console, and a full-volume tone ran without a brownout on a PC USB
-port.
+- It detects "Hey Claude" on the device with a microWakeWord model,
+  `hey_claude_run3`, trained in Google Colab with recordings of one
+  speaker ([docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md)). No
+  audio leaves the device before the wake word.
+- It plays a chime, streams the request to the server, plays the reply
+  as it arrives, and shows each state on the panel with a placeholder
+  animation.
+- The volume is changed by voice ("louder", "volume five"), in ten levels.
+- The button interrupts a turn while the device listens, thinks or
+  speaks. With the switch closed, the device listens again after each
+  reply, without the wake word, up to ten follow-ups in a row.
+- Settings are entered through the serial console, or from a phone
+  through a hotspot and a page the device serves (setup mode).
+- It recovers by itself from a lost server, lost WiFi and a hung task,
+  and stops on `ERROR` rather than looping when its supply is too weak.
 
-The display runs in landscape and shows the device state with a placeholder
-animation for each of the eight states, including a `SETUP` state for
-missing WiFi settings, added in stage 3. The backlight stays dark until the
-first frame is drawn, then fades in, and dims while idle. States are set
-from the console until the real state machine exists. Measured on the
-breadboard: the panel runs cleanly at 80 MHz and a full frame takes 12.5 ms.
-A ten-minute run through every state showed no faults, and audio loopback
-and tone playback sounded as in stage 2 while the display animated, at full
-and at dimmed brightness.
+The server, `python -m server`, takes each request through Deepgram
+speech-to-text, Claude and Deepgram text-to-speech, and sends the reply
+back sentence by sentence as it is generated. It decides when the speaker
+has finished, keeps each device's conversation for the current day, and
+advertises itself on the LAN by mDNS. By default it reaches Claude through
+the Claude Code tool, which lets the assistant search the web
+([ARCHITECTURE.md](ARCHITECTURE.md), Claude through Claude Code); the API,
+with no web access, is one setting away. Its own tests run the whole path
+with stand-ins for the three services and need no keys or network. A
+desktop client, `server/tools/desktop_client.py`, plays recorded requests
+to it as the device does.
 
-Wake-word detection runs on the device from boot, added in stage 4. A
-capture task is the microphone's only reader and keeps the last 2 s of
-audio in a ring buffer, from which every listener reads at its own
-position. A microWakeWord model runs on that audio every 30 ms and
-announces each detection; until the stage 6
-state machine exists, a detection in `IDLE` shows `CAPTURING` for 3 s. The
-`wake` console command shows detections, scores and timing, and changes
-the cutoff for tuning. Measured on the breadboard: a run of the model takes
-2.2 ms on average, about 8 % of core 1; detection was reliable up to 2 m
-and partial at 3-4 m; playback and the loopback test were unaffected. The
-review agents defined in `.claude/agents/` reviewed part A before it was
-committed. Those figures are for the stock "Hey Jarvis" model.
+The design is in [ARCHITECTURE.md](ARCHITECTURE.md), the protocol in
+[docs/PROTOCOL.md](docs/PROTOCOL.md), and the open risks and caveats in
+[KNOWN-ISSUES.md](KNOWN-ISSUES.md).
 
-Part B. "Hey Claude" models are trained in Google Colab with a
-notebook in `firmware/tools/wakeword_training/`, described in
-[docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md), whose run history
-is the one record of each run's results. Two runs on synthetic voices only
-fell well short of the targets on the device. The firmware builds the
-third, `hey_claude_run3`, and the boot log and `wake` command name the
-model, so each device test can be tied to its run. Version 2 of the
-notebook, which trained run 3, adds recordings of real voices, made following
-[docs/WAKEWORD-RECORDING.md](docs/WAKEWORD-RECORDING.md), and a test on a
-separate set of them that is never trained on. It is also safe to rerun
-with changed inputs, and generates the firmware manifest; its remaining
-limits are in KNOWN-ISSUES R16. Its helpers, the recordings step, the
-feature building, the training settings and refusals, the sample
-migration from version 1 and the real-voice test were run locally against
-stand-ins for Colab and Google Drive, with the run 2 model and Windows
-text-to-speech clips; the sample generation, downloads and training run
-only in Colab. In that local test the run 2 model scored the
-text-to-speech "hey cloud" and "okay Claude" above 0.95, which agrees with
-the device test.
+## Measured on the device
 
-Run 3, trained on 2026-10-04 with 150 recordings of one speaker, is the
-first to work on the device: in the device test that speaker was
-detected in nearly every try at 0.5, 1 and 2 m. It is specialised to the
-recorded voice. The notebook's test on synthetic voices suggests other
-speakers will be missed far more often until they are recorded too, and
-"hey cloud" can still trigger. The figures and their limits are in the
-run history; what remains open is in KNOWN-ISSUES R1 and R16. The models
-of earlier runs and the stock model were removed from the firmware.
+On the breadboard, USB-powered, open air, the server on a computer on the
+same LAN with a home internet connection, a person speaking, from
+2026-10-06 to 2026-10-26.
 
-The server, built in stage 5, runs with `python -m server`. A device
-connects over a WebSocket with its identifier and token, and each request
-goes through Deepgram speech-to-text, Claude and Deepgram text-to-speech,
-with the reply sent back sentence by sentence as it is generated. The
-server decides when the speaker has finished, keeps each device's
-conversation for the current day in SQLite, deletes earlier days, and
-advertises itself on the network by mDNS. A request cannot be interrupted
-by another. The protocol is written down in
-[docs/PROTOCOL.md](docs/PROTOCOL.md), which is what the stage 6 firmware
-is built against.
-
-The server is tested at two levels. Its own tests, 100 of them as of
-stage 7, 161 with part C's and 245 with stage 8's volume, run the
-whole path with stand-ins for the three services and need no keys or
-network. A desktop client, `server/tools/desktop_client.py`, plays recorded
-requests to a running server as the device will. Measured with it on
-2026-10-06, with synthetic speech, on the server's machine: four of five
-requests were answered aloud and the fifth, whose words speech-to-text
-withdrew, ended without a reply as designed; the server was found by mDNS, a later request was answered from
-the conversation's history, prompt caching took effect from the third
-request, and the first reply audio came 2.4-3.5 s after the end of speech,
-above the budget (KNOWN-ISSUES R19). The review agents reviewed the stage
-before it was committed; what they found and what was deferred is in
-[KNOWN-ISSUES.md](KNOWN-ISSUES.md) (R17 to R19, and the caveats).
-
-Since stage 8 the playback volume is changed by voice: a request that is
-only about the volume is answered by the server without Claude, and the
-device keeps the level through restarts (ARCHITECTURE.md, Volume). Its
-settings can also be entered from a phone: in setup mode the device makes
-a WiFi network of its own and serves a settings page. It starts in setup
-mode when its settings are missing or fail, and on request from the
-console or its BOOT button (ARCHITECTURE.md, Setup mode). A button
-interrupts a turn while the device listens, thinks or speaks, and a
-switch turns on continuous conversation, in which the device listens
-again after each reply without the wake word (ARCHITECTURE.md, State
-machine).
-
-## Stage 8 plan
-
-Planned and approved on 2026-10-15. Each part is reviewed by both review
-agents, corrected, documented and committed by itself.
-
-Decided with the plan: the volume is changed by voice, since the device
-has no buttons; settings are entered through a web page served from a
-hotspot of the device's own, after the one in the author's earlier
-project; over-the-air updates are not adopted for now; and the settings
-in NVS stay unencrypted for good (KNOWN-ISSUES R10), because encryption on
-this chip burns eFuses, one-time fuses that cannot be reset, and the board
-is to stay reusable.
-
-**Part A, volume by voice.**
-
-| Step | State |
-| --- | --- |
-| A1. The loudest level: a boost of about 6 dB in the firmware, with a light limiter that turns loud peaks down instead of letting them clip. If still too quiet, the amplifier's `GAIN` pin, and `audio tone 100` repeated as the supply check (R2) | Built: ten levels 3 dB apart, level 8 the audio as sent and the default, level 10 +6 dB; a limiter with a ceiling 1 dB under full scale. Each reply's summary line says how often and how deeply the limiter acted. On the device, a reply of 10 s at +6 dB met the limiter on 5 samples, by at most 0.6 dB: the boost is clean, with room to spare |
-| A2. The server recognises a volume request ("louder", "quieter", "volume five") from the transcript, without Claude, answers it with a short spoken confirmation, and sends the new level to the device in a new protocol message | Built: `server/pipeline/volume.py`, and a `volume` message in protocol version 1, which the rule on unknown types and fields allows. The device states its level in `utterance_start`, so the server keeps none. Such turns are not added to the conversation. A phrasing the list misses goes to Claude, whose prompt now says how the volume is changed. The desktop client states a level too, `--volume` |
-| A3. The device applies the level at once and keeps it in NVS: the first setting that takes effect without a restart. A `volume` console command for the bench | Built: `state_machine/volume.c`, in an NVS namespace of its own; a level from the server reaches the player as it arrives, and is stored only in `IDLE`. `volume [1-10]` on the console |
-| A4. The chime follows the volume down to a floor, so that it is always heard before the device listens | Built: the floor is -9 dB, level 5 |
-| A5. Measured on the device, with the chip's temperature (R20); reviewed, documented | Done on 2026-10-15; the figures are below. Reviewed by both agents and corrected before the test; corrected again after the first round on the device. The server's 245 tests pass |
-
-**Part A on the device, 2026-10-15.** Breadboard, USB-powered, a person
-speaking, in two rounds with the server's code changed between them.
-
-- First round, eleven turns. Every level the server sent was applied, the
-  confirmation was heard at the new level, and at level 1 the chime stayed
-  at its floor of -9 dB. But a "volume" with a number worked only at
-  times. Requests that ended in a number ran on for 6.9 to 13 s, because
-  speech-to-text held the end of speech back after a number (KNOWN-ISSUES
-  R19), so the person said them again; "volume three volume three" then
-  matched no phrase and went to Claude, as did "make voice louder". Claude
-  answered that the volume "should already be set", which was untrue.
-- Corrected: speech-to-text no longer formats numbers, which ends such a
-  request about 5 s sooner, and any question ending in a number with it;
-  a request may hold several volume commands, applied in order, as people
-  repeat or correct themselves; "voice" is understood ("make your voice
-  louder"); the system prompt has Claude say that a volume request it is
-  given was not recognised and nothing changed; the server logs what was
-  understood on each volume turn.
-- Second round, four turns, judged by the person to work better. "Volume
-  ten" set +6 dB; a reply of 10 s at that level met the limiter on 5
-  samples, by at most 0.6 dB, so the boost has room and does not clip.
-  "Make your voice louder" at level 10 was answered "That's as loud as I
-  go." "What is twelve times ten?" ended normally, its first audio 3.3 s
-  after the end of speech.
-- Not heard on the device: a repeated command and a level below 9 after
-  the correction; the tests cover them. One change in the first round,
-  from 9 to 1, is unexplained, because volume turns were not logged then.
-- Chip temperature: 43.5 °C 35 s after flashing, rising to 52.5 °C over
-  the first round; 54.5 to 55.5 °C through the second (R20).
-
-The corrections after the device test were reviewed by both agents on
-the same day. Neither found a critical fault. The first found one major:
-a run of commands that came back to its starting level and ended on a
-step, as "louder, quieter", was answered "That's as quiet as I go." The
-second traced it, and the first agent's other wording fault, to the
-reply being chosen from the last command alone. Corrected: the reply is
-now worded from what happened as the commands were applied; a request is
-cut into clauses at its punctuation before any word is searched, and the
-search is memoised; "sound" and "voice" are taken by every family of
-phrases, not only the steps; the log gives the commands as understood
-and not the words heard, so that `LOG_TRANSCRIPTS` keeps its meaning; a
-word in another script can no longer ride along with a command; the
-prompt's sentence on the volume takes the scale from the protocol's
-constants, through a small module of spoken numbers that the phrases use
-too; the finding about speech-to-text moved out of R19 into an entry of
-its own under Resolved; the tests were regrouped so that each says what
-it covers. The server's 245 tests pass.
-
-**Third round on the device, after that review, 2026-10-15.** The same
-bench and firmware, the reviewed server, a person speaking eleven turns
-with the cases not heard before. All volume requests were understood as
-said, and each reply began 0.5 to 0.7 s after the end of speech, one
-3.2 s: "volume three"; "louder, louder" (two steps); "louder, quieter",
-which left the level where it was; "volume ten, volume ten"; "set the
-sound to four"; "turn the sound all the way up"; "louder" at level 10,
-answered "That's as loud as I go."; and "volume ten". "Volume two, no,
-volume four" went to Claude, as it should, and Claude said such requests
-are handled by the device and suggested saying "volume four" alone,
-without claiming any change. One request was heard as "Now there." and
-went to Claude, which asked for it to be repeated. At level 10 the
-limiter acted on the short confirmations, on up to 16 samples, by at most
-2.6 dB, not heard. Chip temperature 55.5 to 56.5 °C (R20). Part A is
-done.
-
-**What the review changed.** Neither agent found a critical or major
-fault. Corrected from the first: `volume` on the console printed 0 on a
-device not yet set up; a `volume` that was not a whole number made the
-server drop the whole request, where it now counts as no volume; the level
-was written to flash as it arrived, which pauses the audio tasks and could
-glitch a reply, and is now stored only in `IDLE`. From the second: the
-scale was counted down from the player's ceiling, so that the default was
-0 dB only by coincidence, and is now built outward from the default; the
-volume moved out of the state machine into a file of its own, and out of
-`app_config`'s namespace, which part B treats as settings, into one of its
-own; the phrases were two lists kept in step by hand, which had drifted,
-and are now built from one table for each direction, with the phrasings
-the agent found missing ("a bit louder", "too loud", "volume to the max");
-the system prompt says how the volume is changed, so that Claude does not
-claim to have changed it; the server checks at start that every level has
-a spoken name; the desktop client states a level, as the device does; the
-chime's floor sits beside its level, in `chime.h`; a new level reaches
-the player in the link's task, so that it is in place before the
-confirmation by the order of the messages and not by the synthesiser's
-delay; the confirmation is held to the same limit on the first audio as
-a reply from Claude.
-
-**Part B, provisioning through a hotspot.** Steps refined and approved on
-2026-10-15, after part A. Setup is a way of starting up: the device
-restarts into it, runs the hotspot, and restarts out of it, so that nothing
-running has to be stopped. Built after the setup mode of the author's
-earlier project, ported to this chip and to `app_config`. Decided with the
-steps: holding the board's BOOT button for 3 s opens setup; a token the
-server refuses opens it by itself.
-
-| Step | State |
-| --- | --- |
-| B1. One check for all settings: `app_config` checks several settings together and stores them only if every one passes, for the console and the page alike | Done: `app_config_store()`. The token is now checked for the server's lengths, held to the server by its test through `protocol.h`, and the server's address for its shape |
-| B2. Setup as a start-up mode: a flag that survives a restart makes the boot sequence start the hotspot in place of the state machine, the server link and WiFi. Entered when WiFi or the token is missing, from a `setup` console command, and by holding BOOT for 3 s | Done: the new `setup` component (ARCHITECTURE.md, Setup mode) |
-| B3. The hotspot and the form: a hotspot named after the device, with a random password shown on the panel; a captive-portal DNS that makes a phone open the page; WiFi name with the networks in range offered, WiFi password, device token and server address, the secrets never sent back and left as they are when blank; the device identifier shown. A save restarts the device; with working settings stored, the hotspot closes after 5 min | Done, ported from the author's earlier project. Changed by the review: the 5-minute deadline applies only when setup was entered on purpose, by the console or the button |
-| B4. A setup screen: the hotspot's name and password, the page's address and the minutes left | Done: four lines under the title, built from the SETUP entry of the view table, the minutes counted by the screen itself |
-| B5. Back to setup by itself: after 5 rejected WiFi passwords in a row or 10 min without finding the network, only for settings that have never connected; and when the server refuses the token | Done. Which settings have worked is kept by `net`, as a checksum in an NVS namespace of its own |
-| B6. Tested on the device with a phone, with the chip's temperature (R20): first setup, a change, a wrong WiFi password, a wrong token, the timeout | Done on 2026-10-15; the figures are below |
-| B7. Reviewed by both agents, corrected, documented, committed | Done on 2026-10-15 |
-
-**Part B on the device, 2026-10-15.** Breadboard, USB-powered, a phone
-joining the device's hotspot, seven tests, before the review:
-
-- Entry by BOOT held 3 s: setup mode about 2 s later, 9 to 11 networks in
-  range offered.
-- The page: the phone joined, and the captive DNS answered its questions,
-  51 within about ten seconds of joining. The phone did not open the page
-  by itself; it was opened at the address on the screen. The same phone
-  did not open it with the author's earlier project either, where another
-  phone did (KNOWN-ISSUES, Caveats).
-- Saved with nothing changed: Ready 7 s after the save.
-- A wrong WiFi password: 5 refusals in 24 s, then back to setup by itself,
-  "WiFi password refused". The right password: Ready 7 s after the save.
-- A wrong token: the server refused it and the device was back in setup
-  within about a second, "Server refused this device". The right token was
-  then restored through the console without being shown.
-- BOOT held in setup mode: left it, Ready 5 s later.
-- Setup left alone: restarted after exactly 5 minutes, Ready 6 s later.
-- Chip temperature 53.5 to 57.5 °C (R20).
-
-After the review's corrections, flashed and tested again: entry by BOOT
-showed the countdown line, which the person judged correct; a wrong token
-entered through the console took the device straight into setup with no
-deadline; the real token was restored the same way. The default event
-loop's stack was measured with the `mem` command, which now lists it:
-308 bytes never used out of 2304 after an ordinary start, raised to 3584,
-after which 1596 were never used.
-
-**What the review changed.** Neither agent found a critical or major
-fault; the first found no way to strand the device and no unsafe handling
-of what the phone sends. Corrected from the first: the setup screen's
-details could be handed to a display task that had ended, if the panel had
-failed to start; the Saved page promised a return to setup that a network
-not found or a wrong server address does not give; the new check on the
-server's address refused the form `host:port`, which the device accepts;
-the 5-minute timeout could restart the chip in the middle of a save; the
-press that opens setup could also close it, if held long enough; the
-setup lines were lost if a display test ran when they arrived; the default
-event loop's stack, measured, was too tight; a refused WiFi password on the
-page used the console's wording. From the second: setup entered because
-the settings failed timed out after 5 minutes, went back to them, failed
-and came back, with a new hotspot password each time, and now has no
-deadline; the state machine's phase for a refused device, which nothing
-could reach any more, was removed, so that `SETUP` belongs to setup mode
-alone; the setup screen was fed through two channels and rebuilt once a
-minute for its countdown, and is now set once, with its lines built from
-the view table that part C works from; whether the settings are complete
-is asked in one place; the page takes its length limits and labels from
-`app_config`, and the token's lengths are the server's, held by its test;
-callbacks that every caller must give are required. The two agents'
-findings that touched documentation are in ARCHITECTURE.md and README.md.
-
-**Replanned on 2026-10-18.** The refined animations, first planned as
-part C, are dropped: the placeholder animation of each state stays as it
-is. Two features take their place, each worked by a control added to the
-board: a momentary button that interrupts a reply (part C), and a
-three-leg switch that chooses continuous conversation (part D, put off
-that day and taken up on 2026-10-19).
-
-Decided with the replan:
-
-- The button is the only way to interrupt. Speech during a reply does
-  not interrupt it; the device does not listen while it speaks.
-- The interrupt acts the moment the button goes down, once its contact
-  bounce has settled, not on release. Holding it does nothing more, and
-  it has no long press. A new press counts only after a release.
-- The button interrupts while listening, thinking and speaking, and does
-  nothing in any other state. It is not a push-to-talk.
-- An interrupted turn stays in the conversation: the request, and the
-  reply as far as it was sent, marked as interrupted by the user. The
-  server cannot know how much of it was heard.
-- The button is on GPIO 1 and the switch on GPIO 2. Each connects its pin
-  to ground, against the chip's internal pull-up. The switch's middle leg
-  is the common, wired to ground; one outer leg goes to GPIO 2 and the
-  other is left unconnected. GPIO 2 is reserved for the switch from part
-  C on.
-
-**Part C, interrupting a reply with a button.**
-
-| Step | State |
-| --- | --- |
-| C1. The button and the switch wired, and both added to the pin map in `board.h` and README.md. A `controls` component reads both pins every 10 ms from a timer, settles contact bounce, and posts a press to the state machine as an event, as the wake word does. A `controls` console command shows both positions, for checking the wiring | Done on 2026-10-18: the `controls` component, posting `CONTROLS_EVENT` / `CONTROLS_BUTTON_PRESSED`; a pin's level is believed after three equal readings, 30 ms. Checked on the device: six presses counted as six, a held press counted once, the switch read in both positions |
-| C2. Protocol: a `cancel` message from the device, which the server answers with `reply_end`, so that every turn still ends with exactly one of `reply_end` and `error`. Rules 1 and 6 of PROTOCOL.md rewritten. Protocol version 1 stays, as the rule on unknown types allows | Done on 2026-10-18, in PROTOCOL.md, Interrupting a turn. The server ignores a `cancel` when the turn's end has already been sent, so that no turn ends twice. A device waits 3 s for the end (`PROTO_DEVICE_CANCEL_LIMIT_MS`) |
-| C3. Server: on `cancel`, the running turn's speech-to-text, Claude and text-to-speech are stopped, no more audio is sent, and `reply_end` follows. The turn is kept as decided above. Tests; a `--cancel-after` option in the desktop client, to exercise it without the device | Done on 2026-10-18. The turn notes how far it has got (`TurnProgress`); the connection cancels it and records it (`record_interrupted`), with the reply's sentences whose audio had begun to be sent, then `[interrupted]`. The system prompt says what the mark means. Nine new tests; the server's 257 pass |
-| C4. Device: a press while listening, thinking or speaking stops capture and playback at once, discards held audio, sends `cancel`, and shows `IDLE`. Audio still arriving is dropped until `reply_end`, and the wake word is taken only after it. Without `reply_end` within 3 s, the device closes the connection (rule 6) | Done on 2026-10-18: a phase `CANCELLING`, shown as `IDLE`. `cancel` is sent by the upload task, after the request's audio, and only for a request that was announced. In the chime the press only stops the sound, and in the reply's last seconds, after `reply_end`, it only stops the playback |
-| C5. Tested on the device, with the chip's temperature (R20): a press in each state, early and late in a reply, during a web search, and repeated presses; the time from press to silence measured | Done on 2026-10-18; the figures are below |
-| C6. Reviewed by both agents, corrected, documented, committed | Done on 2026-10-18: reviewed, corrected, and the corrected version tested again on the device; the figures are below |
-
-**Part C on the device, 2026-10-18.** Breadboard, USB-powered, the server
-running, a person speaking nine turns in three minutes:
-
-- Interrupted while speaking, about 2 s into a long reply; while
-  thinking, twice, one of them a question that needed a web search; and
-  while the person was still speaking. Each time the device logged the
-  press, stopped, and showed `IDLE` within the same millisecond, and the
-  server's `reply_end` arrived 60 ms later after a reply, 70 ms after a
-  capture, and 210 ms while Claude was being stopped. The sound stopped
-  "almost immediately", by the person's account; it was not measured.
-- The next question, "what were you just telling me about?", was answered
-  from the interrupted reply, which Claude knew had been cut short.
-- A press at idle did nothing; a normal turn ran to its end.
-- The turn after the interrupted web-search question failed part-way
-  through its reply, with `RemoteProtocolError` from the synthesiser's
-  service. Twenty-three requests made afterwards from a script, after
-  requests cut off at two points and after idle gaps of up to 90 s, all
-  succeeded, so the failure is not shown to come from the interrupt.
-  Corrected all the same: a sentence whose request fails before any audio
-  has arrived, the usual sign of a kept-open connection closed at the
-  other end, is tried once more; and the log now says whether a failure
-  came before the answer or part-way through it, which cannot be tried
-  again without repeating words.
-- Chip temperature 55.5 to 56.5 °C (R20).
-- Claude Code had updated itself to 2.1.302 from the 2.1.296 tested. The
-  turns above ran on it without fault, and so did the bench that R21 asks
-  for after an update, run afterwards (R21).
-
-**What the review changed.** Neither agent found a critical or major
-fault. The first found that a cancellation could be swallowed in two
-places, so that a turn interrupted at the wrong moment would carry on and
-play its whole reply; that the server sent its answer to `cancel` only
-after stopping Claude and storing the turn, with no limit, while the
-device waits 3 s; that the device's 3 s ran from the press, where the
-protocol says from sending `cancel`; and that ARCHITECTURE.md still said a
-turn cannot be interrupted. The second traced the first two to one
-cause: the connection decided what an interruption meant, recording the
-turn itself through state shared with the task it had just cancelled.
-Corrected: the turn handles its own interruption. The connection only
-sets its `interrupt` event; the turn stops its work, tells the device at
-once, before Claude has finished stopping, and records itself by the same
-rules as a completed turn, so that a refused reply is never kept. A turn
-counts as over once its end is sent, so a new request is taken while the
-old one is still stopping. Waiting for a task no longer swallows a
-cancellation, which a new test shows the old code did. Everything of one
-turn on the connection's side is one object, so that nothing carries over
-to the next. The sentences sent are known from a number carried with each
-piece of audio, and no longer from markers in the queue. On the device,
-one rule after a press: nothing about that turn is shown as a failure, and
-if the server does not answer, or `cancel` cannot be sent, the connection
-is closed quietly; the 3 s restart when `cancel` has gone. The Deepgram
-retry logs a warning when it acts, has an entry under Caveats in
-KNOWN-ISSUES, and a further script cutting requests off while their audio
-streamed did not reproduce the failure either. Not taken: keeping
-"interrupted" as a column of its own in the database, which would need a
-migration for a mark Claude reads as text anyway, in a history deleted
-each day. The server's 261 tests pass.
-
-**The corrected version on the device, 2026-10-18.** The same bench, a
-person speaking six turns in two and a half minutes:
-
-- Interrupted about 5 s into a long reply, and while thinking, just after
-  the request ended. Each time the device stopped and showed `IDLE` in the
-  millisecond of the press, and the server's `reply_end` arrived 30 ms
-  later after the reply and 70 ms later while Claude was thinking. No
-  failure was shown.
-- The next question, asked 9 s after the first interrupt, was taken and
-  answered in full, with a search: a new request is accepted straight
-  after an interruption. The synthesiser did not fail in any of the six
-  turns, and its retry did not have to act.
-- The reply interrupted while speaking was stored as far as its audio had
-  been sent, then `[interrupted]`; the one interrupted while thinking was
-  stored as `[interrupted]` alone. Asked "what were we talking about right
-  now?", the assistant answered from that turn and said it had been
-  stopped.
-- The three replies that searched said a short sentence, then fell silent
-  for 2.4 to 10.1 s while the search ran, as designed since stage 7 and
-  described there.
-- Chip temperature 56.5 °C at all three readings (R20).
-
-**Part D, continuous conversation.** Planned on 2026-10-18 and put off;
-approved on 2026-10-19, with the screen's mark decided: shown. With the
-switch closed, the device listens again after each reply instead of
-returning to `IDLE`, so that the conversation continues without the wake
-word.
-
-| Step | State |
-| --- | --- |
-| D1. The switch's position read when a reply has finished playing, so that a change takes effect at the end of the reply under way. Nothing stored in NVS: the switch is the setting | Done on 2026-10-19. `controls` announces each move as `CONTROLS_SWITCH_CHANGED`, again every 10 ms until the event loop takes it; the state machine reads the position in one function, `continuous_wanted()` |
-| D2. In continuous mode, after a reply has played in full, the chime and then capture, as after the wake word. A volume confirmation continues the conversation too | Done on 2026-10-19: only a reply the player reports played to its end continues, and only when the device could take the wake word (`may_take_request()`, which `rest()` uses too) |
-| D3. Back to `IDLE` when nothing is said within the server's 5 s wait for the first word, after an error, on the button, with the switch back in its first position, or on a lost connection. No change to the protocol | Done on 2026-10-19, as planned, and also after ten follow-ups in a row (`MAX_FOLLOW_UPS`), added after the review, and when the button cuts the end of a reply short |
-| D4. Whether the screen shows the mode: proposed, a small fixed mark on the `IDLE` and listening screens, leaving the animations as they are. To decide | Decided on 2026-10-19: shown. Done: a loop symbol and "Continuous" in orange in the top right corner of `IDLE` and `CAPTURING`, carried as a field of `app_state`. The `controls` command shows the mode in effect |
-| D5. Tested on the device, with the chip's temperature (R20): a conversation of several turns, leaving it by silence, the switch changed during a reply, the button during a follow-up capture, and whether noise in the room or the end of a reply keeps the loop going | Done on 2026-10-19, before and after the review's corrections; the figures are below. The cap of ten was reached on the device on 2026-10-26 (Before release) |
-| D6. Reviewed by both agents, corrected, documented, committed | Done on 2026-10-19 |
-
-**Part D on the device, 2026-10-19.** Breadboard, USB-powered, the server
-running, a person speaking:
-
-- First version: four replies in a row each followed by the chime and a
-  new request, 210 to 225 ms after the reply ended. A follow-up in which
-  nothing was said ended after 5.7 s of capture with `reply_end` and no
-  reply, and the device went to `IDLE` showing no failure. The switch
-  closed during a reply continued the conversation at its end; opened
-  during a reply, the device rested at its end. Each move of the switch
-  was seen within the same millisecond. A press in the last moments of a
-  reply skipped its end and rested.
-- Corrected version: three follow-ups in a row, then a press of the
-  button while listening for the fourth; the device showed `IDLE` at
-  once, and the server's `reply_end` came 70 ms later. The switch opened
-  during a reply: the device rested at the reply's end, and the speaking
-  animation ran on smoothly through the move, by the person's account.
-- No follow-up was kept going by the room's noise or by the reply's own
-  echo: the one silent follow-up ended by itself. Only one such try was
-  made, so this is observed, not established.
-- Replies that searched the web fell silent for 5 to 10 s after their
-  first sentence, as designed since stage 7. Claude Code had updated
-  itself to 2.1.303; the turns ran on it without fault, and so did the
-  bench run afterwards (R21). On the first turn the synthesiser's retry,
-  added in part C, acted once and the reply played in full.
-- Chip temperature 55.5 °C at every reading of the first session, and
-  52.5, 56.5 and 55.5 °C, three minutes apart, for the corrected version
+- **Wait for a reply**, from the end of the request to the first sound:
+  about 2 to 5 s for a plain answer, once 12 s; a reply that searches the
+  web says "Let me check." after 2.6 to 6.3 s, falls silent for 1.5 to
+  11.6 s, then answers. The budget of 1.3 to 2.3 s is not met, and that is
+  accepted (R19). Claude's time to its first text is nearly all of the
+  wait and all of its spread.
+- **Chime to request:** the request begins 220 ms after the wake word,
+  and a follow-up's 210 to 225 ms after the reply ends.
+- **Stability:** over a run of 3 h 5 min with twelve turns, no reset, no
+  lost connection and no audio lost from any request; internal RAM free
+  stayed at about 100 KB with no trend, about 56 KB at its lowest.
+- **Recovery:** a server killed at any point of a turn was noticed within
+  about 30 ms, and the device was back in `IDLE` within 2 to 3 s of the
+  server's return. With the router switched off for 3.5 min, the device
+  was back in `IDLE` within a second of rejoining the WiFi.
+- **The device's own deadlines**, set off on 2026-10-26 against a
+  stand-in server that misbehaved on purpose: capture ended at 15.0 s, a
+  wait for the reply at 40.0 s, and a stalled reply 40.0 s after its last
+  audio, each ending in `ERROR` and then `IDLE`. A server stating another
+  protocol version was refused, with "Server and device versions differ".
+- **Continuous conversation** ended in `IDLE` after ten follow-ups in a
+  row, as designed (2026-10-26).
+- **Interrupting:** the button stopped a turn and showed `IDLE` within
+  the millisecond of the press; the server's `reply_end` followed 30 to
+  210 ms later.
+- **Supply:** about 0.58 A at 4.82 V for a full-scale tone and 0.2 A
+  through a spoken reply, with no reset (R2).
+- **Chip temperature:** about 56 °C idle and 56.5 °C in conversation
   (R20).
-
-**What the review changed.** Neither agent found a critical or major
-fault. The first found that moving the switch restarted the animation of
-whatever screen was showing, since the display rebuilt its view on every
-announcement; that a switch move lost to a full event queue left the mark
-wrong in `IDLE` until the next turn, against what the comments said; that
-the controls failing to start would freeze the switch at its position at
-boot, possibly keeping continuous conversation on for good; and a stale
-comment on where the volume is stored. The second traced the lost move
-to its cause: the state machine read the switch at every change of phase
-to make up for an announcement that could be dropped, so that one change
-of phase could make two announcements. Corrected: `controls` repeats a
-move until it is announced, and the state machine reads the switch only
-where it decides; the display only shows or hides the mark when the mode
-alone changes; a failed start reports the switch open. Also from the
-second: the conditions for taking a request, which the follow-up had
-copied from `rest()`, are one function both use; the turn's bookkeeping
-is one function, and the reply's end decides between a follow-up and
-`IDLE`, in place of a boolean argument; the state machine keeps no copy
-of the switch's position; the console shows the switch as it stands and
-the mode as the state machine has it; and the loop is capped at ten
-follow-ups in a row, chosen by the user, since a television or people
-talking could otherwise keep it going and every capture is sent to the
-server. The corrected version was tested on the device as above.
-
-## Stage 7 plan
-
-Planned and approved on 2026-10-08. The wait for a reply, about 3 s from
-the end of speech against a budget of 1.3 to 2.3 s, was judged acceptable
-in use, so the stage takes only the inexpensive ways of shortening it and
-does not have to reach the budget. Parts A and B were reviewed together
-by both review agents on 2026-10-08 and corrected; part C is reviewed and
-committed by itself.
-
-**What the review changed.** Neither agent found a critical or major
-fault. Corrected from the first: a request whose opening audio was lost
-before sending was not caught by the new check; the synthesiser's two
-tries could take 10 s where 5 s was claimed, which is now one limit over
-both; a watched task that had failed to register with the watchdog would
-have logged an error on every pass. From the second: the "Restarted"
-wording moved from the boot sequence into the state machine's one table,
-so that the state has one writer again; whether the device can hear is
-now asked of the wake-word component and no longer kept in three places;
-the brownout guard moved into a file of its own; each watched task
-asserts at build time that its waits fit the watchdog's limit; the state
-machine tells a deadline from a watchdog wake-up by the clock, not by a
-flag; a turn that fails logs its timings as far as it got. Left as it is:
-the player still times a pause in two ways, which is untidy and exact
-enough. The corrected firmware was built, flashed and seen to reach
-`IDLE`; the corrected server answered two requests from the desktop
-client. One request spoken by a person to the corrected firmware was
-answered as before; the wait for its reply was 6.9 s, of which Claude's
-first text took 5.3 s.
-
-**Part A, latency, on the server.**
-
-| Step | State |
-| --- | --- |
-| A1. Finer timing log: when speech-to-text was reached, and the model's first whole sentence, beside the first text and first audio already logged | Done. Baseline measured on 2026-10-08 with the desktop client on the server's machine, five short questions in a synthetic voice, a home internet connection: speech-to-text was reached 0.84 to 0.88 s after each request began; from the end of speech, Claude's first text came after 0.9 to 3.5 s, its first whole sentence 0 to 0.9 s after that, and the first audio 0.3 to 0.75 s after the sentence, 1.2 to 5.1 s in all. In the first turn the end of speech was detected 5 s late, once |
-| A2. Connections to the synthesiser and to Claude opened ahead of need, at server start and when a request begins; a second try at reaching the synthesiser (R19) | Done in part, by design. The second try is built, by the HTTP library: each try is cut short at half the 5 s allowed for reaching a service, and one limit of 5 s runs over both, so no limit in the protocol moves. A connection that takes more than 2.5 s in one of its steps now fails where it used to succeed. Opening connections ahead of need was built, measured and taken out again. Measured on 2026-10-08 on the server's machine, three times each: the synthesiser's first audio came 0.58 to 0.62 s after the request on a new connection, 0.58 s on one just used, and 0.50 to 0.52 s on one opened 8 s earlier; and the same five questions as the baseline were answered no sooner with it. The wait is the synthesiser's own |
-| A3. The end-of-speech silence tuned against requests spoken by a person, with and without a pause in mid-sentence (R18) | Done: the silence stays at 400 ms. A setting of 1 s was tried on the device on 2026-10-08, by a person, over six spoken turns, and made the end of a request erratic: one request in three ended on the service's silence signal, 1 to 1.5 s after the speaker stopped, and the others only on its slower signal from word timings, 2 to 4 s after. With synthetic speech and faint noise sent to the service directly, the same setting ended every request 1.7 to 2.1 s after the recording, so the effect needs the microphone's own audio. Measuring the silence on the server from the service's word timings would give a longer silence dependably; it was considered and not taken up |
-| A4. The wait measured again, with the desktop client and on the device | Done, 2026-10-08. Nothing built in part A shortens the wait, so these figures stand beside those of stage 6 and do not replace an estimate. Desktop client, a second run of the same five questions as A1's baseline: 3.2 to 5.6 s from the end of speech to the first audio, of which Claude's first text was 1.9 to 4.5 s. On the device, by its own log, four turns spoken by a person at the 400 ms silence: 1.8, 2.8, 2.8 and 5.0 s from the end of the request to the first sound. One reply the same day, during the trial of a longer silence, waited 12 s, of which Claude's first text was 10.7 s. Claude's time to its first text is the whole of the spread |
-
-Set aside: synthesising the first clause instead of the first sentence,
-work on Claude's time to its first text, and starting Claude on an early
-transcript. They stay listed in KNOWN-ISSUES R19.
-
-**Part B, robustness, mostly firmware.**
-
-| Step | State |
-| --- | --- |
-| B1. WiFi lost and restored in each of `IDLE`, `CAPTURING`, `THINKING` and `SPEAKING`, on the bench; what is found is corrected | Put off on 2026-10-08: the WiFi could not be switched off for the test. Listed under Before release, and made there on 2026-10-26 with the device idle; the other phases were dropped that day as not needed. The server-drop tests of B2 exercise the same recovery from the moment the connection is lost, but not the loss of WiFi itself or the wait for it to return |
-| B2. The server stopped in each phase of a turn | Done on the bench on 2026-10-08, a person speaking, the server's process killed by a script watching its log: 2.1 s into a request, 0.4 s and 7.4 s after a request ended with the device waiting for the reply, and 3.5 s into a spoken reply. Each time the device showed the loss within about 30 ms, held `ERROR` for 4 s, rested on `CONNECTING`, and was back in `IDLE` by itself 12.7 to 21 s after the loss, within 2 to 3 s of the server being up again. The reply that was cut stopped within about 100 ms, and cleanly as heard. A request spoken after the first loss was answered. Nothing needed correcting |
-| B3. Watchdogs: a hung task resets the device; the capture, player and state-machine tasks are watched; the reason for the reset is shown after it | Done. A watched task that is silent for 5 s restarts the chip, with a core dump; after a restart nobody asked for, the line under `CONNECTING` names the cause until the first attempt to reach the server has ended. Seen on the bench on 2026-10-08, twice, with a test build that could hang the state-machine task on command, not kept: the watchdog named the task and restarted the chip 5 to 8 s after the hang, the core dump was saved, the boot log gave "task watchdog" as the reset reason, the state read "connecting, Restarted: watchdog", and the device was back in `IDLE` 5 and 10 s after the restart. Over about 70 minutes of ordinary use before that, with thirteen turns and four lost connections, the watchdog did not fire. The capture and player tasks were not hung on purpose |
-| B4. Brownout guard: the cause shown at boot, and repeated brownouts ending in `ERROR` with the amplifier off instead of a loop of resets | Done, and seen on the bench on 2026-10-08 with a test build that counted its next three boots as brownouts, not kept: the first two started normally with the state reading "connecting, Restarted: supply dipped"; the third stopped at "error, Power supply too weak" with no attempt to connect; a restart from the console cleared it and the device returned to `IDLE`. No real brownout was caused, so what the chip's memory keeps through one is taken from its documentation, not seen. At the third brownout in a row, each within 60 s of the boot before it, the device does not join WiFi or play anything and shows `ERROR`, "Power supply too weak", until it is powered off and on or restarted from the console. The count is kept in memory that survives a restart but not a loss of power; nothing is written to flash |
-| B5. Small known defects: a pause counted twice in a reply's summary line, a dead microphone missed in the first second after boot, a send that blocks for seconds on a stalled network | Done. Seen on the device on 2026-10-08: a reply that paused twice was counted as two. The other two have not been brought about on the bench. A dry spell is counted once; the state machine asks the wake-word component whether the device can hear instead of keeping its own copy; and a request that loses audio to a stalled send, at its start or further in, is given up with "Could not send the request" instead of being answered with a hole in it. The send itself still blocks: its timeout is inside the WebSocket component |
-| B6. A run of several hours with turns at intervals: memory, stack headroom, pauses, reconnections and chip temperature | Done on the bench on 2026-10-12, measured: the console logged for 3 h 5 min, from 91 min to 4 h 36 min after the device's last reset, with the server reaching Claude through Claude Code (part C). Twelve spoken turns in five groups, with up to 56 min idle between groups; seven answered from what the model knows and five with one search each; all twelve answered. No reset, no lost connection, no watchdog, and no audio lost from any request. **Memory:** internal RAM free between 99,999 and 100,199 bytes at each of 19 readings ten minutes apart, with no trend; its lowest since boot went from 56,036 to 55,564 bytes, in three steps, the last before the final six turns; the largest free block 31,744 bytes and PSRAM free 7,741,284 bytes at every reading. **Stack never used**, the same at every reading but one: 1,368 bytes for the link task, 1,672 for the state machine, 1,744 for the player, 2,160 for capture, 3,020 for the display, 3,168 for the wake word, 3,844 for upload; the WebSocket task's fell once, from 4,368 to 4,256, in the first ten minutes. **Pauses:** none in the seven plain replies; in each of the five that searched, the silence of the search, 1.5 to 11.6 s, and then one to four dropouts of up to 110 ms within the next second (KNOWN-ISSUES, latency). **Temperature:** 55.5 to 57.5 °C over 185 readings a minute apart, 55.5 °C at most of them (R20). Twelve turns in three hours is about the use the device is meant for, so the step is closed with this run; a run under heavier use is not planned |
-
-**Part C, the assistant's model reached through a Claude Code
-subscription, as a trial.** Approved on 2026-10-08 and built on
-2026-10-12, on the git branch `stage7c-subscription-trial`, so that it can
-be dropped whole if it does not work out. While it was a trial the API
-remained the default. On 2026-10-12, after the run of B6, the branch was
-merged and `LLM_BACKEND=claude_code` made the default; `LLM_BACKEND=api`
-chooses the API, with no web access. It
-changes no firmware and nothing in the protocol. What it is and how it is
-locked down is in [ARCHITECTURE.md](ARCHITECTURE.md), under Claude through
-Claude Code; its risks and every figure are in R21 of
-[KNOWN-ISSUES.md](KNOWN-ISSUES.md).
-
-| Step | State |
-| --- | --- |
-| C1. Bench trial with no change to the server: how long `claude -p` takes to its first text, with and without a web search | Done, with `server/tools/claude_cli_bench.py`, which puts written questions to the tool through the server's own client. Measured on 2026-10-12 on the server's machine, a home internet connection, `claude-opus-5` at low effort, Claude Code 2.1.296, timed from the start of the process: the first text of a plain answer came after 1.7 to 2.5 s over five questions, median 1.9 s, and after 1.7 to 4.0 s over fifteen with ten earlier exchanges sent along, median 1.95 s, so history costs nothing that can be told. With a search, the first text came as soon and the whole reply took 10 to 26 s |
-| C2. If that is tolerable, a second language-model adapter that runs `claude -p` and feeds the existing sentence pipeline, chosen by one setting | Done: `server/llm/claude_code.py`, one process for each turn, behind the interface the API client already had. The pipeline is unchanged |
-| C3. Locked down: web search and web fetch only, no shell or file tools, run from an empty directory, and without the API key in its environment | Done, and checked on every run from what the process says it started with. Reading pages was first left out, then allowed for a short list of sites, then for any site, each step decided on what the bench showed: search alone did not answer the weather in five tries of five; with five listed sites the weather was answered and the news was not, its sites refusing to be read; with any site, all five questions were answered. A list of sites remains a setting, `CLAUDE_FETCH_DOMAINS` |
-| C4. The system prompt says the assistant can search; the conversation stays in the server's own store | Done. The prompt also asks for a short sentence before a search, "Let me check.", so that the device is not silent while it runs, and forbids the list of sources the search tool asks the model to add, which the client removes if it comes all the same. The tool tells the model the date, so the assistant now knows the day, and not the hour |
-| C5. Measured on the device, reviewed, documented | Done on 2026-10-12, on the breadboard, a person speaking, twelve turns in two runs; the figures are below. Reviewed by both review agents and corrected |
-
-**Part C on the device, 2026-10-12.** Breadboard, USB-powered, the server
-on a computer on the same network, a person speaking. All times are from
-the end of the request to the first sound, by the server's log.
-
-- First run, eight turns. Four plain answers began after 3.3 to 5.4 s.
-  Four that used the web began after 7.3 to 20.0 s, and "Let me check."
-  was heard only with the answer: nothing ended its sentence until the
-  search was over, so it was not spoken. A one-sentence answer waited the
-  same way for the process to finish, about 1.5 s.
-- Corrected, by ending the sentence where the tool reports the end of a
-  block of text, and run again, four turns. Two plain answers began after
-  3.2 and 3.3 s. Two that used the web began after 3.3 and 3.9 s with
-  "Let me check.", were silent for 6.2 s each, and then gave the answer.
-  A person judged the sentence prompt and the silence acceptable.
-- Through both runs no request audio was lost. In the first no reply ran
-  out of audio; in the second each searched reply ran out for the 6.2 s
-  of the search, as it must, and then two to four more times for 40 to
-  80 ms in the first second of the answer (KNOWN-ISSUES, Caveats, "A reply
-  can pause briefly").
-- Chip temperature: 53.5 °C just after a reset, the board warm; 55.5 to
-  56.5 °C through the first run; 55.5 °C idle for the eighteen minutes
-  between; 57.5 °C during the last reply (R20).
-
-**What the review of part C changed.** Neither agent found a critical
-fault. Both found the same major one: the limit of 20 s on silence from
-Claude was counted between any two lines the process printed, and it
-prints a line for every step of a search, so a reply that searched again
-and again could stay silent past the 40 s a device waits, and the device
-would have given up before the server did. The limit is now counted in
-text that can be spoken, and was raised from 20 s to 24 s, which is as
-far as the device's own limit allows, so that fewer replies that search
-twice are cut. Corrected from the first agent besides: a turn
-cancelled as its process was ending could leave the process running; a
-list of sources in the middle of a reply took the answer after it; a
-blank API key passed for a key; a process that could not start left
-nothing in the log to say why. From the second: which sites may be read
-is one small type with one reader of the setting, where a list had three
-meanings and five readers; the web's part of the system prompt moved out
-of the prompt the API uses into a file of the trial's own, so that the
-trial is dropped by deleting files; what is made of the tool's events is
-apart from the starting and stopping of the process, and tested without
-one; and the rule the "Let me check." fault broke is written into the
-interface. Left as it is: a parameter of the client that exists for the
-tests. The corrected code passes its tests and answered eleven questions
-put to the tool on the server's machine. It was then run on the device
-for the three hours of B6, with the limit at 24 s: twelve turns, all
-answered, the longest silence 11.6 s (R21).
-
-Settled with the plan: the start-up buffer stays at 80 ms until B6's log
-says otherwise, and the request is not announced while the chime plays.
-B6's log does not say otherwise for the start of a reply: none of its
-seven plain replies ran out of audio. The dropouts it shows all follow a
-silence in the middle of a reply, which only the trial of part C
-produces.
-
-## Stage 6 as built
-
-Closed on 2026-10-07. Everything is written, reviewed by both review
-agents, corrected and run on the breadboard, and a person has held
-conversations with the device on two days, each request answered aloud
-unless noted below. The chime was added on the second day, after the
-first spoken test, and was reviewed by both agents by itself.
-
-| Step | State |
-| --- | --- |
-| 1. Server: paced replies | Done. At most 2 s of reply audio is sent ahead of playback, and the next sentence is synthesised while the current one is sent |
-| 2. Firmware: connection | Done and seen working: finds the server by mDNS, is accepted with its token, reconnects by itself |
-| 3. Firmware: state machine | Done and seen working through every state of a turn |
-| 4. Firmware: upload | Done and seen working: two requests in a synthetic voice were transcribed word for word |
-| 5. Firmware: playback | Done and seen working: replies of 0.6 s and 33 s played to their end, and were heard. At 40 % and then 60 % of the server's level they were too quiet; the audio is now played as sent, at 100 %, which was heard and is better, though a little quiet with the voice now in use |
-| 6. Firmware: failure paths | Done. Seen working: a server killed and restarted, a second connection under the device's identifier, a refused token, and a server `error` in the middle of a turn. The device's own deadlines and an incompatible version were seen on 2026-10-26, against a stand-in server that misbehaved on purpose (Before release) |
-| 7. Measurements | Done: memory, stack headroom, chip temperature, pacing, the wait for a reply, the long run, taken as made: nine spoken turns in a row over four and a half minutes on 2026-10-06, shorter than the ten minutes planned, and about twenty more turns over several sittings the next day, accepted together in its place, and the supply check, measured on 2026-10-07 with the USB power meter: about 0.582 A at 4.822 V for 10 s of full-scale tone, and about 0.2 A at 4.918 V through a spoken reply of 66.7 s at the full level, with no reset in either (R2) |
-| 8. Firmware: chime | Done and heard, added on 2026-10-07 after the first spoken test: two notes when the wake word is heard, and the request starts when they end |
-
-New firmware components: `server_link` (the connection), `player` (reply
-playback), `state_machine` (the state machine and the upload) and
-`protocol` (the protocol's numbers, one header). New console commands:
-`link`, the state of the connection; `temp`, the chip's temperature; `mem`,
-free memory and stack headroom; and `display preview`, which draws any
-state's screen for a few seconds. `state` now only reads. Two components are added from the
-ESP Component Registry and pinned: `esp_websocket_client` 1.8.0 and `mdns`
-1.13.1.
-
-**Seen on the breadboard, 2026-10-06.** USB-powered, open air, the server
-on a computer on the same network.
-
-- The device found the server, connected and reached `IDLE` 5 s after
-  power-on.
-- A server killed without warning was noticed within 30 ms. With the
-  server gone the screen showed the loss, then "Server not found" once,
-  then rested on `CONNECTING`. A restarted server was found again by
-  itself, within the wait between attempts.
-- A second connection under the device's identifier displaced it; it
-  showed why and came back 61 s later.
-- A server that did not accept its token put it in `SETUP` with "Server
-  refused this device", where it stayed.
-- Requests in a synthetic voice played from a computer, reaching the
-  microphone at an average level of about -54 dBFS, were transcribed word
-  for word: "What is two plus two?" and "Tell me in detail about the
-  history of the Eiffel Tower." The voice came from a headset lying near
-  the device, so how often the wake word answered it says nothing about
-  the wake-word model, and is not recorded.
-- Each upload began 10 ms behind the microphone, and no audio was lost.
-- A reply of 33 s held at most 2.08 s of the buffer's 4 s and never ran
-  dry.
-- Memory: 100 KB of internal RAM free, 56 KB at its lowest. Chip
-  temperature: 55.5 °C idle, 57.5 °C while speaking (R20).
-- The wait for a reply, over five short questions in a synthetic voice:
-  2.2 to 3.3 s from the server's `stop_capture` to the first sound, 2.8 s
-  on average, of which the device's share is about 0.07 s. From the wake
-  word, including about 3.5 s of speaking the question, 5.5 to 6.7 s. The
-  budget for the whole wait is 1.3 to 2.3 s (R19).
-- Spoken by a person: three requests in English were transcribed word for
-  word and answered, with 2.5, 2.9 and 2.9 s from the end of the request
-  to the first sound, and no audio lost. A request in Russian was not
-  recognised, and the device returned to `IDLE` with no reply: the server
-  is set to English.
-- A run of nine spoken turns in four and a half minutes, by a person, the
-  device freshly powered on. Eight were answered, with 2.4 to 3.2 s from
-  the end of the request to the first sound, 2.7 s on average. The first
-  failed on the server: its first request to the synthesiser timed out
-  while connecting. The device showed "Speech synthesis failed" for 4 s
-  and returned to `IDLE` with its connection intact, and the next request
-  was answered. Through the run no audio was lost, no reply ran dry, the
-  buffer held at most 2.1 s of its 4 s, the connection never dropped, and
-  every detection of the wake word was acted on. Memory at the end:
-  100 KB of internal RAM free, 56 KB at its lowest. Chip temperature:
-  46.5 °C at the start, 52.5 °C at the end.
-- A wake word followed by no request: the device listened for 5.8 s, the
-  server answered with no reply, and the device returned to `IDLE`.
-- With the chime, on 2026-10-07: five spoken turns by a person.
-  The sound played each time, for 140 ms, and the request began 220 ms
-  after the end of the wake word. Four were answered; in the fifth
-  nothing was said, and the device returned to `IDLE` with no reply. No
-  request audio was lost. The longest reply, 16.4 s at the full level,
-  played to its end with no reset; it ran out of audio three times
-  between sentences, for 0.4 s in all (KNOWN-ISSUES, Caveats). Memory:
-  100 KB of internal RAM free, 56 KB at its lowest. Chip temperature:
-  49.5 °C at the start, 53.5 °C during the long reply.
-- After the review agents' corrections to the chime, on 2026-10-07: one
-  spoken turn on the corrected firmware. The chime played for 140 ms, the
-  request began 220 ms after the wake word, and the reply was heard. The
-  log named each phase in turn: chime, capturing, awaiting, buffering,
-  playing, draining, idle. Chip temperature: 55.5 °C, twelve minutes
-  after power-on.
-- With no server running, the screen's state read "connecting, Server not
-  found on the network". The `display preview` command was accepted for
-  two states and refused an unknown one; the panel itself was not looked
-  at then.
-- The screens, looked at on 2026-10-07: `display preview` drew each of the
-  eight states in turn for 8 s, three of them with a detail line, with no
-  server running. A person watched the panel and found every one as
-  designed: title, detail line, picture and its movement, the dimmed
-  backlight of `IDLE`, and the return to the real state's screen
-  afterwards. Chip temperature at the end: 56.5 °C.
-
-**Found and corrected in this stage.** By a first attempt at a spoken test: a send
-that timed out after 200 ms ended the connection; the loss was announced
-20 s late, with `IDLE` on the screen meanwhile; later lookups of the
-server failed because its answers came without its address. By the bench
-tests: a refused token was taken for an unreachable server and retried
-for ever. By the review agents: the server counted a pause in a reply as
-playback, which could send more than the device holds; the device's limit
-on a silent reply was shorter than the server's limits in sequence;
-several states depended on a single report that could be lost. The second
-review also led to the protocol's numbers being gathered in one header
-with a test against the server's, to reports reaching the state machine
-directly instead of through the event loop, and to the state machine
-keeping its own phases.
-
-**Chip temperature.** From 2026-10-06 every test on the device records the
-chip's temperature, read with the `temp` console command, with the
-conditions it was taken under. The record is kept in R20 of
-[KNOWN-ISSUES.md](KNOWN-ISSUES.md).
 
 ## Stages
 
-| # | Stage | State | Exit criteria |
-| --- | --- | --- | --- |
-| 0 | Hardware bring-up | Done, with a deviation (see below) | Circuit assembled on breadboard, checked for shorts, and powered peripheral by peripheral. Supply and cable confirmed adequate, baseline current recorded, pinout corrected to match what was built. Procedure in [docs/BRINGUP.md](docs/BRINGUP.md). |
-| 1 | Foundations | Done | ESP-IDF project skeleton, NVS-backed configuration for WiFi, server URL and device identity, logging. Device boots, joins WiFi and logs. |
-| 2 | Audio I/O bring-up | Done | INMP441 capture on I2S0 and MAX98357A playback on I2S1. A three-second record-then-play loopback runs cleanly. Also the first point at which peak current can be measured under amplifier load, completing the record started in stage 0. |
-| 3 | Display and state machine | Done | LVGL 9 driving the NV3007 panel, backlight under control, and the state animations driven by a mock state machine that cycles on a timer. No network. |
-| 4 | Wake word | Done, with a deviation (see below) | microWakeWord integrated with a continuous ring buffer; detection drives the state transition. Custom phrase trained and thresholds tuned against a multi-hour false-accept run. |
-| 5 | Server v1 | Done | WebSocket server, device authentication, day-scoped conversation store, and the speech-to-text, Claude and text-to-speech chain, with the reply synthesised sentence by sentence. Validated end to end by a desktop client script with no device involved. |
-| 6 | Integration | Done | Device WebSocket client and mDNS lookup, streaming upload during capture, server-driven endpointing, streaming playback, real state machine, and error, timeout and reconnect paths, all as [docs/PROTOCOL.md](docs/PROTOCOL.md) describes. First end-to-end conversation. |
-| 7 | Latency and robustness | Done, with WiFi lost and restored made on 2026-10-26 (Before release) | Measured end-to-end latency against the budget, with the inexpensive ways of shortening it taken; the end-of-speech silence tuned; WiFi and server-drop recovery, watchdogs, brownout guard. The budget itself need not be met (see Stage 7 plan). |
-| 8 | Polish | Done | Volume control by voice, provisioning through a hotspot web page, interrupting a reply with a button, and continuous conversation chosen with a switch. The animations stay as they are, and over-the-air updates are not adopted (see Stage 8 plan). |
+| # | Stage | Outcome |
+| --- | --- | --- |
+| 0 | Hardware bring-up | Done. Circuit assembled and each peripheral powered in turn; baseline 0.10-0.14 A with the rail at 4.93 V or above ([docs/BRINGUP.md](docs/BRINGUP.md)). Continuity checks not made, for want of a multimeter (R9) |
+| 1 | Foundations | Done. ESP-IDF project, settings in NVS, WiFi with reconnection, logging |
+| 2 | Audio I/O bring-up | Done. Capture on I2S0, playback on I2S1, a record-then-play loopback |
+| 3 | Display | Done. LVGL 9 on the NV3007; a full frame in 12.5 ms at 80 MHz (R3) |
+| 4 | Wake word | Done, with a deviation: closed without the multi-hour false-accept run, so the cutoff is the notebook's starting value (R1, Before release) |
+| 5 | Server v1 | Done. Built and tested without the device |
+| 6 | Integration | Done. The device's connection, upload, playback, state machine and failure paths, as [docs/PROTOCOL.md](docs/PROTOCOL.md) describes |
+| 7 | Latency and robustness | Done. The inexpensive ways of shortening the wait were taken and the budget is not met (R19); watchdogs and the brownout guard; Claude reached through Claude Code by default |
+| 8 | Polish | Done. Volume by voice, setup mode, interrupting with the button, continuous conversation. The animations stay as they are; over-the-air updates are not adopted |
 
-Stage 0 is hardware only and produces no code. Peripherals cannot be
-functionally verified there, since that requires firmware; it establishes that
-the wiring is correct and the supply is sound, so that later faults can be
-attributed to software rather than to the bench.
+## Before release
 
-Stage 0 closed without the baseline current and rail voltage figures, because
-no meter was available. They were measured on 2026-09-28 with a USB power
-meter: 0.10-0.14 A across every peripheral and WiFi, with the rail at 4.93 V
-or above. Continuity checks remain undone for lack of a multimeter, and the
-playback peak is still to be measured in stage 2 (R9 in
-[KNOWN-ISSUES.md](KNOWN-ISSUES.md)). Results are in
-[docs/BRINGUP.md](docs/BRINGUP.md).
+| Item | Detail |
+| --- | --- |
+| Multi-hour false-accept run, and the cutoff tuned with it | Open. Made on run 3's model, the one released. How to make it is in [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md); the targets are in R1 |
 
-Stage 4 is split in two, as KNOWN-ISSUES R1 advises. Part A built the
-pipeline on a stock model, so that later stages are not blocked on
-wake-word quality. Part B trains a model for the project's own two-syllable
-phrase in Google Colab, then tunes its cutoff against the targets in R1: at
-most 0.5 false detections per hour and at least 90 % detection at 1 m. If a
-two-syllable phrase cannot meet them, a longer phrase is tried. Each part is
-reviewed and committed separately.
+Done on the way: a counted detection test, by the speaker the model was
+trained on, which worked well (its scores were not kept); the device's own
+deadlines and an incompatible version; WiFi lost and restored; the cap on
+continuous conversation. Not wanted: a further training run, and WiFi lost
+during a reply, which the server-drop tests already cover.
 
-Stage 4 closed on 2026-10-04 without the multi-hour false-accept run its
-exit criteria name, and with neither target established. Detection was
-observed, not established: the recorded speaker was detected in 7 of 7
-tries at 1 m, which is too few tries, by the one speaker the model was
-trained on, to show 90 %. False detections are not measured on the
-device at all: the cutoff is the training notebook's starting value and
-has not been tuned. The false-accept run is recommended before any
-release, and after any further training run, since it is made per model.
-A counted detection test was made by the same speaker before release and
-worked well; its scores were not kept. No further training run is
-planned, decided on 2026-10-26.
-The open items are in R1 of [KNOWN-ISSUES.md](KNOWN-ISSUES.md); how to
-make the run is in [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md).
+## Next steps
 
-Stage 5 was built without the device, and is testable without it. That
-keeps a server defect from being mistaken for a firmware defect during
-stage 6. Splitting the reply into sentences, first listed under stage 7,
-was built in stage 5, because it shapes the reply pipeline; stage 7 keeps
-the tuning.
+1. The multi-hour false-accept run (Before release).
+2. Obtain a multimeter for the continuity checks before the circuit is
+   soldered (R9).
+3. Run `python -m server.tools.claude_cli_bench` for the Claude Code
+   version now installed (Environment, R21).
 
 ## Environment
 
-ESP-IDF v5.5.5 is installed and verified by a successful `hello_world` build
-targeting `esp32s3`. No other ESP-IDF version remains on the development
-machine.
+ESP-IDF v5.5.5 is installed and verified; no other ESP-IDF version
+remains on the development machine.
 
 The server runs on Python 3.11 in a virtual environment, `server/.venv`,
 with the packages in `server/requirements.txt`. API keys for Anthropic and
 Deepgram, a device token and the timezone are in the untracked
-`server/.env`. Stage 6 reached Claude through the API. Since part C of
-stage 7 the default is Claude Code, 2.1.303 as last tested, installed on the
-same machine and signed in; its login is in the user's profile, outside
-the repository.
+`server/.env`. Claude Code is installed on the same machine and signed in;
+its login is in the user's profile, outside the repository. Version
+2.1.303 was the last benched. The tool has since updated itself to
+2.1.310, which ran the device tests of 2026-10-26 without fault but has
+not been benched.
 
-## Next steps
+## Decisions
 
-1. Every stage is done. Of the Before release list below, the
-   multi-hour false-accept run remains, left open on 2026-10-26.
-2. Obtain a multimeter for the continuity checks before the circuit is
-   soldered (R9).
-
-## Before release
-
-Once every stage is complete, a release version of the repository is
-prepared. Work that was deferred to that point is listed here, so that it
-comes up then.
-
-| Item | From | Detail |
-| --- | --- | --- |
-| Multi-hour false-accept run, and the cutoff tuned with it | Stage 4 | Open. Made on the model that is released, run 3's. KNOWN-ISSUES R1; how to make it is in [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md) |
-| Counted detection test | Stage 4 | Done before release by the speaker the model was trained on, and worked well; the scores were not kept. KNOWN-ISSUES R1 |
-| Failure paths not yet seen on the device | Stage 6 | Done on 2026-10-26; all four passed (below) |
-| WiFi lost and restored | Stage 7 | Done on 2026-10-26 with the device idle, and passed (below). The same test a few seconds into a spoken reply was dropped that day as not needed: the server-drop tests of stage 7 (B2) cover a reply cut by a lost connection |
-| The cap on continuous conversation | Stage 8 | Done on 2026-10-26, and passed (below) |
-| A further training run, if wanted | Stage 4 | Not wanted, decided on 2026-10-26. The device is released with run 3's model; other speakers and "hey cloud" remain as R1 describes |
-
-**On the device, 2026-10-26.** Measured on the breadboard, USB-powered,
-the stage 8 firmware, the server on the same LAN reaching Claude through
-Claude Code. Chip temperatures are in R20 of
-[KNOWN-ISSUES.md](KNOWN-ISSUES.md).
-
-- *WiFi lost and restored, idle.* The router was switched off for about
-  3.5 min, most of it the router booting. The device saw the loss at
-  once, held `ERROR` ("Lost the server connection") for 4 s, then rested
-  on `CONNECTING`, retrying the WiFi at growing intervals of up to 30 s.
-  It rejoined the WiFi 3 min 28 s after the loss, found the server by
-  mDNS 0.7 s later, and was in `IDLE` within a second, untouched.
-- *The device's own deadlines.* Against a stand-in server, a short script
-  outside the repository that accepts the connection and then misbehaves
-  on purpose, reached through the `server_url` setting, which was
-  cleared afterwards. With no `stop_capture`, capture ended 15.0 s after
-  it began. With `stop_capture` and nothing after it, the device gave up
-  40.0 s later. With 1 s of tone as a reply and then silence, it gave up
-  40.0 s after the last audio, with "Reply stopped arriving". Each time
-  it showed `ERROR` ("Server did not answer" for the first two), closed
-  the connection, reconnected within 1.5 s and was in `IDLE` 4 s after the
-  error. The tone stuttered, because the stand-in sent it at barely real
-  time with none of the real server's 2 s lead; that is the stand-in's
-  doing.
-- *An incompatible protocol version.* A `ready` stating version 2 was
-  refused, the log naming both versions, and the device rested on
-  `CONNECTING` with "Server and device versions differ", trying again
-  about every 31 s and refusing each time.
-- *The cap on continuous conversation.* With the switch closed, eleven
-  spoken turns in five minutes: the wake word, then ten follow-ups. After
-  the tenth reply the device returned to `IDLE`, the log reading
-  "continuous conversation: 10 follow-ups in a row; the wake word is
-  needed again". Each follow-up's request began 210 to 225 ms after the
-  reply ended. The first three replies each used a search and fell
-  silent for 6.1, 9.7 and 8.2 s about a second in, the pattern R21
-  describes; the other eight played without a gap of more than 10 ms.
-
-## Open decisions
-
-| Decision | Status |
+| Decision | State |
 | --- | --- |
-| Speech provider | Deepgram for both directions, behind adapter interfaces; built in stage 5 |
-| Day rollover | 04:00 local time, settled. Earlier days are deleted |
-| Endpointing | Server-side, settled. The silence that ends a request stays at 400 ms: 1 s was tried in stage 7 and made the ending erratic (R18) |
-| Interrupting a request | Changed on 2026-10-18, built in part C of stage 8: a button interrupts a turn while listening, thinking or speaking, and the device returns to `IDLE`. Speech does not interrupt |
-| Continuous conversation | Settled and built on 2026-10-19, part D of stage 8: with a switch closed, the device listens again after each reply, without the wake word, up to ten follow-ups in a row; the screen marks the mode |
-| State animations | Settled on 2026-10-18: the placeholder animations stay; their refinement, first planned for stage 8, is dropped |
-| After a failed turn | Settled: the device shows `ERROR` briefly and returns to `IDLE`; only a lost connection leads to `CONNECTING` |
-| Reply audio pacing | Settled and built: the server sends at most 2 s ahead of playback and the device holds 4 s, whatever the length of the reply (R17) |
-| WiFi power saving | Off, from stage 6: the device is mains-powered, and the radio's sleep delays streamed audio. It raises the current drawn and the chip's temperature somewhat; neither has been measured against power saving on (R20) |
-| Playback volume | Settled and built in stage 8: ten levels, 3 dB apart, changed by voice or the console's `volume`. Level 8, the default, plays the audio as the server sends it, as before; the top two boost it by 3 and 6 dB, with a limiter. If level 10 is still too quiet, the next step is the amplifier's gain pin, which is hardware |
-| Start-up buffer for a reply | Left at 80 ms, decided on 2026-10-07. A reply can pause briefly in its first second (KNOWN-ISSUES, Caveats); raising the buffer to about 300 ms would cover it at the cost of about 0.2 s more wait before every reply. The device now logs each pause; the buffer is to be raised if that log gathers more evidence |
-| The chime and volume | Settled on 2026-10-15 and built: it follows the volume down to a floor of -9 dB. Before that: The chime has a level of its own, 30 % of full scale, and the playback level is applied on top of it, which changes nothing while that level is 100 %. With a volume control, the chime would fade with the volume while the device still waits for it before listening. To decide then: it follows the volume, follows it down to a floor, or keeps a fixed level |
-| Reply voice | Settled: `aura-2-luna-en`. The first voice used had a harsh "s", in the audio itself and not from the device's speaker; this one was chosen by ear from eleven, and was heard on the device and preferred |
-| Loudness | The boost in the firmware was taken in stage 8, up to +6 dB at the top volume, and heard clean on the device. If the top level proves too quiet in use, the ways left are in KNOWN-ISSUES under Caveats |
-| Languages | English only: speech-to-text is set to English and the synthesiser's voice is English. Speech in another language is not recognised and the turn ends with no reply. Whether to support others is open |
-| Seeing a screen state on demand | Settled and built: `display preview <state>` draws a state's screen for a few seconds without changing the state |
-| A reason on the `CONNECTING` screen | Settled and built: `CONNECTING` shows why the last attempt to reach the server failed |
-| Component names | Settled: the connection is `server_link` and the state machine `state_machine`, renamed before the first commit of stage 6 |
-| Internet access for the assistant | Settled on 2026-10-12: the assistant searches the web and reads pages, through Claude Code, the default (part C of stage 7). With the API it has no tools and is told it has no internet access, so it declines questions such as the weather. The ways considered: tools the server runs itself on free data (the date and time from its clock, weather from a free service), at a few hundred tokens a use; Anthropic's web search tool, at $10 per 1,000 searches plus the results as input tokens, estimated at about 4 cents a searched question on `claude-opus-5` and not measured; or both, with the search capped at one a question. Running Claude Code under a subscription login in place of the API was first set aside, because its documentation directs products built on it to API keys, and taken up again on 2026-10-08 as a trial, part C of stage 7: the device has one user, who is the account's owner. Built and measured on 2026-10-12 on a branch of its own: the assistant searches the web and reads pages, and answered the weather, the news and a price. Kept: merged on the same day and made the default, with the API one setting away |
-| Deployment | LAN only for now; off-LAN deployment deferred and would require TLS |
-| Over-the-air updates | Not adopted for now, decided on 2026-10-15; the device is flashed over USB. The flash layout keeps two application slots, so adopting them later needs no change to it |
-| Encrypting the stored settings | Not done, decided on 2026-10-15: on this chip it burns eFuses, which cannot be undone, and the board is to stay reusable (KNOWN-ISSUES R10) |
-| Server discovery | mDNS on the LAN, with `server_url` as an override; the server's side is built, the device's is stage 6 |
-| Device settings entry | Settled and built in stage 8: the serial console, and a page served from a hotspot of the device's own, both through the same checks (ARCHITECTURE.md, Setup mode) |
-| Locking dependency versions | Settled: `firmware/dependencies.lock` is committed, and the wake-word libraries are pinned exactly (R14) |
-| Wake phrase | A two-syllable phrase first; a longer one if it cannot meet the R1 targets |
-| `SETUP` and `ERROR` detail text | Settled: the device shows its own short wording, chosen by reason code and sized for the panel, for server errors and for those the server never sees. The sentence in the server's `error` is for logs. Built in stage 6 |
+| Speech provider | Deepgram for both directions, behind adapter interfaces |
+| Reply voice | `aura-2-luna-en`, chosen by ear from eleven for a clean "s" |
+| Languages | English only. Speech in another language is not recognised and the turn ends with no reply. **Open:** whether to support others |
+| Endpointing | On the server. The silence that ends a request stays at 400 ms; 1 s made the ending erratic (R18) |
+| Day rollover | 04:00 local time; earlier days are deleted |
+| Interrupting | The button only, while listening, thinking or speaking; speech does not interrupt. An interrupted turn stays in the conversation, marked as interrupted |
+| Continuous conversation | Chosen with the switch, up to ten follow-ups in a row; the screen marks the mode |
+| After a failed turn | `ERROR` briefly, then `IDLE`; only a lost connection leads to `CONNECTING` |
+| Reply audio pacing | The server sends at most 2 s ahead of playback; the device holds 4 s (R17) |
+| Start-up buffer for a reply | 80 ms. A reply can pause briefly in its first second (Caveats); about 300 ms would cover it at the cost of 0.2 s more wait before every reply. **Open:** to be raised if the device's pause log gathers more evidence |
+| Playback volume | Ten levels 3 dB apart; level 8, the default, plays the audio as sent, the top two add 3 and 6 dB with a limiter. The chime follows it down to -9 dB |
+| WiFi power saving | Off: the device is mains-powered, and the radio's sleep delays streamed audio |
+| Internet access for the assistant | Through Claude Code, the default: web search and reading any page (R21). With the API it has no tools and says it has no internet access |
+| Device settings entry | The serial console, and setup mode's page, through the same checks |
+| Server discovery | mDNS on the LAN, with `server_url` as an override |
+| `SETUP` and `ERROR` detail text | The device's own short wording, chosen by reason code; the server's `error` sentence is for logs |
+| State animations | The placeholder animations stay |
+| Deployment | LAN only; off-LAN would require TLS (R8) |
+| Over-the-air updates | Not adopted; the device is flashed over USB. The flash layout keeps two application slots, so adopting them later needs no change to it |
+| Encrypting the stored settings | Not done: on this chip it burns eFuses, and the board is to stay reusable (R10) |
+| Dependency versions | `firmware/dependencies.lock` is committed, and the wake-word libraries are pinned exactly |
+| Wake phrase | "Hey Claude", two syllables, kept with run 3's model |

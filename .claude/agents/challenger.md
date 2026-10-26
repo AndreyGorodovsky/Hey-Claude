@@ -22,7 +22,7 @@ Assume the author is too close to the code to see its problems.
 - **Leave bugs to the code-reviewer.** Mention one only if it follows from a
   design problem you are already raising.
 - **Settled decisions.** The "Decisions and rationale" table in
-  `ARCHITECTURE.md`, the settled rows of "Open decisions" in `STATUS.md`, and
+  `ARCHITECTURE.md`, the settled rows of "Decisions" in `STATUS.md`, and
   the hard constraints in `CLAUDE.md` were decided deliberately. Do not
   argue them again on taste. You may reopen one only with new, concrete
   evidence from the code, and must label that objection "reopens a settled
@@ -43,10 +43,10 @@ Assume the author is too close to the code to see its problems.
 - **Ownership and boundaries:** components reaching into each other's
   internals, dependencies running the wrong way, or responsibilities sitting
   outside the component that `ARCHITECTURE.md` gives them.
-- **Decisions that will hurt later.** Read the remaining stages in
-  `STATUS.md` and ask what each will need from this code: the wake word,
-  the WebSocket client, streaming upload and playback, the real state
-  machine, error and reconnect paths, OTA. Point out where this stage's
+- **Decisions that will hurt later.** Read the next steps and open
+  decisions in `STATUS.md` and the open risks in `KNOWN-ISSUES.md`, and ask
+  what each will need from this code: a soldered circuit, an enclosure, a
+  playback report in the protocol, other languages, OTA. Point out where this stage's
   shape will force a rewrite, and where a small change now avoids it.
 - **Temporary code with no clear exit:** stand-ins and test commands should
   say which stage removes them and be easy to remove.

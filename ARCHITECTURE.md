@@ -160,8 +160,8 @@ ordinary restarts as brownouts; not seen with a real brownout (R2).
 | `coredump` | 0x820000 | 64 KB | Last crash |
 | unallocated | 0x830000 | ~7.8 MB | Reserved |
 
-The layout is OTA-ready from the start. Over-the-air updates were not
-adopted at stage 8, and the device is flashed over USB; adopting them later
+The layout is OTA-ready from the start. Over-the-air updates are not
+adopted, and the device is flashed over USB; adopting them later
 needs no change to the flash layout. Flash runs in QIO mode at 80 MHz; PSRAM is octal at 80 MHz.
 
 ### State machine
@@ -578,8 +578,7 @@ The device finds the server by mDNS service discovery on the local network,
 so the server machine's address can change without reconfiguring the device.
 The server advertises a service; the device looks it up each time it
 connects. The optional `server_url` setting overrides discovery with a fixed
-address or hostname. The server's side was built in stage 5; the device's
-lookup is built in stage 6. The server advertises one address, the one on
+address or hostname. The server advertises one address, the one on
 the machine's default route, since a machine often has others (virtual
 adapters, VPNs) that a device cannot reach.
 
@@ -762,9 +761,8 @@ sentence in its place. A declined request is not added to the conversation.
 
 ### Claude through Claude Code
 
-The default way to Claude since 2026-10-12. It was built in stage 7 as a
-trial on a branch of its own, and made the default after a run of three
-hours on the device; the API, described above, is chosen instead with the
+The default way to Claude since 2026-10-12, after a run of three hours
+on the device; the API, described above, is chosen instead with the
 server setting `LLM_BACKEND=api`, and has no access to the web. In place
 of the API and its key, the server runs the Claude Code command-line
 tool, `claude -p`, which
@@ -823,8 +821,8 @@ Measured on 2026-10-12, with Claude Code 2.1.296. On the server's machine,
 timed from the start of the process: the first text of a plain answer
 after 1.7 to 4.0 s over twenty questions, median 1.9 s, the same with ten
 earlier exchanges as with none; a reply that searched or read a page whole
-after 10 to 26 s. On the device, a person speaking, after the correction
-described in [STATUS.md](STATUS.md): the first sound 3.2 to 3.9 s after the
+after 10 to 26 s. On the device, a person speaking, once "Let me check."
+was made to be spoken before the search: the first sound 3.2 to 3.9 s after the
 end of the request, with or without a search, and the answer to a searched
 question 6.2 s after "Let me check.". The wait for a plain answer is that
 of the API, whose first sound came after 1.8 to 5.0 s on 2026-10-08.
@@ -950,9 +948,9 @@ deferred.
 | Brownout count in RTC memory | A count in NVS | It need only outlive a restart; nothing is written to flash, and a power cycle starts afresh |
 | End-of-speech silence left at 400 ms | 1 s, to allow a pause in mid-sentence | At 1 s the service's silence signal was not dependable on the microphone's audio, and requests ended 1 to 4 s after the speaker |
 | Connections to the services opened when needed | Opened ahead, when the server starts and a request begins | Measured: a new connection costs the synthesiser's first audio nothing that could be told from the variation |
-| Claude reached through Claude Code by default | The API as the default, Claude Code as an option | Decided on 2026-10-12, after the trial: it answers questions about the present, which the API route cannot, and the wait for a plain answer was acceptable as heard. The API remains, one setting away, for a server with no Claude Code login |
-| In the Claude Code trial, the day's conversation sent as text with each request | A session kept by the tool and resumed | One copy of the history, in the server's store, deleted with the day; the tool writes no transcript to the profile |
-| In the trial, one process for each turn | A process kept running between turns | A process that lives on gathers a conversation of its own; starting one costs nothing that could be told from the API's own wait |
-| In the trial, pages read from any site by default | Search only; a short list of sites | Measured: search alone did not answer the weather, and a list answered the weather but not the news. The assistant holds one day of conversation and cannot act, so the risk was accepted (R21) |
-| In the trial, silence from Claude counted in spoken text | Counted in lines the process prints | A search prints lines throughout; counted so, a reply could be silent past what a device waits |
+| Claude reached through Claude Code by default | The API as the default, Claude Code as an option | Decided on 2026-10-12, after a trial: it answers questions about the present, which the API route cannot, and the wait for a plain answer was acceptable as heard. The API remains, one setting away, for a server with no Claude Code login |
+| Through Claude Code, the day's conversation sent as text with each request | A session kept by the tool and resumed | One copy of the history, in the server's store, deleted with the day; the tool writes no transcript to the profile |
+| Through Claude Code, one process for each turn | A process kept running between turns | A process that lives on gathers a conversation of its own; starting one costs nothing that could be told from the API's own wait |
+| Through Claude Code, pages read from any site by default | Search only; a short list of sites | Measured: search alone did not answer the weather, and a list answered the weather but not the news. The assistant holds one day of conversation and cannot act, so the risk was accepted (R21) |
+| Through Claude Code, silence from Claude counted in spoken text | Counted in lines the process prints | A search prints lines throughout; counted so, a reply could be silent past what a device waits |
 | Silence tolerated from Claude raised to 24 s | 20 s | A reply that searches twice can be silent for longer than 20 s; with the synthesiser's 15 s, 24 s still ends a second before a device gives up |

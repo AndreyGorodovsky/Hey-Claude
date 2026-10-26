@@ -4,16 +4,15 @@ A self-contained voice assistant built on an ESP32-S3. Say the wake word, ask a
 question, and hear Claude answer out loud. A small TFT panel shows what the
 device is doing at each moment.
 
-> **Project status: device and server built, being joined.** The
-> circuit is built on a breadboard. The firmware joins WiFi, records and
-> plays audio, shows its state on the display, and detects the wake word
-> "Hey Claude" on the device. The wake-word model is trained on one
-> speaker's recordings and detects that speaker well; its false detections
-> are not yet measured on the device. The server turns a spoken request
-> into a spoken reply and has been tested from a desktop with synthetic
-> speech. Connecting the two is under way: the device finds the server and
-> connects to it, and the first spoken conversation is still being
-> debugged. See [STATUS.md](STATUS.md) for the current stage.
+> **Project status: working end to end on a breadboard.** The
+> circuit is built on a breadboard. The device detects the wake word
+> "Hey Claude" on its own, streams the request to a server on the local
+> network, and speaks Claude's answer, which can draw on a web search.
+> The volume is set by voice, a button interrupts a reply, a switch turns
+> on continuous conversation, and settings can be entered from a phone.
+> The wake-word model is trained on one speaker's recordings and detects
+> that speaker well; its false detections are not yet measured on the
+> device. See [STATUS.md](STATUS.md) for where the project stands.
 
 ## How it works
 
@@ -391,7 +390,7 @@ docs/              Protocol reference and supporting material
 | Document | Audience | Contents |
 | --- | --- | --- |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | All | System design, protocol, technology decisions |
-| [STATUS.md](STATUS.md) | All | Current stage, completed work, next steps |
+| [STATUS.md](STATUS.md) | All | Where the project stands, measured results, next steps, decisions |
 | [KNOWN-ISSUES.md](KNOWN-ISSUES.md) | All | Open risks, defects, caveats |
 | [SECRETS.md](SECRETS.md) | All | Pre-commit checklist for sensitive material |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | All | Every message, rule and time limit between device and server |
