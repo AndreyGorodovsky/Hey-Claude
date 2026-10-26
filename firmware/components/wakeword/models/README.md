@@ -16,10 +16,9 @@ versions of the packages it ran with.
 | `hey_claude_run3` | "Hey Claude" | Training run 3 (2026-10-04) of `firmware/tools/wakeword_training/hey_claude_v2.ipynb`, with recordings of a real voice; results in the run history of `docs/WAKEWORD-TRAINING.md` | Non-commercial use: some of the background-sound data it was trained with, and the L2-ARCTIC recordings behind one of its voices, are licensed for non-commercial use only |
 
 The firmware builds `hey_claude_run3`. Its results, and what has not yet
-been measured, are in the run history. Trained models keep their run in their
-name, so that the boot
-log and `wake` command show which run is running, and the build stops if
-a manifest names a file of another name.
+been measured, are in the run history. Trained models keep their run in
+their name, so that the boot log and `wake` command show which run is
+running, and the build stops if a manifest names a file of another name.
 
 Only the built model is kept here. The models of runs 1 and 2, and the
 stock "Hey Jarvis" model used while the detection pipeline was brought up
