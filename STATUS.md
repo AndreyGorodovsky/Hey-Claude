@@ -1,10 +1,10 @@
 # Status
 
 **Current stage:** none. All eight stages are done, and the device works
-end to end on the breadboard. One item remains before release: the
-multi-hour false-accept run (Before release, below).
+end to end on the breadboard. Nothing remains before release; the steps
+left are optional (Next steps, below).
 
-**Last updated:** 2026-10-26
+**Last updated:** 2026-10-28
 
 The history of each stage, with its step tables, bench sessions and review
 findings, is in the git history of this file.
@@ -95,31 +95,24 @@ same LAN with a home internet connection, a person speaking, from
 | 1 | Foundations | Done. ESP-IDF project, settings in NVS, WiFi with reconnection, logging |
 | 2 | Audio I/O bring-up | Done. Capture on I2S0, playback on I2S1, a record-then-play loopback |
 | 3 | Display | Done. LVGL 9 on the NV3007; a full frame in 12.5 ms at 80 MHz (R3) |
-| 4 | Wake word | Done, with a deviation: closed without the multi-hour false-accept run, so the cutoff is the notebook's starting value (R1, Before release) |
+| 4 | Wake word | Done. The cutoff is the notebook's starting value, accepted without the multi-hour false-accept run (R1) |
 | 5 | Server v1 | Done. Built and tested without the device |
 | 6 | Integration | Done. The device's connection, upload, playback, state machine and failure paths, as [docs/PROTOCOL.md](docs/PROTOCOL.md) describes |
 | 7 | Latency and robustness | Done. The inexpensive ways of shortening the wait were taken and the budget is not met (R19); watchdogs and the brownout guard; Claude reached through Claude Code by default |
 | 8 | Polish | Done. Volume by voice, setup mode, interrupting with the button, continuous conversation. The animations stay as they are; over-the-air updates are not adopted |
 
-## Before release
-
-| Item | Detail |
-| --- | --- |
-| Multi-hour false-accept run, and the cutoff tuned with it | Open. Made on run 3's model, the one released. How to make it is in [docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md); the targets are in R1 |
-
-Done on the way: a counted detection test, by the speaker the model was
-trained on, which worked well (its scores were not kept); the device's own
-deadlines and an incompatible version; WiFi lost and restored; the cap on
-continuous conversation. Not wanted: a further training run, and WiFi lost
-during a reply, which the server-drop tests already cover.
-
 ## Next steps
 
-1. The multi-hour false-accept run (Before release).
+All optional:
+
+1. The multi-hour false-accept run, to tune the wake-word cutoff
+   (docs/WAKEWORD-TRAINING.md, Tuning the cutoff on the device). Keeping a
+   new cutoff takes one flash.
 2. Obtain a multimeter for the continuity checks before the circuit is
    soldered (R9).
 3. Bench the Claude Code version now installed (Environment;
-   docs/OPERATING.md, Updating Claude Code).
+   docs/OPERATING.md, Updating Claude Code). This is on the server only
+   and needs no flashing.
 
 ## Environment
 
@@ -161,3 +154,4 @@ not been benched.
 | Encrypting the stored settings | Not done: on this chip it burns eFuses, and the board is to stay reusable (R10) |
 | Dependency versions | `firmware/dependencies.lock` is committed, and the wake-word libraries are pinned exactly |
 | Wake phrase | "Hey Claude", two syllables, kept with run 3's model |
+| Wake-word cutoff | The notebook's value, released without the false-accept run; tuning it takes one flash |

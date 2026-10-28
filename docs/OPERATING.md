@@ -1,8 +1,9 @@
 # Operating the device and the server
 
 Reference for flashing the device, entering its settings, its console
-commands, running the server and keeping Claude Code up to date. For a
-first build, follow [GETTING-STARTED.md](GETTING-STARTED.md) instead.
+commands, running the server, the assistant's access and keeping Claude
+Code up to date. For a first build, follow
+[GETTING-STARTED.md](GETTING-STARTED.md) instead.
 
 ## Flashing the firmware
 
@@ -151,6 +152,44 @@ mislead the assistant, and `CLAUDE_FETCH_DOMAINS` limits what it may read
 With `LLM_BACKEND=api` the server calls Anthropic's API with
 `ANTHROPIC_API_KEY` instead; the assistant then has no internet access and
 says so.
+
+### Giving Claude full access to the server's machine
+
+The assistant is locked down to web search and reading pages, and no
+setting lifts that. Full access, to run commands and read and write files,
+is a change to the server's code, in `server/llm/`:
+
+1. Before it, set `CLAUDE_FETCH_DOMAINS` to a short list or to empty, and
+   make the false-accept run (WAKEWORD-TRAINING.md, Tuning the cutoff on
+   the device). Both were accepted as they are only because the assistant
+   cannot act (KNOWN-ISSUES R1, R21).
+2. In `build_command`, remove `--tools` and `--allowedTools` and set
+   `--permission-mode` to `bypassPermissions`.
+3. In `lockdown_problem`, accept any tools and that mode, and keep the
+   check that no MCP server is loaded, which keeps the account's mail and
+   file connectors out.
+4. In `system_prompt_with_search`, replace the sentence saying it has no
+   way to act with what it may do on the machine, and ask it to say what
+   it will change and wait for a yes.
+5. Update the lock-down tests in `server/tests/test_claude_code.py`, then
+   run the bench (Updating Claude Code).
+
+The process still runs in an empty temporary directory, with only the
+environment variables `child_environment` passes. A reply silent past the
+limit (ARCHITECTURE.md) is killed with the command it is running, which
+can leave a change half made.
+
+The risks:
+
+- **Whoever the microphone hears gives the commands:** a guest, a
+  television, or a false wake. Only the prompt asks first; nothing
+  enforces it, and a misheard "yes" counts.
+- **A web page can give commands too.** Text written to mislead the
+  assistant (R21) can now run programs on the machine.
+- **The server's secrets become readable:** `server/.env`, with the API
+  keys and device tokens, and the Claude Code login in the user's profile.
+- **Anyone on the LAN with a device token** can send requests, over an
+  unencrypted connection (R8).
 
 ### Testing without the device
 

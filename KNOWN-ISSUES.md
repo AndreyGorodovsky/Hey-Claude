@@ -28,8 +28,11 @@ standing:
   room, worked well; its scores were not kept, so the figure is
   unrecorded and holds for that speaker only.
 - **False detections** have not been measured on the device. The cutoff
-  is the training notebook's starting value, not a tuned one, until the
-  multi-hour false-accept run is made (STATUS.md, Before release).
+  is the training notebook's starting value, released without the
+  multi-hour false-accept run (STATUS.md, Decisions), which stays
+  optional
+  ([docs/WAKEWORD-TRAINING.md](docs/WAKEWORD-TRAINING.md), Tuning the
+  cutoff on the device).
 - **Other speakers** should expect more misses: the model is specialised
   to the recorded voice. Strong accents were already missed more often by
   the stock model.
@@ -288,7 +291,9 @@ not the news.
 *Mitigation:* `CLAUDE_FETCH_DOMAINS` restricts reading to named hosts, or
 turns it off with an empty list, which closes the second and third. The
 check made on every run covers the tools, MCP servers and permission
-mode, not the permission rules themselves.
+mode, not the permission rules themselves. The acceptance assumes this
+lock-down; lifting it is in [docs/OPERATING.md](docs/OPERATING.md), Giving
+Claude full access to the server's machine.
 
 **The tool updates itself.** The client relies on about fifteen of its
 options and on the shape of the events it prints. An update can break

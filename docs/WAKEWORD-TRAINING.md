@@ -8,9 +8,8 @@ with
 How to make the recordings is in [WAKEWORD-RECORDING.md](WAKEWORD-RECORDING.md);
 the accuracy targets are in KNOWN-ISSUES R1.
 
-The device runs run 3's model. Its cutoff has not yet been tuned on the
-device: that is the one item left before release (Tuning the cutoff on the
-device, below).
+The device runs run 3's model, at the notebook's starting cutoff. Tuning
+it on the device is optional (Tuning the cutoff on the device, below).
 
 Version 1 of the notebook, `hey_claude.ipynb` beside it, trained runs 1
 and 2 and is kept as it was. Version 2 adds the recordings, a test on real
@@ -155,8 +154,8 @@ What the runs showed:
   test decides.
 - **Run 3's cutoff is the notebook's starting value.** Its 0.375 false
   detections per hour are 2 in 5.3 hours of the dinner-party recording,
-  at a cutoff chosen on that same recording, so the figure is optimistic
-  until the device run above is made.
+  at a cutoff chosen on that same recording, so the figure is optimistic;
+  only the device run above measures it.
 
 ## What the notebook does, section by section
 
