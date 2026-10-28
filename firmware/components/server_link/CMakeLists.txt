@@ -3,6 +3,7 @@
 idf_component_register(SRCS "server_link.c"
                        INCLUDE_DIRS "include"
                        PRIV_REQUIRES protocol         # the protocol's numbers
+                                     esp_http_client  # the pairing request
                                      esp_event        # WiFi's events
                                      esp_netif        # address types and printing
                                      esp_wifi         # WiFi's disconnect event

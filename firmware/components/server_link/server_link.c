@@ -26,6 +26,10 @@
  * may have moved, so every attempt must start again from the lookup, and
  * the rest of the firmware must hear about every loss.
  *
+ * A device with a pairing code first trades it for a token (run_pairing),
+ * in the link task, with ESP-IDF's HTTP client, and hands the token to
+ * whoever started the link (on_paired), which stores it and restarts.
+ *
  * Both tasks run on core 0, with the WiFi driver and the network stack
  * (ARCHITECTURE.md, task and core allocation).
  */
@@ -35,6 +39,7 @@
 #include <string.h>
 #include "cJSON.h"
 #include "esp_check.h"
+#include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_websocket_client.h"
@@ -80,8 +85,9 @@ static const char *TAG = "server_link";
 /* ---- Tasks ---- */
 
 /* Stack sizes in bytes. The client's is above its default because its
- * event handler parses JSON and copies audio into the player. */
-#define LINK_TASK_STACK     4096
+ * event handler parses JSON and copies audio into the player. The link
+ * task's has room for the HTTP client, which pairing runs in it. */
+#define LINK_TASK_STACK     6144
 #define WS_TASK_STACK       6144
 /* Priorities are recorded in ARCHITECTURE.md's task table */
 #define LINK_TASK_PRIO      5
@@ -115,6 +121,11 @@ typedef struct {
 /* Set once at start and read-only afterwards */
 static char s_server_url[128];
 static char s_headers[192];
+/* Sized like the settings they come from (app_config.h) */
+static char s_device_id[33];
+/* Used at most once per boot: pairing ends in a restart or a refusal */
+static char s_pair_code[PROTO_PAIR_CODE_DIGITS + 1];
+static server_link_paired_fn s_on_paired;
 static server_link_sink_t s_sink;
 static server_link_report_fn s_report;
 
@@ -457,6 +468,7 @@ const char *server_link_down_name(server_link_down_t reason)
     case SERVER_LINK_DOWN_LOST:            return "the connection was lost";
     case SERVER_LINK_DOWN_CONFUSED:        return "the server sent something this device cannot use";
     case SERVER_LINK_DOWN_DROPPED:         return "the device closed it to abandon a turn";
+    case SERVER_LINK_DOWN_PAIR_REFUSED:    return "the server refused the pairing code";
     }
     return "?";
 }
@@ -473,6 +485,98 @@ static server_link_down_t announce_down(server_link_down_t reason)
     ESP_LOGW(TAG, "down: %s", server_link_down_name(reason));
     report(SERVER_LINK_DOWN, reason);
     return reason;
+}
+
+/* ---- Pairing ---- */
+
+/* Longest answer to a pairing request that is read: {"token":"..."} with
+ * the longest token the protocol allows, and room to spare */
+#define PAIR_ANSWER_MAX     (PROTO_DEVICE_TOKEN_MAX + 64)
+
+/* Trades the pairing code for a token, in one HTTP POST to the server
+ * (docs/PROTOCOL.md, Pairing). Runs in the link task, before any WebSocket.
+ * On success the token goes to on_paired, which stores it and restarts,
+ * so this does not return. Otherwise it returns why there is no
+ * connection, having announced it. */
+static server_link_down_t run_pairing(void)
+{
+    char uri[192];
+    char shown[sizeof(s_status.server)] = "";
+    if (!resolve(uri, sizeof(uri), shown, sizeof(shown))) {
+        set_status_server("");
+        return announce_down(SERVER_LINK_DOWN_NOT_FOUND);
+    }
+    set_status_server(shown);
+    ESP_LOGI(TAG, "pairing with %s", shown);
+
+    /* Pairing is plain HTTP on the same host and port as the WebSocket.
+     * Taken from `uri`, which always begins "ws://" (resolve() adds it, and
+     * app_config allows no other scheme), and not from `shown`, which is
+     * cut to fit the status. The identifier is letters, digits and '-',
+     * and the code digits (app_config.c), so neither needs escaping inside
+     * the JSON. */
+    const char *authority = uri + strlen("ws://");
+    char url[sizeof(uri) + sizeof(PROTO_PAIR_PATH)];
+    snprintf(url, sizeof(url), "http://%.*s%s", (int)strcspn(authority, "/"), authority,
+             PROTO_PAIR_PATH);
+    char body[96];
+    int body_len = snprintf(body, sizeof(body), "{\"device_id\":\"%s\",\"code\":\"%s\"}",
+                            s_device_id, s_pair_code);
+
+    const esp_http_client_config_t config = {
+        .url = url,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = NETWORK_MS,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (client == NULL) {
+        ESP_LOGE(TAG, "could not create the HTTP client");
+        return announce_down(SERVER_LINK_DOWN_UNREACHABLE);
+    }
+    /* Not checked: it fails only when memory has run out, and the server
+     * reads the body as JSON whatever the header says */
+    (void)esp_http_client_set_header(client, "Content-Type", "application/json");
+
+    /* open, write, fetch_headers, read: the request in steps, so that the
+     * answer is read into a buffer of this function's own */
+    char answer[PAIR_ANSWER_MAX + 1];
+    int answer_len = -1;
+    int status = 0;
+    if (esp_http_client_open(client, body_len) == ESP_OK
+        && esp_http_client_write(client, body, body_len) == body_len
+        && esp_http_client_fetch_headers(client) >= 0) {
+        status = esp_http_client_get_status_code(client);
+        answer_len = esp_http_client_read_response(client, answer, PAIR_ANSWER_MAX);
+    }
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+
+    if (status >= 400 && status < 500) {
+        /* 403: wrong, expired or used. Any other 4xx: a server that does
+         * not take pairing, or not this request. Trying again cannot work
+         * either way; whoever started the link removes the code. */
+        ESP_LOGE(TAG, "the server refused the pairing code (HTTP %d)", status);
+        return announce_down(SERVER_LINK_DOWN_PAIR_REFUSED);
+    }
+    if (status != 200 || answer_len <= 0) {
+        ESP_LOGW(TAG, "pairing failed: HTTP status %d", status);
+        return announce_down(SERVER_LINK_DOWN_UNREACHABLE);
+    }
+    answer[answer_len] = '\0';
+
+    cJSON *root = cJSON_ParseWithLength(answer, (size_t)answer_len);
+    const cJSON *token = cJSON_GetObjectItemCaseSensitive(root, "token");
+    if (cJSON_IsString(token)) {
+        ESP_LOGI(TAG, "paired");
+        /* Returns only if the token could not be stored */
+        s_on_paired(token->valuestring);
+    } else {
+        ESP_LOGE(TAG, "the server's answer to pairing has no token");
+    }
+    cJSON_Delete(root);
+    /* The code is used up on the server's side either way; the next try is
+     * refused and leads to setup mode */
+    return announce_down(SERVER_LINK_DOWN_CONFUSED);
 }
 
 /* Tries to connect, and if that works, stays until the connection ends.
@@ -575,10 +679,14 @@ static void link_task(void *arg)
         xEventGroupWaitBits(s_flags, FLAG_WIFI, pdFALSE, pdTRUE, portMAX_DELAY);
 
         uint32_t before = s_status.connections;
-        server_link_down_t reason = run_connection();
+        server_link_down_t reason = s_pair_code[0] != '\0' ? run_pairing() : run_connection();
         bool worked = s_status.connections != before;
 
 
+        if (reason == SERVER_LINK_DOWN_PAIR_REFUSED) {
+            /* As with a refused token, below: only a new code can help */
+            vTaskSuspend(NULL);
+        }
         if (reason == SERVER_LINK_DOWN_REJECTED) {
             /* Trying again with the same identifier and token cannot
              * succeed. The settings are changed from the console, and take
@@ -614,8 +722,14 @@ esp_err_t server_link_start(const server_link_config_t *cfg)
     ESP_RETURN_ON_FALSE(cfg && cfg->device_id && cfg->device_token
                         && cfg->sink.start && cfg->sink.data && cfg->on_report,
                         ESP_ERR_INVALID_ARG, TAG, "incomplete configuration");
+    bool pairing = cfg->pair_code && cfg->pair_code[0] != '\0';
+    ESP_RETURN_ON_FALSE(!pairing || cfg->on_paired, ESP_ERR_INVALID_ARG, TAG,
+                        "a pairing code needs on_paired");
+    s_on_paired = cfg->on_paired;
 
     strlcpy(s_server_url, cfg->server_url ? cfg->server_url : "", sizeof(s_server_url));
+    strlcpy(s_device_id, cfg->device_id, sizeof(s_device_id));
+    strlcpy(s_pair_code, cfg->pair_code ? cfg->pair_code : "", sizeof(s_pair_code));
     /* Each header line ends with a carriage return and a line feed, as HTTP
      * requires */
     int n = snprintf(s_headers, sizeof(s_headers),

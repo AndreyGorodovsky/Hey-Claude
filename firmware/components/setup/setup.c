@@ -52,12 +52,13 @@ static const char *TAG = "setup";
 static const char *const WHY_TEXT[SETUP_WHY_COUNT] = {
     [SETUP_WHY_NONE]            = "",
     [SETUP_WHY_NO_WIFI]         = "WiFi not set up",
-    [SETUP_WHY_NO_TOKEN]        = "Device token not set up",
+    [SETUP_WHY_NOT_PAIRED]      = "Not paired with the server",
     [SETUP_WHY_ASKED]           = "Asked for at the console",
     [SETUP_WHY_BUTTON]          = "BOOT button held",
     [SETUP_WHY_WIFI_REFUSED]    = "WiFi password refused",
     [SETUP_WHY_WIFI_NOT_FOUND]  = "WiFi network not found",
     [SETUP_WHY_TOKEN_REFUSED]   = "Server refused this device",
+    [SETUP_WHY_PAIR_REFUSED]    = "Pairing code refused",
 };
 
 /* ---- Asking across a restart ----------------------------------------------
@@ -98,7 +99,7 @@ setup_why_t setup_needed(void)
         return SETUP_WHY_NO_WIFI;       /* first boot, or settings erased */
     }
     if (!app_config_complete()) {
-        return SETUP_WHY_NO_TOKEN;
+        return SETUP_WHY_NOT_PAIRED;
     }
     return SETUP_WHY_NONE;
 }

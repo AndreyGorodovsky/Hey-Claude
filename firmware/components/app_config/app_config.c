@@ -104,6 +104,24 @@ static const char *validate_device_token(const char *v)
 }
 
 /*
+ * A pairing code is what `python -m server pair` prints: exactly
+ * PROTO_PAIR_CODE_DIGITS digits. It is stored only until the server link
+ * trades it for a token, and then removed.
+ */
+_Static_assert(APP_CFG_PAIR_CODE_MAX == PROTO_PAIR_CODE_DIGITS,
+               "the stored code's length must be the server's");
+
+static const char *validate_pair_code(const char *v)
+{
+    size_t len = strlen(v);
+    bool ok = len == PROTO_PAIR_CODE_DIGITS;
+    for (size_t i = 0; ok && i < len; i++) {
+        ok = isdigit((unsigned char)v[i]) != 0;
+    }
+    return ok ? NULL : "must be the " STRINGIFY(PROTO_PAIR_CODE_DIGITS) " digits the server printed";
+}
+
+/*
  * The server's address, when it is not found on the network by itself: a
  * host and optionally ":" and a port, with or without "ws://" in front, the
  * forms the server link accepts (server_link.c). Checked only for that
@@ -155,6 +173,10 @@ static const field_t FIELDS[] = {
       APP_CFG_DEVICE_ID_MAX,    false, validate_device_id },
     { "device_token", "The device token",   offsetof(app_config_t, device_token),
       APP_CFG_DEVICE_TOKEN_MAX, true,  validate_device_token },
+    /* Secret like the token, though it is short-lived: whoever reads it
+     * before the device uses it could pair in the device's place */
+    { "pair_code",    "The pairing code",   offsetof(app_config_t, pair_code),
+      APP_CFG_PAIR_CODE_MAX,    true,  validate_pair_code },
 };
 #define N_FIELDS (sizeof(FIELDS) / sizeof(FIELDS[0]))
 
@@ -162,7 +184,8 @@ static const field_t FIELDS[] = {
  * must be at least as long as every individual setting. */
 static_assert(APP_CFG_WIFI_SSID_MAX <= APP_CFG_VALUE_MAX && APP_CFG_WIFI_PASS_MAX <= APP_CFG_VALUE_MAX &&
               APP_CFG_SERVER_URL_MAX <= APP_CFG_VALUE_MAX && APP_CFG_DEVICE_ID_MAX <= APP_CFG_VALUE_MAX &&
-              APP_CFG_DEVICE_TOKEN_MAX <= APP_CFG_VALUE_MAX, "APP_CFG_VALUE_MAX must cover every field");
+              APP_CFG_DEVICE_TOKEN_MAX <= APP_CFG_VALUE_MAX && APP_CFG_PAIR_CODE_MAX <= APP_CFG_VALUE_MAX,
+              "APP_CFG_VALUE_MAX must cover every field");
 
 /* The running configuration. Written only by app_config_load(), at boot,
  * before any other task reads it; read-only afterwards, so no locking is needed. */
@@ -234,8 +257,10 @@ bool app_config_has_wifi(void)
 
 bool app_config_complete(void)
 {
-    /* The server accepts no device without its token (docs/PROTOCOL.md) */
-    return app_config_has_wifi() && s_config.device_token[0] != '\0';
+    /* The server accepts no device without its token (docs/PROTOCOL.md);
+     * a pairing code is how one is got */
+    return app_config_has_wifi()
+           && (s_config.device_token[0] != '\0' || s_config.pair_code[0] != '\0');
 }
 
 /* ---- stored configuration ---- */

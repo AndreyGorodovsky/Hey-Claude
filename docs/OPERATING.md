@@ -26,7 +26,8 @@ Settings are kept across reboots and reflashing.
 | --- | --- |
 | `wifi_ssid` | Network to join. 2.4 GHz only; the ESP32-S3 has no 5 GHz radio |
 | `wifi_pass` | 8-63 characters, or 64 hexadecimal digits. Unset for an open network |
-| `device_token` | The device's password to the server: 24 to 64 characters, the same value as its entry in the server's `DEVICE_TOKENS` |
+| `device_token` | The device's password to the server: 24 to 64 characters. Set by pairing; or typed, the same value as its entry in the server's `DEVICE_TOKENS` |
+| `pair_code` | A pairing code from `python -m server pair`, 6 digits. Kept only until the device trades it for a token |
 | `server_url` | Optional. Empty: the server is found on the local network. Otherwise its address and port, as `192.168.1.20:8765` or `ws://192.168.1.20:8765` |
 | `device_id` | Optional. Defaults to `hc-` and the last six hex digits of the MAC address. Letters, digits and `-` |
 
@@ -39,11 +40,14 @@ Settings are kept across reboots and reflashing.
    address. Join that network from a phone.
 3. The settings page usually opens by itself; if not, open the address
    on the screen.
-4. Save. The device restarts with the new settings.
+4. Give the WiFi network and password, and a pairing code
+   ([Pairing a device](#pairing-a-device)), or a token instead.
+5. Save. The device restarts with the new settings, and pairs if a code
+   was given.
 
 The stored WiFi password and token are never shown: their fields are
-empty, and left empty they stay as they are. A refused WiFi password or
-token brings the device back to setup mode by itself. Opened with the
+empty, and left empty they stay as they are. A refused WiFi password,
+pairing code or token brings the device back to setup mode by itself. Opened with the
 button or the console, setup mode closes after 5 minutes if nothing is
 saved; holding BOOT again closes it at once.
 
@@ -68,6 +72,7 @@ token, and the console clears its line history after either is entered.
 | --- | --- |
 | `state` | The current state, with its reason if it has one |
 | `link` | WiFi and server connection: up or not, where the server was found, why the last connection ended. Tells "cannot find the server" from "the server does not answer" |
+| `pair 123456` | Store a pairing code and restart to pair with the server |
 | `volume`, `volume 9` | Print the volume, or set it from 1 to 10, from the next reply on. Also changed by voice ("louder", "quieter", "volume five") and kept through a restart |
 | `controls` | How the button and the switch stand, presses counted since boot, and whether continuous conversation is on |
 | `temp` | Temperature inside the chip. About 56 °C is normal; a reading above 60 °C is worth noting (KNOWN-ISSUES R20) |
@@ -122,13 +127,12 @@ server/.venv/Scripts/python -m pip install -r server/requirements-dev.txt
 
 On Linux and macOS the interpreter is `server/.venv/bin/python`.
 
-Copy `server/.env.example` to `server/.env` and fill it in. Three values
-have no usable default:
+Copy `server/.env.example` to `server/.env` and fill it in:
 
 | Setting | Meaning |
 | --- | --- |
 | `DEEPGRAM_API_KEY` | Speech-to-text and text-to-speech. How to create it is in the file and in [SECRETS.md](../SECRETS.md) |
-| `DEVICE_TOKENS` | Each device's identifier and token, as one JSON object, e.g. `{"hc-a1b2c3":"<token>"}`. The file shows how to generate a token |
+| `DEVICE_TOKENS` | Optional with pairing. Each device's identifier and token, as one JSON object, e.g. `{"hc-a1b2c3":"<token>"}`. The file shows how to generate a token. A paired device's token takes the place of its entry |
 | `TIMEZONE` | An IANA name such as `Europe/Berlin`. It decides when the day's conversation ends, at 04:00 local time |
 
 ### Starting it
@@ -139,6 +143,26 @@ server/.venv/Scripts/python -m server
 
 It listens on port 8765 and announces itself on the local network, so a
 device finds it without being told its address.
+
+### Pairing a device
+
+1. With the server running or not, run:
+
+   ```sh
+   server/.venv/Scripts/python -m server pair
+   ```
+
+   It prints a 6-digit code that lasts 10 minutes, works once, and ends
+   after 5 wrong tries. A new code replaces the last.
+2. Enter the code on the device: in setup mode's page, or `pair <code>`
+   on the console.
+3. The device finds the server, trades the code for a token, restarts and
+   connects. The server logs `device <id>: paired`.
+
+Pairing a device again gives it a new token in place of the old one, or
+of its `DEVICE_TOKENS` entry. `python -m server paired` lists the paired
+devices, and `python -m server unpair <id>` withdraws one's token, for a
+device lost or given away; it then connects only by pairing again.
 
 ### How Claude is reached
 

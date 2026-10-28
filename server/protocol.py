@@ -99,6 +99,21 @@ VOLUME_MAX = 10
 MAX_DEVICE_ID_LENGTH = 32
 MAX_DEVICE_TOKEN_LENGTH = 64
 
+# --- Pairing ------------------------------------------------------------------
+#
+# A device without a token trades a short code, made on the server's
+# machine with ``python -m server pair``, for one (server/pairing.py).
+
+#: Path of the pairing request, an ordinary HTTP POST.
+PAIR_PATH = "/v1/pair"
+
+#: Digits in a pairing code.
+PAIR_CODE_DIGITS = 6
+
+#: How long a pairing code lasts, and how many wrong codes end it sooner.
+PAIR_CODE_LIFETIME_SECONDS = 600
+PAIR_CODE_TRIES = 5
+
 #: Seconds between the server's WebSocket pings, and how long it waits for
 #: the pong before dropping the connection.
 PING_INTERVAL_SECONDS = 20

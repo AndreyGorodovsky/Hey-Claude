@@ -47,6 +47,37 @@ Backoff is the wait before the next attempt: 1 s after a connection that
 had worked, then doubling with each failure up to 30 s. Every attempt
 starts with a new lookup of the server.
 
+## Pairing
+
+A device without a token gets one by pairing. `python -m server pair`, on
+the server's machine, prints a code of 6 digits; the person types it into
+the device, which sends it once, after finding the server, in an ordinary
+HTTP request on the server's port:
+
+```
+POST /v1/pair
+Content-Type: application/json
+
+{"device_id": "<device_id>", "code": "<6 digits>"}
+```
+
+| Answer | Meaning | What the device does |
+| --- | --- | --- |
+| `200`, `{"token": "<token>"}` | Paired | Store the token in place of the code, restart, and connect with it |
+| `403` | No code, an expired or used one, or a wrong one | Remove the code and show the reason. Do not retry |
+| Any other `4xx`: `400` malformed, `413` over 512 bytes, `404` a server without pairing | Not a pairing request this server takes | As `403` |
+| No answer | Server not running or not reachable | Retry with backoff |
+
+| Rule | Value |
+| --- | --- |
+| A code lasts | 10 minutes |
+| Wrong codes before it ends | 5 |
+| Codes at once | 1: a new one replaces the last |
+
+The token is 43 characters. It takes the place of any `DEVICE_TOKENS`
+entry for that identifier, so pairing again replaces a lost or changed
+token.
+
 ## Discovery
 
 The server advertises itself by mDNS, and the device looks it up each time

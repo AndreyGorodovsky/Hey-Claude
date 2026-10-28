@@ -31,7 +31,9 @@ The firmware runs a whole conversation:
   speaks. With the switch closed, the device listens again after each
   reply, without the wake word, up to ten follow-ups in a row.
 - Settings are entered through the serial console, or from a phone
-  through a hotspot and a page the device serves (setup mode).
+  through a hotspot and a page the device serves (setup mode). The device
+  pairs with the server by a 6-digit code from `python -m server pair`,
+  instead of a token typed on both sides.
 - It recovers by itself from a lost server, lost WiFi and a hung task,
   and stops on `ERROR` rather than looping when its supply is too weak.
 
@@ -122,7 +124,8 @@ remains on the development machine.
 The server runs on Python 3.11 in a virtual environment, `server/.venv`,
 with the packages in `server/requirements.txt`. API keys for Anthropic and
 Deepgram, a device token and the timezone are in the untracked
-`server/.env`. Claude Code is installed on the same machine and signed in;
+`server/.env`; the bench device is paired, so its token there is not
+used. Claude Code is installed on the same machine and signed in;
 its login is in the user's profile, outside the repository. Version
 2.1.303 was the last benched. The tool has since updated itself to
 2.1.310, which ran the device tests of 2026-10-26 without fault but has
@@ -146,6 +149,7 @@ not been benched.
 | WiFi power saving | Off: the device is mains-powered, and the radio's sleep delays streamed audio |
 | Internet access for the assistant | Through Claude Code, the default: web search and reading any page (R21). With the API it has no tools and says it has no internet access |
 | Device settings entry | The serial console, and setup mode's page, through the same checks |
+| Device credential | A token got by pairing with a 6-digit code; a token typed on both sides still works |
 | Server discovery | mDNS on the LAN, with `server_url` as an override |
 | `SETUP` and `ERROR` detail text | The device's own short wording, chosen by reason code; the server's `error` sentence is for logs |
 | State animations | The placeholder animations stay |

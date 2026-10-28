@@ -35,12 +35,13 @@
 typedef enum {
     SETUP_WHY_NONE,             /* not needed */
     SETUP_WHY_NO_WIFI,          /* no WiFi network set */
-    SETUP_WHY_NO_TOKEN,         /* no device token set */
+    SETUP_WHY_NOT_PAIRED,       /* no device token, and no pairing code, set */
     SETUP_WHY_ASKED,            /* the `setup` console command */
     SETUP_WHY_BUTTON,           /* the BOOT button held */
     SETUP_WHY_WIFI_REFUSED,     /* the WiFi network refused the password */
     SETUP_WHY_WIFI_NOT_FOUND,   /* the WiFi network was not found */
     SETUP_WHY_TOKEN_REFUSED,    /* the server refused the device's token */
+    SETUP_WHY_PAIR_REFUSED,     /* the server refused the pairing code */
     SETUP_WHY_COUNT             /* number of reasons, not a reason */
 } setup_why_t;
 

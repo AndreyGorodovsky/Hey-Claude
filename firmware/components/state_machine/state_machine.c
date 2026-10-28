@@ -58,8 +58,9 @@
  *
  * (BOOT is set by main.c before this starts. SETUP belongs to setup mode,
  * a boot on which this is not started at all: when the server refuses
- * this device, the state machine stops what it was doing and calls
- * on_refused, which restarts the chip into setup mode, main.c.)
+ * this device or its pairing code, the state machine stops what it was
+ * doing and calls on_refused, which restarts the chip into setup mode,
+ * main.c.)
  *
  * The wake word is acted on only in IDLE. The button is what interrupts a
  * turn. Pressed while the device listens, thinks or speaks, it stops
@@ -279,8 +280,8 @@ static phase_t s_phase = PH_CONNECTING;
  * what the device is doing, these are what rest() chooses from. */
 static bool s_link_up;          /* the server connection is ready */
 static bool s_speaker_ok;       /* the amplifier and player work */
-/* Told when the server refuses this device */
-static void (*s_on_refused)(void);
+/* Told when the server refuses this device or its pairing code */
+static void (*s_on_refused)(server_link_down_t reason);
 /* Why the last attempt to connect failed, shown under CONNECTING while
  * the device keeps trying. Before the first attempt has ended it is
  * WHY_NONE, or, after a restart nobody asked for, the reason for that
@@ -588,6 +589,9 @@ static why_t why_down(server_link_down_t reason)
     case SERVER_LINK_DOWN_LOST:            return WHY_LOST;
     case SERVER_LINK_DOWN_CONFUSED:        return WHY_OUT_OF_STEP;
     case SERVER_LINK_DOWN_DROPPED:         return WHY_NONE;
+    /* Never shown: on_link_down hands a refusal on before this is asked.
+     * Listed so that the compiler still warns about a reason left out. */
+    case SERVER_LINK_DOWN_PAIR_REFUSED:    return WHY_REFUSED;
     }
     return WHY_LOST;
 }
@@ -596,14 +600,15 @@ static void on_link_down(server_link_down_t reason)
 {
     bool was_up = s_link_up;
     s_link_up = false;
-    if (reason == SERVER_LINK_DOWN_REJECTED) {
+    if (reason == SERVER_LINK_DOWN_REJECTED || reason == SERVER_LINK_DOWN_PAIR_REFUSED) {
         /* The settings cannot work until they change. Whoever started the
          * state machine arranges that, by restarting into setup mode, which
          * shows the reason (main.c); nothing is shown here first, since the
          * restart would replace it at once. */
-        ESP_LOGW(TAG, "the server refused this device");
+        ESP_LOGW(TAG, "the server refused this device%s",
+                 reason == SERVER_LINK_DOWN_PAIR_REFUSED ? "'s pairing code" : "");
         stop_turn_activity();
-        s_on_refused();
+        s_on_refused(reason);
         return;
     }
     if (reason == SERVER_LINK_DOWN_DROPPED) {

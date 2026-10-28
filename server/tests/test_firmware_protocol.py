@@ -49,6 +49,8 @@ def test_shared_numbers_agree():
     assert D["PROTO_VOLUME_MAX"] == protocol.VOLUME_MAX
     assert D["PROTO_DEVICE_TOKEN_MIN"] == config.MIN_DEVICE_TOKEN_LENGTH
     assert D["PROTO_DEVICE_TOKEN_MAX"] == protocol.MAX_DEVICE_TOKEN_LENGTH
+    assert D["PROTO_PAIR_PATH"] == protocol.PAIR_PATH
+    assert D["PROTO_PAIR_CODE_DIGITS"] == protocol.PAIR_CODE_DIGITS
     assert D["PROTO_DEVICE_CAPTURE_LIMIT_MS"] == (
         protocol.DEVICE_CAPTURE_LIMIT_SECONDS * 1000
     )

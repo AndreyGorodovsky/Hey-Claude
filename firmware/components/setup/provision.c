@@ -298,7 +298,7 @@ static esp_err_t form_get(httpd_req_t *req)
     httpd_resp_sendstr_chunk(req, PAGE_HEAD);
     httpd_resp_sendstr_chunk(req,
         "<h1>Hey Claude</h1>"
-        "<p class=\"sub\">The WiFi network, and the token for the server.</p>"
+        "<p class=\"sub\">The WiFi network, and pairing with the server.</p>"
         "<form method=\"post\" action=\"/save\">"
         "<label><span>WiFi network</span><input name=\"ssid\" value=\"");
     html_escape(s_form.ssid, esc, sizeof(esc));
@@ -338,11 +338,22 @@ static esp_err_t form_get(httpd_req_t *req)
         "autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\"></label>"
         "<label class=\"check\"><input name=\"open\" type=\"checkbox\" value=\"1\">"
         "<span>This network has no password</span></label>"
-        "<label><span>Device token</span>"
+        /* The usual way: a short code the server prints, which the device
+         * trades for a token by itself (server_link.c). The keypad is for
+         * phones; the pattern only hints, app_config checks. */
+        "<label><span>Pairing code</span>"
+        "<input name=\"code\" inputmode=\"numeric\" pattern=\"[0-9]*\" maxlength=\""
+        STRINGIFY(APP_CFG_PAIR_CODE_MAX) "\" placeholder=\"");
+    httpd_resp_sendstr_chunk(req, s_form.has_token ? "leave empty to keep the current pairing"
+                                                   : "the digits the server printed");
+    httpd_resp_sendstr_chunk(req,
+        "\" autocomplete=\"off\">"
+        "<small>On the server's computer, run <b>python -m server pair</b>.</small></label>"
+        "<label><span>Or a device token</span>"
         "<input name=\"token\" type=\"password\" maxlength=\""
         STRINGIFY(APP_CFG_DEVICE_TOKEN_MAX) "\" placeholder=\"");
     httpd_resp_sendstr_chunk(req, s_form.has_token ? "leave empty to keep the current one"
-                                                   : "the token the server has for this device");
+                                                   : "instead of a pairing code");
     httpd_resp_sendstr_chunk(req,
         "\" autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\">"
         "<small>The server must have the same token for this device, named <b>");
@@ -486,7 +497,7 @@ static esp_err_t send_problem(httpd_req_t *req, const char *problem)
  * plus the names. A larger body did not come from this page. Static, not on
  * the stack: the server runs one handler at a time, so one copy serves. */
 static char s_body[(APP_CFG_WIFI_SSID_MAX + APP_CFG_WIFI_PASS_MAX + APP_CFG_DEVICE_TOKEN_MAX
-                    + APP_CFG_SERVER_URL_MAX) * 3 + 64];
+                    + APP_CFG_PAIR_CODE_MAX + APP_CFG_SERVER_URL_MAX) * 3 + 64];
 
 static esp_err_t handle_save(httpd_req_t *req)
 {
@@ -520,10 +531,12 @@ static esp_err_t handle_save(httpd_req_t *req)
     char ssid[APP_CFG_WIFI_SSID_MAX + 1];
     char pass[APP_CFG_WIFI_PASS_MAX + 1];
     char token[APP_CFG_DEVICE_TOKEN_MAX + 1];
+    char code[APP_CFG_PAIR_CODE_MAX + 1];
     char url[APP_CFG_SERVER_URL_MAX + 1];
     char open_box[4];
     if (form_field(s_body, "ssid", ssid, sizeof(ssid)) != 0
         || form_field(s_body, "pass", pass, sizeof(pass)) != 0
+        || form_field(s_body, "code", code, sizeof(code)) != 0
         || form_field(s_body, "token", token, sizeof(token)) != 0
         || form_field(s_body, "url", url, sizeof(url)) != 0) {
         /* The page limits each field's length, so this is a form from
@@ -552,13 +565,20 @@ static esp_err_t handle_save(httpd_req_t *req)
             "The WiFi network changed, so its password is needed too. An empty "
             "password keeps the one already stored, which is the old network's.");
     }
-    if (token[0] == '\0' && !s_form.has_token) {
-        return send_problem(req, "The device token is needed.");
+    if (code[0] != '\0' && token[0] != '\0') {
+        return send_problem(req, "Type a pairing code or a device token, not both.");
+    }
+    if (code[0] == '\0' && token[0] == '\0' && !s_form.has_token) {
+        return send_problem(req,
+            "A pairing code is needed. On the server's computer, run "
+            "python -m server pair, and type the digits it prints.");
     }
 
     /* Only what changes. A password left empty and a token left empty are
-     * not in the list, and so stay as they are. */
-    app_config_edit_t edits[4];
+     * not in the list, and so stay as they are. A code is stored to be
+     * traded at the next boot; a token typed instead removes any code
+     * still waiting, which would otherwise be tried first. */
+    app_config_edit_t edits[5];
     size_t n = 0;
     edits[n++] = (app_config_edit_t){ "wifi_ssid", ssid };
     if (open_network) {
@@ -566,18 +586,21 @@ static esp_err_t handle_save(httpd_req_t *req)
     } else if (pass[0] != '\0') {
         edits[n++] = (app_config_edit_t){ "wifi_pass", pass };
     }
-    if (token[0] != '\0') {
+    if (code[0] != '\0') {
+        edits[n++] = (app_config_edit_t){ "pair_code", code };
+    } else if (token[0] != '\0') {
         edits[n++] = (app_config_edit_t){ "device_token", token };
+        edits[n++] = (app_config_edit_t){ "pair_code", NULL };
     }
     edits[n++] = (app_config_edit_t){ "server_url", url[0] ? url : NULL };
 
     /* Nothing above has written anything. The same checks as the console
      * now run on every value, and all are stored or none. Whether each
      * secret was typed is logged, never the secret. */
-    ESP_LOGI(TAG, "form: network \"%s\", password %s, token %s, server %s",
+    ESP_LOGI(TAG, "form: network \"%s\", password %s, %s, server %s",
              ssid,
              open_network ? "none" : pass[0] ? "typed" : "kept",
-             token[0] ? "typed" : "kept",
+             code[0] ? "pairing code typed" : token[0] ? "token typed" : "token kept",
              url[0] ? url : "found by itself");
     const char *bad_key = NULL;
     const char *reason = NULL;
@@ -601,7 +624,7 @@ static esp_err_t handle_save(httpd_req_t *req)
         "<div class=\"note\">The device is restarting with these settings. Its "
         "hotspot disappears in a few seconds; that is the restart, and the phone "
         "goes back to its usual network.</div>"
-        "<p>A WiFi password or a token that is refused brings the device back to "
+        "<p>A WiFi password, pairing code or token that is refused brings the device back to "
         "setup by itself within a minute, saying why on its screen. If it stays on "
         "Connecting, hold its BOOT button for 3 seconds to come back here.</p>");
 

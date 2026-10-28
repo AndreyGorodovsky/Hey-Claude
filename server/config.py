@@ -220,6 +220,11 @@ class Settings(BaseSettings):
             return self.db_path
         return SERVER_DIR / self.db_path
 
+    @property
+    def devices_file(self) -> Path:
+        """The paired devices' file, beside the database (server/pairing.py)."""
+        return self.db_file.parent / "devices.sqlite3"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

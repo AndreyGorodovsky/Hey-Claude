@@ -60,6 +60,15 @@
 #define PROTO_DEVICE_TOKEN_MIN          24
 #define PROTO_DEVICE_TOKEN_MAX          64
 
+/* ---- Pairing ----
+ * A device without a token sends a short code, made on the server's
+ * machine, once to this path in an HTTP POST, and is answered with a token
+ * of its own (docs/PROTOCOL.md, Pairing). The server answers a wrong or
+ * expired code with PROTO_HTTP_REFUSED. */
+#define PROTO_PAIR_PATH                 "/v1/pair"
+/* Digits in a pairing code */
+#define PROTO_PAIR_CODE_DIGITS          6
+
 /* ---- The device's deadlines ----
  * Each is a guard against a server that has stopped answering, and each is
  * longer than the server's own limit for the same wait, so that the

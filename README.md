@@ -9,8 +9,8 @@ on the device, the request streams to a server on the local network, and
 Claude's answer is spoken, drawing on a web search when it needs one. The
 volume is set by voice, a button interrupts a reply, a switch turns on
 continuous conversation, and settings can be entered from a phone. The
-wake-word model is trained on one speaker's voice; its false detections
-are not yet measured. More in [STATUS.md](STATUS.md).
+wake-word model is trained on one speaker's voice, and its false
+detections are not measured on the device. More in [STATUS.md](STATUS.md).
 
 **To build one,** follow [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md).
 

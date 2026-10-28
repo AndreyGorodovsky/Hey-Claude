@@ -18,6 +18,12 @@
  * address and port. The lookup is repeated for every connection attempt, so
  * the server's address may change freely.
  *
+ * Pairing. A device given a pairing code instead of a token trades it
+ * first: once the server is found, the code goes to it in one HTTP request
+ * and a token comes back. The link hands the token to on_paired, which
+ * stores it and restarts the chip; the next boot connects with it like any
+ * other device.
+ *
  * Two things come out of the link, each through a function given at start.
  * Reports say what happened: connected, lost, a message from the server.
  * Reply audio goes to the sink. They are functions and not events on the
@@ -65,6 +71,9 @@ typedef enum {
                                that cannot be used, such as reply audio in a
                                form this device cannot play */
     SERVER_LINK_DOWN_DROPPED,      /* closed on request, with server_link_drop() */
+    SERVER_LINK_DOWN_PAIR_REFUSED, /* the server refused the pairing code: wrong,
+                               expired or already used. Not retried: the
+                               code is to be removed. */
 } server_link_down_t;
 
 /* The `code` of the server's `error` message */
@@ -77,6 +86,11 @@ typedef enum {
 } server_link_error_t;
 
 typedef void (*server_link_report_fn)(server_link_report_t what, uint32_t value);
+
+/* Given the token pairing brought, in the link task. Expected to store it
+ * in place of the code and restart the chip; it returns only if storing
+ * failed. */
+typedef void (*server_link_paired_fn)(const char *token);
 
 /* Where reply audio goes. Both functions run in the WebSocket client's
  * task, in the order the server sent things. */
@@ -93,6 +107,8 @@ typedef struct {
     const char *server_url;     /* "ws://host:port", or empty to use mDNS */
     const char *device_id;
     const char *device_token;
+    const char *pair_code;      /* a code to trade for a token first, or empty */
+    server_link_paired_fn on_paired;    /* required when pair_code is set */
     server_link_report_fn on_report;
     server_link_sink_t sink;
 } server_link_config_t;

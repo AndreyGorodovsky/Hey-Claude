@@ -165,11 +165,43 @@ static void on_wifi_hopeless(net_hopeless_t why)
                                               : SETUP_WHY_WIFI_NOT_FOUND);
 }
 
-/* The server refused this device's identifier and token. Called by the
- * state machine, in its task, once any turn has stopped. */
-static void on_refused(void)
+/* The server refused this device's identifier and token, or its pairing
+ * code. Called by the state machine, in its task, once any turn has
+ * stopped. A refused code is removed first, so that setup mode asks for a
+ * new one instead of the next boot repeating it. */
+static void on_refused(server_link_down_t reason)
 {
+    if (reason == SERVER_LINK_DOWN_PAIR_REFUSED) {
+        esp_err_t err = app_config_unset("pair_code");
+        if (err != ESP_OK) {
+            /* Harmless: the code is sent once more at the next boot, and
+             * refused again */
+            ESP_LOGW(TAG, "the refused pairing code was not removed: %s", esp_err_to_name(err));
+        }
+        setup_restart(SETUP_WHY_PAIR_REFUSED);
+    }
     setup_restart(SETUP_WHY_TOKEN_REFUSED);
+}
+
+/* Pairing brought a token. Called by the server link, in its task. The
+ * token goes in and the code out together; app_config checks the token as
+ * it would one typed in. The running settings are read once at boot
+ * (app_config.h), so the token takes effect by a restart, as any other
+ * change does. Returns only if storing failed. */
+static void on_paired(const char *token)
+{
+    const app_config_edit_t edits[] = {
+        { "device_token", token },
+        { "pair_code", NULL },
+    };
+    const char *why = NULL;
+    esp_err_t err = app_config_store(edits, 2, NULL, &why);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "the token from pairing was not stored: %s", why ? why : esp_err_to_name(err));
+        return;
+    }
+    ESP_LOGI(TAG, "token stored; restarting to connect with it");
+    esp_restart();
 }
 
 void app_main(void)
@@ -285,6 +317,8 @@ void app_main(void)
         .server_url = cfg->server_url,
         .device_id = cfg->device_id,
         .device_token = cfg->device_token,
+        .pair_code = cfg->pair_code,
+        .on_paired = on_paired,
         /* The link's reports and the reply's audio both go to the state
          * machine, which passes the audio on to the player when a reply
          * is wanted. This is the one place the three are joined. */

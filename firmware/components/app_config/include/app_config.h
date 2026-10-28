@@ -22,6 +22,7 @@
 #define APP_CFG_SERVER_URL_MAX    127
 #define APP_CFG_DEVICE_ID_MAX     32      /* also the network hostname limit */
 #define APP_CFG_DEVICE_TOKEN_MAX  64      /* PROTO_DEVICE_TOKEN_MAX, checked in app_config.c */
+#define APP_CFG_PAIR_CODE_MAX     6       /* PROTO_PAIR_CODE_DIGITS, checked in app_config.c */
 #define APP_CFG_VALUE_MAX         127     /* longest of the above; size buffers with it */
 
 /* The settings, each a NUL-terminated string. Empty means not set. */
@@ -31,6 +32,8 @@ typedef struct {
     char server_url[APP_CFG_SERVER_URL_MAX + 1];     /* empty: discover the server on the LAN */
     char device_id[APP_CFG_DEVICE_ID_MAX + 1];       /* never empty: defaults to one derived from the MAC */
     char device_token[APP_CFG_DEVICE_TOKEN_MAX + 1]; /* credential for the server, from stage 6 */
+    char pair_code[APP_CFG_PAIR_CODE_MAX + 1];       /* a pairing code waiting to be traded for
+                                                        a token (server_link.c); empty when none */
 } app_config_t;
 
 /* ---- running configuration ---- */
@@ -46,7 +49,7 @@ const app_config_t *app_config_get(void);
 bool app_config_has_wifi(void);
 
 /* True when every value the device needs to work is present: the network,
- * and the token the server asks for. */
+ * and the token the server asks for, or a pairing code to get one with. */
 bool app_config_complete(void);
 
 /* ---- stored configuration ----

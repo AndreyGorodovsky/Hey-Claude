@@ -15,7 +15,7 @@ history. Check what is tracked, not only what is staged.
 | --- | --- |
 | Anthropic API key (`sk-ant-...`) | Server environment, pasted into a config file or a test script |
 | Speech provider API keys | Same |
-| Device tokens | The server's `DEVICE_TOKENS` setting, firmware configuration, test fixtures, a command line |
+| Device tokens and pairing codes | The server's `DEVICE_TOKENS` setting, firmware configuration, test fixtures, a command line, a console log of `pair`. Paired tokens and the pending code are kept only as hashes, in the untracked `server/data/devices.sqlite3` |
 | The Claude Code login, used with `LLM_BACKEND=claude_code`, the default | Claude Code keeps it in the user's profile, outside the repository; it leaks only if that directory, or a login token set in an environment variable, is copied into a file here |
 | WiFi SSID and passphrase | `sdkconfig`, NVS CSV files, hardcoded during bring-up, the console log of setup mode (the network's name is logged when the page saves) |
 | The setup hotspot's password | Nowhere lasting: made at random for each entry into setup mode, shown on the screen, logged on the serial console, kept in RAM and gone at the restart that ends setup mode. A console log saved into the repository would carry it, and the network name with it |

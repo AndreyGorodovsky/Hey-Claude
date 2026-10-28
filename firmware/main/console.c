@@ -21,7 +21,7 @@
  *   audio ...                     audio tests, listed in audio_cmd.c
  *   state, display ...            the device state and the display test, in ui_cmd.c
  *   wake ...                      wake-word counters and tuning, in wake_cmd.c
- *   link                          the server connection, in link_cmd.c
+ *   link, pair <code>             the server connection and pairing, in link_cmd.c
  *   temp                          the chip's temperature, in temp_cmd.c
  *   mem                           free memory and stack headroom, in mem_cmd.c
  *   volume [level]                the playback volume, in volume_cmd.c
@@ -199,7 +199,7 @@ esp_err_t console_start(void)
          * "write a backslash as \\ and a quote as \"" */
         .help = "Show or change stored settings. Values containing spaces go in "
                 "double quotes; write a backslash as \\\\ and a quote as \\\". "
-                "Keys: wifi_ssid, wifi_pass, server_url, device_id, device_token",
+                "Keys: wifi_ssid, wifi_pass, server_url, device_id, device_token, pair_code",
         .hint = "show | set <key> <value> | unset <key>",
         .func = cmd_config,
     };

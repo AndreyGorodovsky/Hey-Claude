@@ -64,7 +64,7 @@ what the conversation holds, and what Claude says.
 | `wakeword` | Wake-word detection; announces detections and decides nothing |
 | `app_state` | The device state, its detail text and the continuous-conversation mark: stored, and announced on change |
 | `state_machine` | Decides what the device does next and is the only writer of the state; also runs the request upload and keeps the volume (`volume.c`) |
-| `server_link` | The WebSocket connection: finds the server by mDNS, connects, authenticates, reconnects, and turns messages into reports |
+| `server_link` | The WebSocket connection: finds the server by mDNS, pairs if given a code, connects, authenticates, reconnects, and turns messages into reports |
 | `player` | Reply playback: a 4 s buffer and the task that plays it, at the playback level, through a limiter |
 | `protocol` | The protocol's numbers, in one header, held to the server's by a test |
 | `display` | The panel, its backlight and each state's screen, from the one task that uses LVGL |
@@ -170,12 +170,13 @@ again. Nothing running ever has to be stopped.
 
 | Way in | Shown as | Closes by itself |
 | --- | --- | --- |
-| No WiFi network or token stored | "WiFi not set up", "Device token not set up" | No |
+| No WiFi network, or neither token nor pairing code, stored | "WiFi not set up", "Not paired with the server" | No |
 | `setup` on the console | "Asked for at the console" | After 5 min |
 | BOOT held 3 s | "BOOT button held" | After 5 min |
 | Never-connected WiFi settings refused 5 times in a row | "WiFi password refused" | No |
 | The same, network not found in 10 min | "WiFi network not found" | No |
 | The server refuses the device | "Server refused this device" | No |
+| The server refuses the pairing code | "Pairing code refused" | No |
 
 Setup for missing or failed settings has no deadline, since going back to
 them would only fail again. Holding BOOT leaves setup mode at any time.
@@ -188,9 +189,10 @@ them would only fail again. Holding BOOT leaves setup mode at any time.
    and never stored. The name, password and page address are on screen.
 3. A captive-portal DNS answers every name with the device's address, so
    a phone checking for the internet is sent to the page.
-4. The page asks for the WiFi network and password, the token and,
-   optionally, the server address, and shows the device identifier. The
-   stored password and token are never sent back: empty fields keep them.
+4. The page asks for the WiFi network and password, a pairing code or a
+   token and, optionally, the server address, and shows the device
+   identifier. The stored password and token are never sent back: empty
+   fields keep them.
 5. A save is checked by the console's rules, stored all or none, and the
    device restarts. The WiFi password is not tried first, since that would
    move the access point to the network's channel, away from the phone.
@@ -249,7 +251,7 @@ here. Higher runs first.
 | WebSocket client | 7 | 0 | The component's task; receives reply audio | No |
 | Upload | 6 | 0 | Sends request frames while capturing; a send can block for seconds | No |
 | State machine | 5 | 0 | Each event well under a millisecond, except storing a changed volume, done only in `IDLE` | Yes |
-| Link | 5 | 0 | Looks up, connects, waits for the connection to end | No |
+| Link | 5 | 0 | Looks up, connects, waits for the connection to end. With a pairing code, makes the HTTP request instead and hands the token to main.c, which stores it and restarts; 6 KB of stack for the HTTP client, of which about 3.3 KB was left unused by a pairing | No |
 | Display | 4 | 0 | LVGL drawing; sleeps between frames | No |
 | Web server | 5 | either | Setup mode only | No |
 | Captive DNS | 4 | either | Setup mode only | No |
@@ -418,6 +420,12 @@ else on the network can spend the server's credit or continue a device's
 conversation. The server checks it, then sends `ready`. A newer connection
 for an identifier replaces the older one.
 
+**Pairing.** A device with a pairing code instead of a token trades it
+first, in one HTTP request to the server (docs/PROTOCOL.md, Pairing), and
+restarts with the token it is given. A separate request keeps the
+WebSocket's one rule, a token or a refusal, unchanged, and a code entered
+on a phone is 6 digits rather than 43 characters.
+
 **Discovery.** The server advertises itself by mDNS, with the one address
 on its machine's default route; the device looks it up at every connect,
 so the server's address can change. The `server_url` setting overrides
@@ -472,8 +480,15 @@ is added with its reply as far as its audio had begun to be sent, then
 disconnects is cancelled and not added. The stored history always
 alternates between the person and the assistant.
 
-**Device tokens** are one setting, `DEVICE_TOKENS`, mapping each
-identifier to its token, compared in constant time.
+**Device tokens** come from pairing or from `DEVICE_TOKENS`, which maps
+each identifier to its token. Paired devices are kept as SHA-256 hashes
+of their tokens in `server/data/devices.sqlite3`, a file apart from the
+conversations so that credentials and transcripts are never together.
+The pending code is kept there the same way, which is how
+`python -m server pair`, a separate process, hands it to the server. A
+paired token takes the place of the device's `DEVICE_TOKENS` entry, and
+the server says so at start; `python -m server unpair <id>` withdraws it.
+Tokens are compared in constant time.
 
 **Volume requests.** A request only about the volume ("louder", "too
 loud", "volume five", "maximum volume") is recognised from its transcript
@@ -664,7 +679,8 @@ stronger device credential (R8).
 | At most ten follow-ups in a row | Ending only on silence | Bounds what a television or other voices can keep going, every capture of which goes to the server |
 | `error` ends a turn and keeps the connection | Reconnecting after every error | A failed service does not make the connection unhealthy |
 | A newer connection replaces the older | Refusing a second one | A device back from a power cut must not be locked out by its own dead connection |
-| Device tokens in the server's environment | A table in the database | Credentials kept apart from transcripts |
+| Pairing with a short code | Only a token typed in | 6 digits typed on a phone instead of 43 characters, and no editing of `.env` |
+| Paired tokens kept as hashes, in a file of their own | Plain text in `.env`, or a table in the conversation database | The file lets no one connect as a device, and credentials stay apart from transcripts |
 | Deepgram without its SDK | The SDK | The interface used is small and stable; the SDK's has changed across versions |
 | Only the current day kept | Every day kept | Transcripts are personal data and earlier days are never read |
 | WiFi power saving off | Modem sleep, the default | Mains-powered; the radio's sleep delays streamed audio |

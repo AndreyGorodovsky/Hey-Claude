@@ -1,9 +1,14 @@
-"""Entry point: ``python -m server`` from the repository root."""
+"""Entry point: ``python -m server`` from the repository root.
+
+``python -m server pair`` makes a pairing code instead, ``paired`` lists
+the paired devices and ``unpair <id>`` withdraws one (server/pairing.py).
+"""
 
 from __future__ import annotations
 
 import logging
 import sys
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -16,8 +21,14 @@ from server.discovery import ServiceAdvertiser
 from server.llm import LanguageModel, LanguageModelError
 from server.llm.claude import ClaudeLanguageModel
 from server.llm.claude_code import ClaudeCodeLanguageModel, FetchPolicy
+from server.pairing import PairedDevices
 from server.pipeline import TurnDeps, TurnLimits
-from server.protocol import PING_INTERVAL_SECONDS, PING_TIMEOUT_SECONDS
+from server.protocol import (
+    PAIR_CODE_LIFETIME_SECONDS,
+    PAIR_CODE_TRIES,
+    PING_INTERVAL_SECONDS,
+    PING_TIMEOUT_SECONDS,
+)
 from server.stt.deepgram import DeepgramSpeechToText
 from server.transport import create_app
 from server.tts.deepgram import DeepgramTextToSpeech
@@ -82,7 +93,40 @@ def build_deps(settings: Settings) -> TurnDeps:
     )
 
 
+def make_pairing_code(registry: PairedDevices) -> None:
+    """Print a new pairing code, which replaces any earlier one."""
+    code = registry.new_code(time.time())
+    print(
+        f"Pairing code: {code}\n"
+        f"Type it into the device within {PAIR_CODE_LIFETIME_SECONDS // 60}"
+        f" minutes. It works once, and {PAIR_CODE_TRIES} wrong codes end it."
+    )
+
+
+def run_command(registry: PairedDevices, command: list[str]) -> None:
+    """Run one of the pairing commands, which work with the server stopped
+    or running."""
+    registry.initialise()
+    if command == ["pair"]:
+        make_pairing_code(registry)
+    elif command == ["paired"]:
+        print("\n".join(registry.device_ids()) or "No device is paired.")
+    elif registry.unpair(command[1]):
+        print(f"Unpaired {command[1]}; its token no longer works.")
+    else:
+        sys.exit(f"{command[1]} is not paired.")
+
+
+_USAGE = "Usage: python -m server [pair | paired | unpair <device id>]"
+
+
 def main() -> None:
+    command = sys.argv[1:]
+    if not (
+        command in ([], ["pair"], ["paired"])
+        or (len(command) == 2 and command[0] == "unpair")
+    ):
+        sys.exit(_USAGE)
     try:
         settings = get_settings()
     except ValidationError as exc:
@@ -94,8 +138,24 @@ def main() -> None:
         )
         sys.exit(f"The server's configuration is not valid:\n{problems}")
     configure_logging(settings)
-    if not settings.device_tokens:
-        log.warning("DEVICE_TOKENS is empty: no device will be able to connect")
+    registry = PairedDevices(settings.devices_file)
+    if command:
+        run_command(registry, command)
+        return
+    registry.initialise()
+    paired = registry.device_ids()
+    if not settings.device_tokens and not paired:
+        log.warning(
+            "no device is paired and DEVICE_TOKENS is empty: pair one with"
+            " python -m server pair"
+        )
+    for device_id in sorted(set(paired) & settings.device_tokens.keys()):
+        log.warning(
+            "device %s is paired: its DEVICE_TOKENS entry is not used"
+            " (python -m server unpair %s to use it again)",
+            device_id,
+            device_id,
+        )
 
     try:
         deps = build_deps(settings)
@@ -116,7 +176,9 @@ def main() -> None:
             await deps.tts.aclose()
             await deps.llm.aclose()
 
-    app = create_app(deps, settings.device_tokens, background=background)
+    app = create_app(
+        deps, settings.device_tokens, paired=registry, background=background
+    )
     uvicorn.run(
         app,
         host=settings.bind_host,

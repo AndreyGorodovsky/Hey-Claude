@@ -106,9 +106,13 @@ an MSYS shell.
 ### R8 — Unencrypted transport on the LAN
 
 Device tokens are shared secrets sent over plain WebSocket, and anything
-on the local network can read conversation audio in both directions. The
-server keeps the tokens in plain text in its untracked `.env`, beside the
-API keys.
+on the local network can read conversation audio in both directions.
+Pairing sends the code and the new token once over plain HTTP. The
+server keeps `DEVICE_TOKENS` in plain text in its untracked `.env`,
+beside the API keys; paired tokens it keeps only as hashes. Anything on
+the network can also end a pairing code with five wrong tries, since the
+pairing request needs no token; the device then shows "Pairing code
+refused", and a new code is made.
 
 *Mitigation:* accepted for a LAN-only server. Moving it off the LAN
 requires TLS and a stronger device credential.
@@ -137,8 +141,8 @@ the server's keys.
 
 *Mitigation:* accepted for good. NVS and flash encryption on the ESP32-S3
 burn eFuses, which cannot be reset, and the board is to stay reusable. A
-leaked token is replaced on both sides: in `server/.env`, and on the
-device through the console or setup mode.
+device that is lost is cut off with `python -m server unpair <id>`, and
+a leaked token is replaced by pairing the device again.
 
 ### R13 — The display tears during fast movement
 
@@ -376,6 +380,10 @@ Not measured: a usage limit, and the wait after more than an hour unused.
 - **A volume request in other words goes to Claude**, which says it cannot
   change the volume. Phrasings found missing are added to
   `server/pipeline/volume.py`.
+- **A pairing answer lost on the way** leaves the server with the new
+  token and the device without it: the device tries again, is refused,
+  and shows "Pairing code refused", and a device that was paired before
+  has lost its old token too. Pairing again with a new code mends it.
 - **The wake word works only with a server**, since the device takes it
   only in `IDLE`, which it reaches only while connected.
 - **The assistant knows the date but not the time** through Claude Code;

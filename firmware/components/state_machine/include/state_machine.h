@@ -31,9 +31,11 @@
 typedef struct {
     bool speaker_ok;    /* the amplifier and the player started */
     /* Called, from the state machine's task, when the server refuses this
-     * device's identifier and token, once any turn has been stopped.
-     * Required: it is expected to restart the chip into setup mode. */
-    void (*on_refused)(void);
+     * device's identifier and token (SERVER_LINK_DOWN_REJECTED) or its
+     * pairing code (SERVER_LINK_DOWN_PAIR_REFUSED), once any turn has been
+     * stopped. Required: it is expected to restart the chip into setup
+     * mode. */
+    void (*on_refused)(server_link_down_t reason);
 } state_machine_config_t;
 
 /* Starts the state machine in its own task. Call once at boot, after the

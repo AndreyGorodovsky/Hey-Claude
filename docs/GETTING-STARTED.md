@@ -26,22 +26,7 @@ hardware, [OPERATING.md](OPERATING.md) for the rest.
    virtual environment, copy `server/.env.example` to `server/.env`, and
    fill in `DEEPGRAM_API_KEY` and `TIMEZONE`.
 
-3. **Give the device a token.** Generate one:
-
-   ```sh
-   python -c "import secrets; print(secrets.token_urlsafe(32))"
-   ```
-
-   and put it in `server/.env` under the device's identifier, which is
-   `hc-` followed by the last six hex digits of the board's MAC address.
-   If it is not known yet, the setup page of step 5 shows it; add the
-   entry then and restart the server:
-
-   ```
-   DEVICE_TOKENS={"hc-a1b2c3":"<token>"}
-   ```
-
-   Then start the server with `server/.venv/Scripts/python -m server`.
+3. **Start the server** with `server/.venv/Scripts/python -m server`.
 
 4. **Flash the firmware** from an ESP-IDF v5.5 PowerShell, in `firmware/`,
    with the board's **UART** port connected
@@ -52,10 +37,13 @@ hardware, [OPERATING.md](OPERATING.md) for the rest.
    ```
 
 5. **Enter the settings.** With no settings, the device starts in setup
-   mode: join the WiFi network shown on its screen from a phone, and on
-   the page that opens give the WiFi name and password and the token from
-   step 3. The device restarts and joins the network. The console works
-   too (`config set`, then `reboot`).
+   mode: join the WiFi network shown on its screen from a phone. On the
+   server's computer, run `server/.venv/Scripts/python -m server pair`,
+   which prints a 6-digit code lasting 10 minutes. On the page that opens
+   on the phone, give the WiFi name and password and that code. The device
+   restarts, joins the network and pairs with the server by itself. The
+   console works too (`config set wifi_ssid`, `config set wifi_pass`,
+   then `pair <code>`).
 
 6. **Talk to it.** The screen goes from `CONNECTING` to `IDLE` once the
    server is found. Say "Hey Claude", wait for the two-note chime, then
@@ -66,7 +54,7 @@ hardware, [OPERATING.md](OPERATING.md) for the rest.
 
 | What is seen | What to check |
 | --- | --- |
-| `SETUP`, "WiFi password refused" or "Server refused this device" | The WiFi password, or that the token and identifier match `DEVICE_TOKENS` exactly |
+| `SETUP`, "WiFi password refused", "Pairing code refused" or "Server refused this device" | The WiFi password; or make a new code with `python -m server pair` and enter it, since a code lasts 10 minutes and works once |
 | `CONNECTING` and it stays there | That the server is running and on the same network. `link` on the console says whether the server was found or did not answer. A network that blocks mDNS needs `server_url` set to the server's address |
 | `ERROR` after each question | The server's log names the failing service: a Deepgram key, or Claude Code not signed in |
 | "Hey Claude" not detected | The model is trained on one speaker's voice and works best within 2 m; speak clearly toward the microphone. `wake log on` shows the scores |
