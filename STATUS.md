@@ -1,10 +1,12 @@
 # Status
 
-**Current stage:** none. All eight stages are done, and the device works
-end to end on the breadboard. Nothing remains before release; the steps
-left are optional (Next steps, below).
+**Latest release:** v1.0.0
 
-**Last updated:** 2026-10-28
+**Current stage:** none. All eight stages are done, and the device works
+end to end on the breadboard. The steps left are optional (Next steps,
+below).
+
+**Last updated:** 2026-10-29
 
 The history of each stage, with its step tables, bench sessions and review
 findings, is in the git history of this file.
@@ -112,9 +114,6 @@ All optional:
    new cutoff takes one flash.
 2. Obtain a multimeter for the continuity checks before the circuit is
    soldered (R9).
-3. Bench the Claude Code version now installed (Environment;
-   docs/OPERATING.md, Updating Claude Code). This is on the server only
-   and needs no flashing.
 
 ## Environment
 
@@ -127,9 +126,7 @@ Deepgram, a device token and the timezone are in the untracked
 `server/.env`; the bench device is paired, so its token there is not
 used. Claude Code is installed on the same machine and signed in;
 its login is in the user's profile, outside the repository. Version
-2.1.303 was the last benched. The tool has since updated itself to
-2.1.310, which ran the device tests of 2026-10-26 without fault but has
-not been benched.
+2.1.312 is installed and was the last benched.
 
 ## Decisions
 

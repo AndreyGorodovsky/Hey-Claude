@@ -306,7 +306,7 @@ of the old shape and cannot notice.
 
 *Mitigation:* run `python -m server.tools.claude_cli_bench` after an
 update; it takes a minute. The server logs the tool's version at the first
-turn. Versions 2.1.296 to 2.1.303 were benched without a change found.
+turn. The versions benched, from 2.1.296 to 2.1.312, showed no change.
 
 **A subscription has usage limits**, shared with the account's other use.
 When one is reached every turn fails until it resets. Not seen. There is
@@ -328,11 +328,12 @@ part of the reply, to drop the list of sources the search tool asks for.
 The server counts removals (`sources_dropped`); none has come since the
 prompt forbade the list.
 
-Measured on the server's machine with the bench script, `claude-opus-5`
-at low effort, a home internet connection: the first text of a plain
-answer after 1.7 to 2.8 s, median about 1.95 s, the whole reply in 2.7
-to 5.5 s; a reply that searched or read a page whole in about 8 to 26.5 s.
-Not measured: a usage limit, and the wait after more than an hour unused.
+Measured on the server's machine with the bench script, Claude Code
+2.1.312, `claude-opus-5` at low effort, a home internet connection, one
+run of five plain questions and five that searched or read a page: the
+first text of a plain answer after 1.56 to 1.86 s, median 1.69 s, the
+whole reply in 3.2 to 3.8 s; a reply that searched or read a page whole
+in 7.4 to 24.6 s. Not measured: a usage limit, and the wait after more than an hour unused.
 
 ## Resolved
 

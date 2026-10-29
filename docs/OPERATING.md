@@ -256,18 +256,20 @@ giving the tool's own complaint.
    It puts fixed questions to the tool through the server's own client,
    with no device, speech service or API key.
 3. The update is good when every question is answered, the plain ones'
-   first text comes after about 2 to 3 s, and those that search open with
+   first text comes within about 3 s, and those that search open with
    "Let me check.". A run stopped by the lock-down check names the tools
    the process should not have had.
 4. Record a version that passes in the Claude Code row of
-   [CLAUDE.md](../CLAUDE.md) and in STATUS.md's Environment.
+   [CLAUDE.md](../CLAUDE.md), in STATUS.md's Environment, and in the
+   range of versions benched in KNOWN-ISSUES R21.
 
 ### If it fails
 
-1. Go back to the last version that passed:
+1. Go back to the last version that passed, the one in CLAUDE.md's
+   Claude Code row:
 
    ```sh
-   claude install 2.1.303
+   claude install <version>
    claude --version
    ```
 
